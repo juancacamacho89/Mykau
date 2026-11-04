@@ -5587,10 +5587,8 @@ async function usQuick(){
       <table style="font-size:13px;margin-top:4px"><tr><th>Fecha</th><th>Edad</th><th>Score</th><th>Lóbulos</th><th>Antibiótico</th></tr>
       ${ex.slice().reverse().map(e=>`<tr><td>${fmt(e.exam_date)}</td><td>${birth ? days(birth, e.exam_date) + " d" : ""}</td><td>${badge(+e.score)}</td><td>${esc(e.lobes_raw || "—")}</td>
         <td class="drug">${(e.treatments||[]).map(t=>esc(short(t.drugs?.name || ""))).join(", ")}</td></tr>`).join("")}</table></div>` : "";
-  box.innerHTML = !h.animal && !h.cow ? `<b style="color:var(--s2)">Ternera nueva</b> (no tiene registros)` :
-    `${birth ? `Nació ${fmt(birth)} · ` : ""}${h.cow?.dam ? `madre ${esc(h.cow.dam)} · ` : ""}${h.w ? `último peso ${h.w.weight_kg} kg (${fmt(h.w.event_date)}) · ` : ""}
-     ${ex.length ? `<b>${ex.length} ecografías:</b> ${ex.slice(-5).map(e=>`${fmt(e.exam_date).slice(0, 5)} ${badge(+e.score)}${e.lobes_raw ? `<span class="sub">(${esc(e.lobes_raw)})</span>` : ""}`).join(" ")}` : "sin ecografías"}
-     ${tx.length ? `<div>💉 ${esc(tx.map(short).join(" → "))}</div>` : ""}`;
+  // el historial va en la tabla de abajo; aquí solo se avisa si es nueva
+  box.innerHTML = !h.animal && !h.cow ? `<b style="color:var(--s2)">Ternera nueva</b> (no tiene registros)` : "";
 }
 async function usLoadToday(){
   const farm = +$("finca").value, d = usCur.date;
