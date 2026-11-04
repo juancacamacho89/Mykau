@@ -82,6 +82,7 @@ svg text{fill:var(--muted);font-size:11px}
 .appicon .badge.hidden{display:none}
 .appicon.hidden{display:none}
 .homesearch.hidden{display:none}
+.chip.uslobe.on{background:var(--accent);border-color:var(--accent);color:#fff}
 .homeedit{text-align:center;margin:22px 0 70px;display:flex;gap:18px;justify-content:center}
 .apps.edit .appicon .ic{animation:wig .22s ease-in-out infinite alternate}
 .apps.edit .appicon{touch-action:none;cursor:grab}
@@ -269,7 +270,7 @@ details.lac td{padding:6px 8px}
         <a class="appicon hidden" href="#toros" data-perm="toros_ver toros_registrar"><span class="ic" style="--g1:#d9b38c;--g2:#7a4a24">🐂</span><b>Toros y semen</b><i class="badge hidden" id="badgeToros"></i></a>
         <a class="appicon hidden" href="#racion" data-perm="racion_ver racion_registrar"><span class="ic" style="--g1:#f7d08a;--g2:#b8742a">🌾</span><b>Suplementación</b></a>
         <a class="appicon" href="#vacas" data-perm="vacas_ver"><span class="ic" style="--g1:#14a38f;--g2:#0b6b5e"><img src="logo.png" alt=""></span><b>Mis vacas</b><i class="badge hidden" id="badgeRepro"></i></a>
-        <a class="appicon" href="#terneras" data-perm="terneras_historial terneras_vigilar"><span class="ic" style="--g1:#ff8a7a;--g2:#d9472f">🫁</span><b>Neumonía terneras</b></a>
+        <a class="appicon" href="#terneras" data-perm="terneras_historial terneras_vigilar terneras_registrar"><span class="ic" style="--g1:#ff8a7a;--g2:#d9472f">🫁</span><b>Neumonía terneras</b></a>
         <a class="appicon" href="#mastitis" data-perm="mastitis_historial mastitis_vigilar"><span class="ic" style="--g1:#ffa3c4;--g2:#c2326e"><svg viewBox="0 0 48 48" aria-hidden="true">
           <rect x="21" y="30" width="6" height="15" rx="3" fill="#fff"/>
           <rect x="6" y="3" width="36" height="31" rx="9" fill="#fff"/>
@@ -328,14 +329,16 @@ details.lac td{padding:6px 8px}
         <div class="brand"><button class="back" data-home aria-label="Inicio">‹</button><div><h1>Historial de terneras</h1><div class="sub" id="lastInfo"></div></div></div>
         <button class="link logout">Salir</button>
       </header>
+      <div id="usTabs" class="sheet" style="padding:0;background:none;max-height:none;margin-bottom:12px"></div>
       <div class="card">
         <div class="row">
           <select id="finca"></select>
-          <input id="q" type="search" inputmode="numeric" placeholder="N° ternera" autocomplete="off">
+          <input id="q" class="usHistOnly" type="search" inputmode="numeric" placeholder="N° ternera" autocomplete="off">
         </div>
-        <div id="result"><div class="empty">Escribe el número de la ternera</div></div>
+        <div id="result" class="usHistOnly"><div class="empty">Escribe el número de la ternera</div></div>
       </div>
-      <div class="card">
+      <div id="usReg" class="hidden"></div>
+      <div class="card usHistOnly">
         <b>Terneras a vigilar</b>
         <div class="sub">Score ≥ 2 en la última sesión</div>
         <div id="watch" class="list"></div>
@@ -591,7 +594,7 @@ function jget0(k, d){ try{ return JSON.parse(store.get(k)) ?? d; }catch(e){ retu
 const PERM_FALLBACK = { vacas_repro:"vacas_ver", calidad_ver:"reporte_editar",
   salud_ver:"vacas_ver", salud_tratar:"vacas_parto", salud_diagnostico:"reporte_editar", inventario_ver:"reporte_editar",
   pastos_ver:"reporte_editar", pastos_registrar:"reporte_editar", produccion_ver:"reporte_editar", registros_todos:"reporte_editar", pesot_registrar:"vacas_parto",
-  vacas_secado:"vacas_parto", vacas_salida:"vacas_parto", listas_ver:"vacas_repro",
+  vacas_secado:"vacas_parto", vacas_salida:"vacas_parto", terneras_registrar:"reporte_editar", listas_ver:"vacas_repro",
   toros_ver:"reporte_editar", toros_registrar:"reporte_editar", racion_ver:"reporte_editar", racion_registrar:"reporte_editar",
   ronda_registrar:"diaria_registrar", ronda_ver:"diaria_registrar" };   // funciones nuevas: mientras no estén en el perfil
 const can = k => perms[k] || (PERM_FALLBACK[k] ? perms[PERM_FALLBACK[k]] : null)
@@ -642,6 +645,7 @@ function setTab(tab){
   if (tab==="inicio") renderHome();
   $("tabVacas").classList.toggle("hidden", tab!=="vacas");
   $("tabTerneras").classList.toggle("hidden", tab!=="terneras");
+  if (tab==="terneras") usSetTab(usTab);
   $("tabTraslados").classList.toggle("hidden", tab!=="traslados");
   $("tabLeche").classList.toggle("hidden", tab!=="leche");
   if (tab==="leche") initMilk();
@@ -674,7 +678,7 @@ function setTab(tab){
   if (tab==="terneras" && lastChart) drawChart(lastChart); else drawCowCharts();
 }
 // pantallas y el permiso que las abre (si no lo tiene, vuelve al inicio)
-const TAB_PERM = { terneras:"terneras_historial terneras_vigilar", traslados:"traslados", leche:"pesaje_registrar",
+const TAB_PERM = { terneras:"terneras_historial terneras_vigilar terneras_registrar", traslados:"traslados", leche:"pesaje_registrar",
   diaria:"diaria_registrar diaria_totales diaria_resumen", reporte:"reporte_ver produccion_ver pastos_ver calidad_ver", registros:"registros_ver", chequeo:"chequeo",
   mastitis:"mastitis_historial mastitis_vigilar", salud:"salud_ver salud_tratar", pastos:"pastos_ver pastos_registrar", pesot:"pesot_registrar", listas:"listas_ver", toros:"toros_ver toros_registrar", racion:"racion_ver racion_registrar", ronda:"ronda_registrar ronda_ver", rapido:"vacas_servicio vacas_celo vacas_secado salud_tratar traslados vacas_salida", vaca:"vacas_ver" };
 function route(){
@@ -5508,6 +5512,177 @@ function shrink(file, max){
     img.onerror = ()=>bad(new Error("imagen no válida")); img.src = url;
   });
 }
+
+// ═══════════════════════ NEUMONÍA · REGISTRAR ECOGRAFÍAS (como CalfScan) ═══════════════
+// Score 0–5 (uno solo), lóbulos 1–7 (varios: derecho 1–4, izquierdo 5–7), tratar, comentario.
+// Al escribir el número sale el historial rápido de la ternera. Sin señal queda en el celular y se sube después.
+let usTab = "hist", usCur = null, usHist = {}, usToday = [];
+const usUid = () => crypto.randomUUID ? crypto.randomUUID() : String(Date.now()) + Math.random();
+function usNew(keep){
+  const k = keep || usCur || {};
+  usCur = { date: k.date || today(), scorer: k.scorer || store.get("usScorer") || "", calf:"", birth:"", age:"", weight:"", score:null, lobes:[], treat:false, comment:"" };
+}
+function usSetTab(t){
+  usTab = t;
+  $("usTabs").innerHTML = canDo("terneras_registrar") ? seg("usT", [["hist","Historial"],["reg","Registrar ecografías"]], usTab) : "";
+  document.querySelectorAll(".usHistOnly").forEach(el=>el.classList.toggle("hidden", usTab!=="hist"));
+  $("usReg").classList.toggle("hidden", usTab!=="reg");
+  if (usTab==="reg"){ if (!usCur) usNew(); renderUs(); usLoadToday(); }
+}
+function renderUs(){
+  const c = usCur, farm = $("finca").selectedOptions[0]?.textContent || "";
+  $("usReg").innerHTML = `<div class="card sheet hsform" style="max-height:none">
+      <div class="sub">${esc(farm)} · se registra en la finca escogida arriba</div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">
+        <div><label>Fecha</label><input type="date" id="usDate" value="${c.date}" max="${today()}" style="min-width:0"></div>
+        <div><label>Evaluador</label><input id="usScorer" value="${esc(c.scorer)}" placeholder="quién escanea" style="min-width:0"></div></div>
+      <div style="display:grid;grid-template-columns:1.2fr 1fr 1fr;gap:8px">
+        <div><label>N° ternera</label><input id="usCalf" inputmode="numeric" value="${esc(c.calf)}" style="min-width:0;font-size:24px;font-weight:800"></div>
+        <div><label>Edad (d)</label><input id="usAge" inputmode="numeric" value="${esc(c.age)}" style="min-width:0"></div>
+        <div><label>Peso (kg)</label><input id="usWeight" inputmode="decimal" value="${esc(c.weight)}" style="min-width:0"></div></div>
+      <div id="usQuick" class="sub" style="margin-top:6px"></div>
+      <label>Score</label>${seg("usScore", [0,1,2,3,4,5].map(n=>[String(n), String(n)]), c.score==null ? "" : String(c.score))}
+      <label>Lóbulos afectados <span class="sub">(derecho 1–4 · izquierdo 5–7, puedes marcar varios)</span></label>
+      <div class="row" style="gap:6px;align-items:center;justify-content:center;flex-wrap:nowrap">
+        ${[1,2,3,4].map(n=>`<button type="button" class="chip uslobe ${c.lobes.includes(n) ? "on" : ""}" data-uslobe="${n}" style="min-width:42px;font-size:18px">${n}</button>`).join("")}
+        <b style="font-size:22px;margin:0 4px">|</b>
+        ${[5,6,7].map(n=>`<button type="button" class="chip uslobe ${c.lobes.includes(n) ? "on" : ""}" data-uslobe="${n}" style="min-width:42px;font-size:18px">${n}</button>`).join("")}</div>
+      <label style="display:flex;gap:10px;align-items:center;margin-top:12px"><input type="checkbox" id="usTreat" ${c.treat ? "checked" : ""} style="width:24px;height:24px">Tratar</label>
+      <label>Comentario</label><input id="usComment" value="${esc(c.comment)}">
+      <div class="err" id="usErr"></div>
+      <button class="btn" id="usSave" style="margin-top:12px;font-size:18px;padding:14px">Guardar / Siguiente</button></div>
+    <div class="card"><div class="row" style="align-items:center"><b style="flex:1">Registradas hoy (${fmt(c.date)})</b><button class="btn ghost" id="usSum" style="width:auto">📊 Resumen</button></div>
+      <div id="usList"><div class="empty">Cargando…</div></div></div>
+    <div id="usSummary"></div>`;
+  usQuick();
+}
+// historial rápido de la ternera: ecografías anteriores, tratamientos, nacimiento y último peso
+async function usQuick(){
+  const id = (usCur.calf || "").trim(), box = $("usQuick"); if (!box) return;
+  if (!/^\d+$/.test(id)){ box.innerHTML = id ? "Solo números" : ""; return; }
+  const farm = +$("finca").value, key = farm + "|" + id;
+  if (!usHist[key] && navigator.onLine){
+    box.innerHTML = "Buscando historial…";
+    const [an, cw] = await Promise.all([
+      sb.from("animals").select("id,birth_date,ultrasound_exams(exam_date,score,lobes_raw,treat,treatments(drugs(name)))").eq("farm_id", farm).eq("calf_id", +id).maybeSingle(),
+      sb.from("cows").select("id,birth_date,sex,dam").eq("id", id).maybeSingle()]);
+    const w = cw.data ? (await sb.from("cow_events").select("event_date,weight_kg").eq("cow_id", id).eq("event_type", "weight").order("event_date", { ascending:false }).limit(1)).data?.[0] : null;
+    usHist[key] = { animal:an.data, cow:cw.data, w };
+  }
+  if ((usCur.calf || "").trim() !== id) return;
+  const h = usHist[key]; if (!h){ box.innerHTML = "Sin señal: no se ve el historial"; return; }
+  const ex = (h.animal?.ultrasound_exams || []).sort((a,b)=>a.exam_date.localeCompare(b.exam_date));
+  const birth = h.animal?.birth_date || h.cow?.birth_date;
+  if (birth && !usCur.age){ usCur.age = String(days(birth, usCur.date)); $("usAge").value = usCur.age; }
+  const tx = ex.flatMap(e=>(e.treatments||[]).map(t=>t.drugs?.name).filter(Boolean));
+  box.innerHTML = !h.animal && !h.cow ? `<b style="color:var(--s2)">Ternera nueva</b> (no tiene registros)` :
+    `${birth ? `Nació ${fmt(birth)} · ` : ""}${h.cow?.dam ? `madre ${esc(h.cow.dam)} · ` : ""}${h.w ? `último peso ${h.w.weight_kg} kg (${fmt(h.w.event_date)}) · ` : ""}
+     ${ex.length ? `<b>${ex.length} ecografías:</b> ${ex.slice(-5).map(e=>`${fmt(e.exam_date).slice(0, 5)} ${badge(+e.score)}${e.lobes_raw ? `<span class="sub">(${esc(e.lobes_raw)})</span>` : ""}`).join(" ")}` : "sin ecografías"}
+     ${tx.length ? `<div>💉 ${esc(tx.map(short).join(" → "))}</div>` : ""}`;
+}
+async function usLoadToday(){
+  const farm = +$("finca").value, d = usCur.date;
+  let rows = [];
+  if (navigator.onLine){
+    const { data } = await sb.from("ultrasound_exams").select("id,score,age_days,weight_kg,lobes_raw,treat,comment,created_by,source,animals(calf_id)")
+      .eq("farm_id", farm).eq("exam_date", d).order("id", { ascending:false });
+    rows = (data || []).map(r=>({ id:r.id, calf:String(r.animals?.calf_id ?? ""), score:+r.score, age:r.age_days, weight:r.weight_kg, lobes:r.lobes_raw || "", treat:r.treat, comment:r.comment, mine: r.source==="MANUAL" && (r.created_by===me || isAdmin) }));
+  }
+  const pend = jget("usOutbox", []).filter(x=>x.farm===farm && x.date===d).map(x=>({ ...x, lobes:x.lobes.join(""), pending:true }));
+  usToday = [...pend, ...rows];
+  const box = $("usList"); if (!box) return;
+  box.innerHTML = usToday.length ? `<div style="overflow-x:auto"><table style="font-size:13px"><tr><th>ID</th><th>Score</th><th>Lóbulos</th><th>Edad</th><th>Peso</th><th></th></tr>
+    ${usToday.map(r=>`<tr><td><b>${esc(r.calf)}</b>${r.treat ? " 💉" : ""}${r.pending ? ` <span class="tag">⏳</span>` : ""}</td><td>${badge(r.score)}</td><td>${esc(r.lobes) || "—"}</td>
+      <td>${r.age ?? ""}</td><td>${r.weight ?? ""}</td><td>${r.mine && !r.pending ? `<button class="del" data-usdel="${r.id}">✕</button>` : ""}</td></tr>`).join("")}</table></div>`
+    : `<div class="empty">Ninguna todavía</div>`;
+}
+// resumen como CalfScan: por score, % y edades (promedio, mediana, mínima, máxima); 2+ y 3+
+function usSummaryHtml(){
+  const rs = usToday, n = rs.length; if (!n) return `<div class="card"><div class="empty">Sin ecografías ese día</div></div>`;
+  const st = list => { const a = list.map(r=>+r.age).filter(x=>isFinite(x) && x > 0).sort((x,y)=>x - y);
+    if (!a.length) return "edades —"; const med = a.length % 2 ? a[(a.length - 1)/2] : (a[a.length/2 - 1] + a[a.length/2])/2;
+    return `edad prom ${(a.reduce((x,y)=>x + y, 0)/a.length).toFixed(1)} · mediana ${med} · mín ${a[0]} · máx ${a[a.length - 1]}`; };
+  const row = (t, list) => `<tr><td><b>${t}</b></td><td style="text-align:right">${list.length}</td><td style="text-align:right">${(100*list.length/n).toFixed(1)}%</td><td class="sub">${st(list)}</td></tr>`;
+  const farm = $("finca").selectedOptions[0]?.textContent || "";
+  return `<div class="card"><b>Resumen ${fmt(usCur.date)} · ${esc(farm)}</b><div class="sub">Terneras escaneadas: <b>${n}</b> · a tratar: <b>${rs.filter(r=>r.treat).length}</b></div>
+    <table style="margin-top:6px;font-size:13px"><tr><th>Score</th><th style="text-align:right">N°</th><th style="text-align:right">%</th><th>Edad (días)</th></tr>
+    ${[0,1,2,3,4,5].map(s=>row(`${badge(s)}`, rs.filter(r=>r.score===s))).join("")}
+    ${row("2+", rs.filter(r=>r.score >= 2))}${row("3+", rs.filter(r=>r.score >= 3))}</table>
+    <button class="btn ghost" id="usShare" style="margin-top:10px">📤 Compartir resumen</button></div>`;
+}
+function usSummaryText(){
+  const rs = usToday, n = rs.length, pct = k => (100*k/n).toFixed(1);
+  const farm = $("finca").selectedOptions[0]?.textContent || "";
+  return `Resumen ecografías ${fmt(usCur.date)} · ${farm}\nTerneras escaneadas: ${n}\n` + [0,1,2,3,4,5].map(s=>{ const k = rs.filter(r=>r.score===s).length; return `Score ${s}: ${k} (${pct(k)}%)`; }).join("\n")
+    + `\nScore 2+: ${rs.filter(r=>r.score >= 2).length} (${pct(rs.filter(r=>r.score >= 2).length)}%)\nScore 3+: ${rs.filter(r=>r.score >= 3).length} (${pct(rs.filter(r=>r.score >= 3).length)}%)\nA tratar: ${rs.filter(r=>r.treat).length}`;
+}
+let usFlushing = false;
+async function flushUs(){
+  if (usFlushing || !navigator.onLine) return;
+  usFlushing = true;
+  const ob = jget("usOutbox", []), left = [];
+  for (const x of ob){
+    try{
+      let { data:a } = await sb.from("animals").select("id").eq("farm_id", x.farm).eq("calf_id", +x.calf).maybeSingle();
+      if (!a){
+        const { data:cw } = await sb.from("cows").select("birth_date").eq("id", x.calf).maybeSingle();
+        const r = await sb.from("animals").insert({ calf_id:+x.calf, farm_id:x.farm, birth_date: cw?.birth_date || null }).select("id").single();
+        if (r.error) throw r.error; a = r.data;
+      }
+      const { error } = await sb.from("ultrasound_exams").upsert({ client_id:x.client_id, animal_id:a.id, farm_id:x.farm, exam_date:x.date,
+        age_days: x.age==="" || x.age==null ? null : +x.age, weight_kg: x.weight==="" || x.weight==null ? null : +String(x.weight).replace(",", "."),
+        score:x.score, lobes_affected: x.lobes.length ? x.lobes : null, lobes_raw: x.lobes.join("") || null, treat:x.treat,
+        grupo: x.treat ? "ANTIBIOTICO" : (x.comment ? "OTRO" : "SIN_COMENTARIO"), comment: x.comment || null, scorer: x.scorer || null, source:"MANUAL" },
+        { onConflict:"client_id", ignoreDuplicates:true });
+      if (error) throw error;
+      // el peso también queda en la hoja de vida (pendiente para Interherd) si la ternera existe en Mykau
+      if (x.weight){ const { data:cw } = await sb.from("cows").select("id").eq("id", x.calf).maybeSingle();
+        if (cw) await sb.from("cow_events").insert({ cow_id:x.calf, event_date:x.date, event_type:"weight", weight_kg:+String(x.weight).replace(",", "."), source:"app", sync_status:"pending", comments:"Pesaje · ecografía" }); }
+    }catch(err){ console.warn("ecografía", err.message); left.push(x); }
+  }
+  jset("usOutbox", left); usFlushing = false;
+  if (left.length < ob.length) toast(`${ob.length - left.length} ecografía${ob.length - left.length === 1 ? "" : "s"} guardada${ob.length - left.length === 1 ? "" : "s"} ✓`);
+}
+window.addEventListener("online", ()=>flushUs().then(()=>usTab==="reg" && usLoadToday()));
+$("usReg").addEventListener("input", e=>{
+  const t = e.target, c = usCur; if (!c) return;
+  if (t.id==="usCalf"){ c.calf = t.value.trim(); c.age = ""; $("usAge").value = ""; clearTimeout(usQuick.t); usQuick.t = setTimeout(usQuick, 350); }
+  if (t.id==="usAge") c.age = t.value.trim();
+  if (t.id==="usWeight") c.weight = t.value.trim();
+  if (t.id==="usComment") c.comment = t.value;
+  if (t.id==="usScorer"){ c.scorer = t.value; store.set("usScorer", t.value); }
+});
+$("usReg").addEventListener("change", e=>{
+  const t = e.target;
+  if (t.name==="usScore") usCur.score = +t.value;
+  if (t.id==="usTreat") usCur.treat = t.checked;
+  if (t.id==="usDate"){ usCur.date = t.value || today(); usLoadToday(); $("usSummary").innerHTML = ""; }
+});
+$("usReg").addEventListener("click", async e=>{
+  const t = e.target, lb = t.closest("[data-uslobe]");
+  if (lb){ const n = +lb.dataset.uslobe, L = usCur.lobes; L.includes(n) ? L.splice(L.indexOf(n), 1) : L.push(n); L.sort(); lb.classList.toggle("on", L.includes(n)); return; }
+  if (t.id==="usSave"){
+    const c = usCur, err = m => $("usErr").textContent = m;
+    if (!/^\d+$/.test(c.calf)) return err("Escribe el número de la ternera (solo números).");
+    if (c.score==null) return err("Escoge el score.");
+    if (usToday.some(r=>r.calf===c.calf) && !confirm(`La ${c.calf} ya tiene ecografía este día. ¿Guardar otra?`)) return;
+    err("");
+    const ob = jget("usOutbox", []); ob.push({ client_id:usUid(), farm:+$("finca").value, date:c.date, scorer:c.scorer, calf:c.calf, age:c.age, weight:c.weight, score:c.score, lobes:c.lobes.slice(), treat:c.treat, comment:c.comment.trim() });
+    jset("usOutbox", ob); delete usHist[+$("finca").value + "|" + c.calf];
+    usNew(c); renderUs(); $("usCalf").focus();
+    await flushUs(); usLoadToday(); return;
+  }
+  const dl = t.closest("[data-usdel]");
+  if (dl){ if (!confirm("¿Borrar esta ecografía?")) return;
+    const { data, error } = await sb.from("ultrasound_exams").delete().eq("id", +dl.dataset.usdel).select("id");
+    if (error || !data?.length) return toast("No se pudo borrar" + (error ? ": " + error.message : " (sin permiso)"));
+    toast("Ecografía borrada"); return usLoadToday(); }
+  if (t.id==="usSum"){ await usLoadToday(); $("usSummary").innerHTML = usSummaryHtml(); $("usSummary").scrollIntoView({ behavior:"smooth" }); return; }
+  if (t.id==="usShare"){ const txt = usSummaryText();
+    try{ if (navigator.share) await navigator.share({ text:txt }); else { await navigator.clipboard.writeText(txt); toast("Resumen copiado"); } }catch(x){} }
+});
+$("usTabs").addEventListener("change", e=>{ if (e.target.name==="usT") usSetTab(e.target.value); });
+$("finca").addEventListener("change", ()=>{ if (usTab==="reg"){ usHist = {}; renderUs(); usLoadToday(); } });
 
 // ═══════════════════════ TERNERAS ═══════════════════════════
 async function loadFarms(){
