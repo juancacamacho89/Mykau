@@ -2524,15 +2524,27 @@ function rqListHtml(shown){
           <b style="min-width:62px">${esc(c.id)}</b><span class="sub" style="flex:1">${esc(c.pen||"")} · ${esc(rqInfo(c))}</span>
           ${rq.type==="exit" ? `<input data-rqwt="${esc(c.id)}" inputmode="decimal" placeholder="kg" value="${esc(rq.d.w?.[c.id] || "")}" style="width:78px;flex:none;padding:8px;font-size:15px">` : ""}</label>`).join("") || `<div class="empty">Sin animales</div>`;
 }
+function rqPerBullHtml(){
+  const d = rq.d, o = rq.opts || { bulls:[] }, cows = rqCows.filter(c=>rq.sel.has(c.id)).sort((a,b)=>byNum(a.id, b.id));
+  if (!cows.length) return `<div class="empty">Primero escoge las vacas arriba</div>`;
+  const opts = cur => `<option value="">toro general${d.bull ? " (" + esc(d.bull) + ")" : ""}</option>` + o.bulls.map(b=>`<option value="${esc(b.code)}" ${cur===b.code ? "selected" : ""}>${esc(b.code)}${b.name ? " · " + esc(b.name) : ""}</option>`).join("")
+    + (d.bw && Object.values(d.bw).some(v=>v && !o.bulls.some(b=>b.code===v)) ? [...new Set(Object.values(d.bw).filter(v=>v && !o.bulls.some(b=>b.code===v)))].map(v=>`<option value="${esc(v)}" ${cur===v ? "selected" : ""}>${esc(v)}</option>`).join("") : "");
+  const used = {}; cows.forEach(c=>{ const b = (d.bw||{})[c.id] || d.bull || "—"; used[b] = (used[b]||0) + 1; });
+  return `<div class="sub" style="margin:4px 0">${Object.entries(used).map(([b,n])=>`<b>${esc(b)}</b>: ${n}`).join(" · ")}</div>
+    <div style="max-height:40vh;overflow:auto;border-top:1px solid var(--line)">${cows.map(c=>`<div class="row" style="align-items:center;gap:8px;padding:6px 2px;border-bottom:1px solid var(--line)">
+      <b style="min-width:62px">${esc(c.id)}</b><select data-rqbw="${esc(c.id)}" style="flex:1;min-width:0;padding:8px">${opts((d.bw||{})[c.id] || "")}</select></div>`).join("")}</div>`;
+}
 function rqForm(f){
   const d = rq.d, opt = (v, t, s) => `<option value="${esc(v)}" ${s?"selected":""}>${esc(t)}</option>`;
   let h = `<label>Fecha</label><input type="date" id="rqDate" value="${rq.date}" max="${today()}">`;
   if (rq.type==="service"){
     const o = rq.opts || { bulls:[], ops:[] };
-    h += `<label>Toro</label><input id="rqBull" list="rqBulls" value="${esc(d.bull||"")}" autocapitalize="characters"><datalist id="rqBulls">${o.bulls.map(b=>`<option value="${esc(b.code)}">${esc((b.name||"") + (isAdmin && b.straws ? ` · ${b.straws} paj.` : ""))}</option>`).join("")}</datalist>
+    h += `<label>Toro (para todas)</label><input id="rqBull" list="rqBulls" value="${esc(d.bull||"")}" autocapitalize="characters"><datalist id="rqBulls">${o.bulls.map(b=>`<option value="${esc(b.code)}">${esc((b.name||"") + (isAdmin && b.straws ? ` · ${b.straws} paj.` : ""))}</option>`).join("")}</datalist>
       ${o.tanks?.length ? `<label>Termo (de dónde salen las pajillas)</label><select id="rqTank"><option value="">Según el lote de cada vaca</option>${o.tanks.map(t=>`<option value="${esc(t.code)}" ${d.tank===t.code ? "selected" : ""}>${esc(t.name || t.code)}</option>`).join("")}</select>` : ""}
       <label>Inseminador</label>${o.ops.length ? seg("rqOp", o.ops.map(x=>[x,x]), d.op || o.ops[0]) : `<input id="rqOpT" value="${esc(d.op||"")}">`}
-      <label>Tipo</label>${seg("rqCat", [["Inseminación","Inseminación"],["Ovsynch","Ovsynch"]], d.cat || "Inseminación")}`;
+      <label>Tipo</label>${seg("rqCat", [["Inseminación","Inseminación"],["Ovsynch","Ovsynch"]], d.cat || "Inseminación")}
+      <label>Toro de cada vaca</label><div class="sub">Si alguna va con otro toro, cámbialo aquí. Las que dicen "toro general" van con el de arriba.</div>
+      <div id="rqPerBull">${rqPerBullHtml()}</div>`;
   }
   if (rq.type==="heat") h += `<label>Observación</label>${seg("rqCat", [["","Normal"],["sucia","Sucia"]], d.cat || "")}`;
   if (rq.type==="dry_off"){
@@ -2572,6 +2584,7 @@ function rqRead(){
   const d = rq.d, v = id => $(id)?.value, r = n => document.querySelector(`input[name="${n}"]:checked`)?.value;
   if ($("rqDate")) rq.date = v("rqDate") || today();
   if ($("rqBull")) d.bull = v("rqBull").trim().toUpperCase();
+  if (rq.type==="service" && $("rqPerBull") && document.activeElement?.id!=="rqBull") $("rqPerBull").innerHTML = rqPerBullHtml();
   if ($("rqTank")) d.tank = v("rqTank");
   if (r("rqOp")) d.op = r("rqOp"); if ($("rqOpT")) d.op = v("rqOpT").trim().toUpperCase();
   if (r("rqCat")!==undefined) d.cat = r("rqCat");
@@ -2610,7 +2623,10 @@ $("rqBody").addEventListener("change", async e=>{
     const n = rq.sel.size, go = $("rqGo");
     $("rqCount").textContent = `(${n} escogidos)`;
     if (go){ go.disabled = !n; go.textContent = go.textContent.replace(/a \d+ animal(es)?$/, `a ${n} animal${n===1?"":"es"}`); }
+    if ($("rqPerBull")) $("rqPerBull").innerHTML = rqPerBullHtml();
     return; }
+  if (t.id==="rqBull"){ rq.d.bull = t.value.trim().toUpperCase(); if ($("rqPerBull")) $("rqPerBull").innerHTML = rqPerBullHtml(); return; }
+  if (t.dataset.rqbw!=null){ (rq.d.bw ||= {})[t.dataset.rqbw] = t.value; if (!t.value) delete rq.d.bw[t.dataset.rqbw]; $("rqPerBull").innerHTML = rqPerBullHtml(); return; }
   if (t.name==="rqF"){ rqRead(); rq.farm = +t.value; rq.sel = new Set(); rq.pen = ""; await rqLoadCows();
     if (rq.type==="service") rq.opts = await loadRegOpts(rq.farm); return renderRapido(); }
   if (t.name==="rqTF"){ rqRead(); rq.d.toFarm = +t.value; rq.d.pen = ""; return renderRapido(); }
@@ -2640,12 +2656,16 @@ async function rqExec(){
   const base = { event_date:date, source:"app", sync_status:"pending", comments:note };
   let rows = [], treat = null, label = "";
   if (rq.type==="service"){
-    if (!d.bull) return err("Escribe el toro.");
-    const { data:bx } = await sb.from("bulls").select("code").eq("code", d.bull).maybeSingle();
-    if (!bx) return err(`El toro ${d.bull} no existe. Revisa el código.`);
-    rows = cows.map(c=>({ ...base, cow_id:c.id, event_type:"service", bull:d.bull, operator:d.op || null, category:d.cat || "Inseminación",
+    const bullOf = c => (d.bw || {})[c.id] || d.bull;
+    const sinToro = cows.filter(c=>!bullOf(c));
+    if (sinToro.length) return err(`Falta el toro de: ${sinToro.map(c=>c.id).join(", ")}.`);
+    const codes = [...new Set(cows.map(bullOf))];
+    const { data:bx } = await sb.from("bulls").select("code").in("code", codes);
+    const bad = codes.filter(x=>!(bx||[]).some(b=>b.code===x));
+    if (bad.length) return err(`El toro ${bad.join(", ")} no existe. Revisa el código.`);
+    rows = cows.map(c=>({ ...base, cow_id:c.id, event_type:"service", bull:bullOf(c), operator:d.op || null, category:d.cat || "Inseminación",
       ...(rq.opts?.tanks?.length ? { details:{ tank: d.tank || svTank(c.pen, rq.opts.tanks) } } : {}) }));
-    label = `Inseminación con ${d.bull}`;
+    label = `Inseminación · ` + codes.map(b=>`${b}: ${cows.filter(c=>bullOf(c)===b).length}`).join(" · ");
   }
   if (rq.type==="heat"){ rows = cows.map(c=>({ ...base, cow_id:c.id, event_type:"heat", category:d.cat || null })); label = "Celo"; }
   if (rq.type==="dry_off"){
