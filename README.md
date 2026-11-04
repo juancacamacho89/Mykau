@@ -1,2 +1,0 @@
-# Mykau
-App de ganaderia
