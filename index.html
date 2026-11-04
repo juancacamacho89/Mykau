@@ -302,9 +302,9 @@ details.lac td{padding:6px 8px}
           <path d="M28 44c0-13 4-23 13-30-6 9-9 18-9 30z" fill="#fff" fill-opacity=".9"/>
           <rect x="5" y="42" width="38" height="4" rx="2" fill="#fff" fill-opacity=".7"/>
         </svg></span><b>Pastos</b></a>
-        <a class="appicon" href="#traslados" data-perm="traslados"><span class="ic" style="--g1:#5aa2ff;--g2:#2f5fd6">⇄</span><b>Traslados</b></a>
       </div>
       <div class="homeedit"><button class="link" id="homeEdit">Organizar íconos</button><button class="link hidden" id="homeReset">Orden original</button></div>
+      <div id="homeAbx"></div>
       <form class="homesearch" id="homeSearch" data-perm="vacas_ver"><span>🔍</span><input id="hq" type="search" placeholder="Buscar vaca" autocomplete="off" autocapitalize="characters"></form>
     </section>
 
@@ -589,7 +589,7 @@ let me = null;   // id del usuario con sesión (para saber qué registros puede 
 let perms = jget0("perms", {}), myProfile = store.get("profile") || "";
 function jget0(k, d){ try{ return JSON.parse(store.get(k)) ?? d; }catch(e){ return d; } }
 const PERM_FALLBACK = { vacas_repro:"vacas_ver", calidad_ver:"reporte_editar",
-  salud_ver:"vacas_ver", salud_tratar:"vacas_parto", inventario_ver:"reporte_editar",
+  salud_ver:"vacas_ver", salud_tratar:"vacas_parto", salud_diagnostico:"reporte_editar", inventario_ver:"reporte_editar",
   pastos_ver:"reporte_editar", pastos_registrar:"reporte_editar", produccion_ver:"reporte_editar", registros_todos:"reporte_editar", pesot_registrar:"vacas_parto",
   vacas_secado:"vacas_parto", vacas_salida:"vacas_parto", listas_ver:"vacas_repro",
   toros_ver:"reporte_editar", toros_registrar:"reporte_editar", racion_ver:"reporte_editar", racion_registrar:"reporte_editar",
@@ -597,7 +597,9 @@ const PERM_FALLBACK = { vacas_repro:"vacas_ver", calidad_ver:"reporte_editar",
 const can = k => perms[k] || (PERM_FALLBACK[k] ? perms[PERM_FALLBACK[k]] : null)
   || (k==="registros_ver" && Object.entries(perms).some(([f, v])=>v==="R" && f!=="registros_todos") ? "V" : null) || "N";   // "R" | "V" | "N"
 const canSee = k => can(k) !== "N", canDo = k => can(k) === "R";
-let isAdmin = myProfile === "Administrador";
+const ADMIN_PROFILES = ["Administrador", "Admin Principal"];
+const adminNow = () => ADMIN_PROFILES.includes(myProfile) || perms.registros_todos === "R";
+let isAdmin = adminNow();
 async function loadRole(){
   if (!navigator.onLine) return;
   const email = (await sb.auth.getUser().catch(()=>({data:{}}))).data?.user?.email?.toLowerCase();
@@ -614,7 +616,7 @@ async function loadRole(){
       "terneras_historial","terneras_vigilar","mastitis_historial","mastitis_vigilar","pesaje_registrar","pesaje_totales","diaria_registrar",
       "diaria_totales","diaria_resumen","chequeo","reporte_ver","reporte_editar","traslados"].map(k=>[k,"R"]));
   }
-  isAdmin = myProfile === "Administrador";
+  isAdmin = adminNow();
   store.set("perms", JSON.stringify(perms)); store.set("profile", myProfile);
 }
 async function showApp(){
@@ -680,7 +682,7 @@ function route(){
   const tk = Object.keys(TAB_PERM).find(k=>h.startsWith(k));
   if (tk && !TAB_PERM[tk].split(" ").some(canSee)){ if (location.hash) location.hash = ""; setTab("inicio"); return; }
   if (h.startsWith("terneras")) { setTab("terneras"); return; }
-  if (h.startsWith("traslados")) { setTab("traslados"); return; }
+  if (h.startsWith("traslados")) { location.hash = "rapido"; return; }   // Traslados ahora está en Ingreso rápido
   if (h.startsWith("leche")) { setTab("leche"); return; }
   if (h.startsWith("diaria")) { setTab("diaria"); return; }
   if (h.startsWith("reporte")) { setTab("reporte"); return; }
@@ -718,6 +720,19 @@ function renderHome(){
   applyHomeOrder();
   document.querySelectorAll("[data-perm]").forEach(el=>el.classList.toggle("hidden", !el.dataset.perm.split(" ").some(canSee)));
   $("homeDate").textContent = new Date().toLocaleDateString("es-CO", { weekday:"long", day:"numeric", month:"long" });
+  homeAbx();
+}
+// leche de antibiótico (Leche diaria): la de la tarde de ayer y la de la mañana de hoy va para las terneras
+async function homeAbx(){
+  const box = $("homeAbx"); if (!box) return;
+  if (!["terneras_historial","terneras_vigilar","pesot_registrar"].some(canSee) || !navigator.onLine){ box.innerHTML = ""; return; }
+  const t0 = today(), y = addDays(t0, -1);
+  const { data } = await sb.from("daily_milk").select("farm_id,pen,rec_date,am_abx_l,pm_abx_l").in("rec_date", [y, t0]);
+  const fs = [...new Set((data||[]).map(r=>r.farm_id))].sort((a,b)=>b - a);
+  const rows = fs.map(f=>{ const xs = (data||[]).filter(r=>r.farm_id===f), pm = xs.filter(r=>r.rec_date===y).reduce((a,r)=>a + (+r.pm_abx_l||0), 0),
+    am = xs.filter(r=>r.rec_date===t0).reduce((a,r)=>a + (+r.am_abx_l||0), 0);
+    return `<div style="display:flex;justify-content:space-between;gap:8px;margin-top:6px"><span><b>${f===7 ? "La Isla" : "El Recodo"}</b> <span class="sub">tarde de ayer ${pm} L + mañana de hoy ${am} L</span></span><b style="font-size:20px">${pm + am} L</b></div>`; });
+  box.innerHTML = rows.length ? `<div class="card" style="margin:14px 0 0"><b>🍼 Leche de antibiótico para terneras</b>${rows.join("")}</div>` : "";
 }
 const openCow = id => { location.hash = "vaca/"+encodeURIComponent(id); window.scrollTo({top:0}); };
 // organizar: tocar "Organizar íconos", arrastrar, "Listo"
@@ -793,13 +808,17 @@ async function loadCow(id){
     sb.from("cow_concentrate").select("rec_date,kg_day").eq("cow_id", id).gte("rec_date", since).order("rec_date"),
     sb.from("cow_mastitis").select("check_date,kind,lot,ai,ad,pi,pd,observation").eq("cow_id", id).gte("check_date", since).order("check_date"),
   ]);
+  // tratamientos, vacunas y purgas (módulo Salud e Ingreso rápido)
+  const tx = await sb.from("treatments_cow").select("id,start_date,diagnosis,protocol,prescribed_by,notes,outcome,created_by,treatment_items(supply_code,dose,unit,route,days)")
+    .eq("cow_id", id).gte("start_date", since).order("start_date", { ascending:false }).limit(100);
+  if (seq !== cowSeq) return;
   const events = ev.data || [];
   const codes = [...new Set([c.sire, c.maternal_grandsire, ...events.map(e=>e.bull)].filter(Boolean))];
   const { data:bulls } = codes.length ? await sb.from("bulls").select("code,name").in("code", codes) : {data:[]};
   if (seq !== cowSeq) return;
   addRecent(id);
   renderCow({ cow:c, events, milk:milk.data||[], conc:conc.data||[], mast:mast.data||[], kids:kids.data||[], calf:calf.data,
-              photoUrl:photo.data?.signedUrl, bulls:Object.fromEntries((bulls||[]).map(b=>[b.code,b.name])) });
+              photoUrl:photo.data?.signedUrl, bulls:Object.fromEntries((bulls||[]).map(b=>[b.code,b.name])), tx:tx.data || [] });
 }
 
 const EV = { weight:"Peso", service:"Servicio", calving:"Parto", preg_check:"Diag. preñez", ultrasound:"Ecografía",
@@ -939,6 +958,9 @@ function renderCow(d){
   ${weights.length ? `<div class="card"><b>Peso</b>${weights.length >= 3 ? `<div id="weightChart"></div>` : ""}
     <div class="sub">Último: ${weights[weights.length-1].weight_kg} kg el ${fmt(weights[weights.length-1].event_date)}${weights[weights.length-1].body_condition?` · CC ${weights[weights.length-1].body_condition}`:""}</div>
     ${weights.filter(e=>e.source==="app").map(e=>`<div class="sub">${fmt(e.event_date)} · ${e.weight_kg} kg${pendTag(e)}</div>`).join("")}</div>` : ""}
+  ${(d.tx || []).length ? `<div class="card"><b>💉 Salud (${d.tx.length})</b><div class="sub">Tratamientos, vacunas y purgas</div>
+    <table style="margin-top:6px;font-size:13px">${d.tx.map(t=>`<tr><td style="white-space:nowrap">${fmt(t.start_date)}</td><td><b>${esc(t.diagnosis || "")}</b>${t.outcome ? ` · ${esc(t.outcome)}` : ""}
+      <div class="sub">${(t.treatment_items||[]).map(i=>`${esc(i.supply_code)} ${i.dose ?? ""} ${esc(i.unit||"")}`).join(" · ")}${t.notes ? ` · ${esc(t.notes)}` : ""}${t.prescribed_by ? ` · ${esc(t.prescribed_by)}` : ""}</div></td></tr>`).join("")}</table></div>` : ""}
   ${c.active && canDo("vacas_salida") ? `<div style="text-align:center;margin:4px 0 24px"><button class="btn ghost" data-add="exit" style="color:var(--s4);width:auto;padding:10px 16px">🚪 Registrar venta, descarte o muerte</button></div>` : ""}
   `;
   lastCowData = d; milkPick = null; drawCowCharts();
@@ -1071,7 +1093,11 @@ async function loadHealth(){
       <div class="sub" style="margin-top:2px">${meds(t)}</div>
       ${extra||""}</div>`;
   $("hsBody").innerHTML = `
-    ${canDo("salud_tratar") ? `<button class="btn" id="hsNew" style="margin-bottom:12px;font-size:18px;padding:14px">＋ Tratar vaca</button>` : ""}
+    ${canDo("salud_tratar") ? `<button class="btn" id="hsNew" style="margin-bottom:12px;font-size:18px;padding:14px">${canDo("salud_diagnostico") ? "＋ Tratar vaca" : "＋ Reportar animal enfermo"}</button>` : ""}
+    ${(()=>{ const nd = list.filter(t=>t.diagnosis==="Sin diagnóstico" && t.start_date >= addDays(t0, -30));
+      return nd.length ? `<div class="card" style="border:2px solid var(--s2)"><b>🩺 Reportados sin diagnóstico (${nd.length})</b>
+        ${nd.map(t=>card(t, `<div class="sub">${esc(t.notes || "")}${t.prescribed_by ? ` · ${esc(t.prescribed_by)}` : ""}</div>
+          ${canDo("salud_diagnostico") && !t.pending ? `<select data-hsdxset="${t.id}" style="margin-top:6px"><option value="">— poner diagnóstico —</option>${(hsCat?.diagnoses||[]).map(d=>`<option>${esc(d)}</option>`).join("")}</select>` : ""}`)).join("")}</div>` : ""; })()}
     <div class="card"><b>💉 En tratamiento (${active.length})</b>
       ${active.map(t=>card(t, `<div class="sub"><b style="color:var(--ink)">${dayN(t)}</b> · formuló ${esc(t.prescribed_by||"—")}</div>`)).join("") || `<div class="empty">Ninguna vaca en tratamiento</div>`}</div>
     <div class="card"><b>🚫 Leche fuera del tanque (${withdraw.length})</b>
@@ -1083,10 +1109,30 @@ async function loadHealth(){
 }
 const hsSupply = code => (hsCat?.supplies||[]).find(x=>x.code===code) || jget("hsCat", {supplies:[]}).supplies.find(x=>x.code===code);
 
+// buscar insumo: lo escrito filtra la lista de al lado (se reconstruye, porque iPhone no deja esconder opciones)
+document.addEventListener("input", e=>{
+  const q = e.target.closest(".supq"); if (!q) return;
+  const sel = q.parentElement.querySelector("select[data-supsel]"); if (!sel) return;
+  sel.dataset.all ||= sel.innerHTML;
+  const norm = x => x.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase(), w = norm(q.value.trim());
+  const box = document.createElement("select"); box.innerHTML = sel.dataset.all;
+  if (w) [...box.querySelectorAll("option")].forEach(o=>{ if (o.value && !norm(o.textContent).includes(w)) o.remove(); });
+  box.querySelectorAll("optgroup").forEach(g=>{ if (!g.children.length) g.remove(); });
+  const keep = sel.value; sel.innerHTML = box.innerHTML;
+  const first = [...sel.options].find(o=>o.value);
+  if ([...sel.options].some(o=>o.value===keep && keep)) sel.value = keep;
+  else if (w && first) sel.value = first.value;
+  // con una sola coincidencia queda escogido de una vez; si no, al salir del buscador (o tocando la lista)
+  if (w && [...sel.options].filter(o=>o.value).length===1 && sel.value!==keep) sel.dispatchEvent(new Event("change", { bubbles:true }));
+});
+document.addEventListener("change", e=>{
+  const q = e.target.closest(".supq"); if (!q) return;
+  const sel = q.parentElement.querySelector("select[data-supsel]"); if (sel && sel.value) sel.dispatchEvent(new Event("change", { bubbles:true }));
+});
 // formulario: vaca, diagnóstico, protocolo (se puede cambiar), quién formuló → guardar = aplicado
 function newHealthForm(){
   hsForm = { client_id: crypto.randomUUID ? crypto.randomUUID() : String(Date.now()) + Math.random(), farm_id:hsFarm, cow_id:"", start_date:today(),
-    diagnosis:"", protocol:"", prescribed_by: isAdmin ? "Juan (veterinario)" : "Mayordomo", notes:"", items:[] };
+    diagnosis:"", protocol:"", prescribed_by: isAdmin ? "Juan (veterinario)" : "Mayordomo", notes:"", symptoms:"", items:[] };
   renderHealthForm();
 }
 function hsProtocols(dx){ const ps = (hsCat.protocols||[]).filter(p=>!dx || p.diagnosis===dx); return [...new Set(ps.map(p=>p.name))]; }
@@ -1098,11 +1144,13 @@ function renderHealthForm(){
     <div style="display:flex;justify-content:space-between;align-items:center"><b style="font-size:18px">Tratar vaca</b><button class="lnk" id="hsCancel">Cancelar</button></div>
     <label>N° de vaca</label><input id="hsCow" inputmode="text" autocapitalize="characters" value="${esc(f.cow_id)}" style="font-size:26px;font-weight:800">
     <label>Fecha</label><input type="date" id="hsDate" value="${f.start_date}" max="${today()}">
-    <label>Diagnóstico</label><div class="chips">${(hsCat.diagnoses||[]).map(d=>`<button class="${f.diagnosis===d?"on":""}" data-hsdx="${esc(d)}">${esc(d)}</button>`).join("") || `<span class="sub">Sin diagnósticos: súbelos con ACTUALIZAR_INSUMOS.bat</span>`}</div>
+    ${!canDo("salud_diagnostico") ? `<label>¿Qué tiene? (lo que se ve)</label><input id="hsSymp" value="${esc(f.symptoms||"")}" placeholder="Ej: no come, fiebre, cojera, tos">
+      <div class="sub">El diagnóstico lo pone el veterinario. Si ya le aplicaste algo, agrégalo abajo.</div>` : `
+    <label>Diagnóstico</label><div class="chips">${(hsCat.diagnoses||[]).map(d=>`<button class="${f.diagnosis===d?"on":""}" data-hsdx="${esc(d)}">${esc(d)}</button>`).join("") || `<span class="sub">Sin diagnósticos: súbelos con ACTUALIZAR_INSUMOS.bat</span>`}</div>`}
     ${f.diagnosis ? `<label>Tratamiento predeterminado</label><div class="chips">${hsProtocols(f.diagnosis).map(n=>`<button class="${f.protocol===n?"on":""}" data-hspr="${esc(n)}">${esc(n)}</button>`).join("")}
       <button class="${f.protocol==="" && f.items.length ? "on" : ""}" data-hspr="">Otro (a mano)</button></div>` : ""}
     ${f.items.map((it, i)=>`<div class="hsitem">
-      <div class="row"><select data-hsi="${i}" data-k="supply_code" style="flex:1">${opt("", "— Medicamento —", !it.supply_code)}${medCats.map(c=>`<optgroup label="${esc(c)}">${meds.filter(m=>(m.category||"Otro")===c).map(m=>opt(m.code, m.name, m.code===it.supply_code)).join("")}</optgroup>`).join("")}</select>
+      <div class="row"><input class="supq" placeholder="🔍 nombre" autocomplete="off" style="flex:0 0 34%;min-width:0;padding:8px"><select data-supsel="1" data-hsi="${i}" data-k="supply_code" style="flex:1">${opt("", "— Medicamento —", !it.supply_code)}${medCats.map(c=>`<optgroup label="${esc(c)}">${meds.filter(m=>(m.category||"Otro")===c).map(m=>opt(m.code, m.name, m.code===it.supply_code)).join("")}</optgroup>`).join("")}</select>
         <button class="del" data-hsrm="${i}" title="Quitar">✕</button></div>
       <div class="grid4"><div><span>Dosis</span><input data-hsi="${i}" data-k="dose" inputmode="decimal" value="${it.dose??""}"></div>
         <div><span>Unidad</span><input data-hsi="${i}" data-k="unit" value="${esc(it.unit||"")}"></div>
@@ -1112,7 +1160,7 @@ function renderHealthForm(){
         <div><span>Retiro leche</span><b>${hsSupply(it.supply_code)?.milk_withdrawal ?? "—"} d</b></div></div>
     </div>`).join("")}
     <button class="lnk" id="hsAddItem" style="margin-top:6px">＋ agregar medicamento</button>
-    <label>Formuló</label><div class="chips">${["Juan (veterinario)","Mayordomo","Otro"].map(x=>`<button class="${f.prescribed_by===x?"on":""}" data-hsby="${x}">${x}</button>`).join("")}</div>
+    <label ${canDo("salud_diagnostico") ? "" : `style="display:none"`}>Formuló</label><div class="chips" ${canDo("salud_diagnostico") ? "" : `style="display:none"`}>${["Juan (veterinario)","Mayordomo","Otro"].map(x=>`<button class="${f.prescribed_by===x?"on":""}" data-hsby="${x}">${x}</button>`).join("")}</div>
     <label>Nota (opcional)</label><input id="hsNote" value="${esc(f.notes)}">
     <div class="err" id="hsErr"></div>
     <button class="btn" id="hsSave" style="margin-top:12px;font-size:18px;padding:14px">Guardar (queda aplicado)</button>
@@ -1121,13 +1169,17 @@ function renderHealthForm(){
 function hsReadInputs(){
   if (!hsForm) return;
   hsForm.cow_id = ($("hsCow")?.value || "").trim().toUpperCase(); hsForm.start_date = $("hsDate")?.value || today(); hsForm.notes = $("hsNote")?.value || "";
+  if ($("hsSymp")) hsForm.symptoms = $("hsSymp").value.trim();
 }
 $("hsBody").addEventListener("input", e=>{
   const el = e.target.closest("[data-hsi]"); if (!el || !hsForm) return;
   const it = hsForm.items[+el.dataset.hsi], k = el.dataset.k, v = el.value;
   it[k] = ["dose","every_hours","days"].includes(k) ? (v==="" ? null : +v.replace(",", ".")) : v;
 });
-$("hsBody").addEventListener("change", e=>{
+$("hsBody").addEventListener("change", async e=>{
+  const dx = e.target.closest("[data-hsdxset]");
+  if (dx && dx.value){ const { error } = await sb.from("treatments_cow").update({ diagnosis:dx.value }).eq("id", +dx.dataset.hsdxset);
+    if (error) return toast("No se pudo guardar: " + error.message); toast("Diagnóstico guardado ✓"); return loadHealth(); }
   const el = e.target.closest('[data-k="supply_code"]'); if (!el || !hsForm) return;
   const it = hsForm.items[+el.dataset.hsi]; it.supply_code = el.value; it.unit = hsSupply(el.value)?.unit || it.unit; hsReadInputs(); renderHealthForm();
 });
@@ -1153,9 +1205,11 @@ $("hsBody").addEventListener("click", async e=>{
   if (t.id==="hsSave"){
     const f = hsForm, err = m => $("hsErr").textContent = m;
     if (!f.cow_id) return err("Escribe el número de la vaca.");
-    if (!f.diagnosis) return err("Escoge el diagnóstico.");
-    const items = f.items.filter(i=>i.supply_code);
-    if (!items.length) return err("Agrega al menos un medicamento.");
+    const vet = canDo("salud_diagnostico"), items = f.items.filter(i=>i.supply_code);
+    if (vet && !f.diagnosis) return err("Escoge el diagnóstico.");
+    if (!vet){ if (!f.symptoms) return err("Escribe qué tiene el animal."); f.diagnosis = "Sin diagnóstico";
+      f.notes = [f.symptoms, f.notes].filter(Boolean).join(" · "); f.prescribed_by = f.prescribed_by || "Mayordomo"; }
+    if (vet && !items.length) return err("Agrega al menos un medicamento.");
     if (items.some(i=>!(i.dose > 0))) return err("Revisa la dosis de cada medicamento.");
     if (f.start_date > today()) return err("La fecha no puede ser futura.");
     const ob = jget("hsOutbox", []); ob.push({ ...f, items }); jset("hsOutbox", ob);
@@ -1402,7 +1456,7 @@ function renderPsSheet(){
   if (s.kind==="labor") body += `<label>Labor</label><div class="chips">${PS_ACTS.map(a=>`<button class="${s.act===a?"on":""}" data-psact="${a}">${a}</button>`).join("")}</div>
     <label>Potreros</label>${psPadPicker(true)}
     <label>Insumos del inventario (cantidad total para todos los potreros escogidos)</label>
-    ${s.items.map((it, i)=>`<div class="row" style="margin-top:6px"><select data-psi="${i}" data-k="code" style="flex:1">${opt("", "— Insumo —", !it.code)}${sup.map(m=>opt(m.code, m.name + " (" + (m.unit||"") + ")", m.code===it.code)).join("")}</select>
+    ${s.items.map((it, i)=>`<div class="row" style="margin-top:6px"><input class="supq" placeholder="🔍 nombre" autocomplete="off" style="flex:0 0 34%;min-width:0;padding:8px"><select data-supsel="1" data-psi="${i}" data-k="code" style="flex:1">${opt("", "— Insumo —", !it.code)}${sup.map(m=>opt(m.code, m.name + " (" + (m.unit||"") + ")", m.code===it.code)).join("")}</select>
       <input data-psi="${i}" data-k="qty" inputmode="decimal" placeholder="Cantidad" value="${it.qty??""}" style="flex:0 0 110px"><button class="del" data-psrm="${i}">✕</button></div>`).join("")}
     <button class="lnk" id="psAddItem" style="margin-top:6px">＋ agregar insumo</button>${sup.length ? "" : `<div class="sub">No hay fertilizantes ni herbicidas en el catálogo: agrégalos en Mykau_insumos_y_salud.xlsx. Mientras tanto escribe el producto abajo.</div>`}
     <label>Producto (texto, opcional)</label><input id="psProd" value="${esc(s.product)}" autocapitalize="characters" placeholder="CASTA, TILT">
@@ -1747,7 +1801,7 @@ let rgReady = false, rgNames = null, rgState = null;
 async function initRegistros(){
   if (!rgReady){
     rgReady = true;
-    rgState = { farm:"", kind:"", status:"pend", user:"", from:addDays(today(), -30), to:today() };
+    rgState = { farm:"", kind:"", status: canSee("registros_todos") ? "pend" : "all", user:"", from:addDays(today(), -30), to:today() };
     $("rgFilters").addEventListener("change", e=>{
       const t = e.target;
       if (t.name==="rgSt") rgState.status = t.value;
@@ -2290,7 +2344,7 @@ function tnAppCard(d, rows){
     <div class="sub">Purga, vacuna o vitamina: se registra en Salud a cada animal pesado este día y descuenta del inventario.</div>
     <div class="chips" style="margin-top:8px">${TN_KINDS.map(k=>`<button class="${a?.kind===k?"on":""}" data-tnkind="${k}">${k}</button>`).join("")}</div>
     ${a?.kind ? `${a.items.map((it, i)=>`<div class="hsitem">
-        <div class="row"><select data-tni="${i}" data-k="code" style="flex:1">${opt("", "— Insumo —", !it.code)}${cats.map(c=>`<optgroup label="${esc(c)}">${sup.filter(m=>(m.category||"Otro")===c).map(m=>opt(m.code, m.name, m.code===it.code)).join("")}</optgroup>`).join("")}</select>
+        <div class="row"><input class="supq" placeholder="🔍 nombre" autocomplete="off" style="flex:0 0 34%;min-width:0;padding:8px"><select data-supsel="1" data-tni="${i}" data-k="code" style="flex:1">${opt("", "— Insumo —", !it.code)}${cats.map(c=>`<optgroup label="${esc(c)}">${sup.filter(m=>(m.category||"Otro")===c).map(m=>opt(m.code, m.name, m.code===it.code)).join("")}</optgroup>`).join("")}</select>
           <button class="del" data-tnirm="${i}">✕</button></div>
         <div class="grid4"><div><span>Dosis por animal</span><input data-tni="${i}" data-k="dose" inputmode="decimal" value="${it.dose??""}"></div>
           <div><span>Unidad</span><input data-tni="${i}" data-k="unit" value="${esc(it.unit||"")}"></div>
@@ -2475,7 +2529,7 @@ function rqForm(f){
   let h = `<label>Fecha</label><input type="date" id="rqDate" value="${rq.date}" max="${today()}">`;
   if (rq.type==="service"){
     const o = rq.opts || { bulls:[], ops:[] };
-    h += `<label>Toro</label><input id="rqBull" list="rqBulls" value="${esc(d.bull||"")}" autocapitalize="characters"><datalist id="rqBulls">${o.bulls.map(b=>`<option value="${esc(b.code)}">${esc((b.name||"") + (b.straws ? ` · ${b.straws} paj.` : ""))}</option>`).join("")}</datalist>
+    h += `<label>Toro</label><input id="rqBull" list="rqBulls" value="${esc(d.bull||"")}" autocapitalize="characters"><datalist id="rqBulls">${o.bulls.map(b=>`<option value="${esc(b.code)}">${esc((b.name||"") + (isAdmin && b.straws ? ` · ${b.straws} paj.` : ""))}</option>`).join("")}</datalist>
       ${o.tanks?.length ? `<label>Termo (de dónde salen las pajillas)</label><select id="rqTank"><option value="">Según el lote de cada vaca</option>${o.tanks.map(t=>`<option value="${esc(t.code)}" ${d.tank===t.code ? "selected" : ""}>${esc(t.name || t.code)}</option>`).join("")}</select>` : ""}
       <label>Inseminador</label>${o.ops.length ? seg("rqOp", o.ops.map(x=>[x,x]), d.op || o.ops[0]) : `<input id="rqOpT" value="${esc(d.op||"")}">`}
       <label>Tipo</label>${seg("rqCat", [["Inseminación","Inseminación"],["Ovsynch","Ovsynch"]], d.cat || "Inseminación")}`;
@@ -2485,7 +2539,7 @@ function rqForm(f){
     const dry = (f?.groups||[]).filter(g=>/^HO/i.test(g));
     const sup = jget("hsCat", { supplies:[] }).supplies.filter(m=>m.unit==="jeringa");
     h += `<label>Pasa al grupo</label>${dry.length ? seg("rqPen", dry.map(g=>[g,g]), d.pen || dry[0]) : `<input id="rqPenT" value="${esc(d.pen||"")}">`}
-      <label>Producto de secado (opcional · por vaca)</label><div class="row"><select id="rqSup" style="flex:1">${opt("", "— Ninguno —", !d.sup)}${sup.map(m=>opt(m.code, m.name, m.code===d.sup)).join("")}</select>
+      <label>Producto de secado (opcional · por vaca)</label><div class="row"><input class="supq" placeholder="🔍 nombre" autocomplete="off" style="flex:0 0 34%;min-width:0;padding:8px"><select data-supsel="1" id="rqSup" style="flex:1">${opt("", "— Ninguno —", !d.sup)}${sup.map(m=>opt(m.code, m.name, m.code===d.sup)).join("")}</select>
       <input id="rqQty" inputmode="decimal" value="${esc(d.qty ?? 4)}" style="flex:0 0 80px"></div>`;
   }
   if (rq.type==="treat"){
@@ -2493,7 +2547,7 @@ function rqForm(f){
     const cats = [...new Set(sup.map(m=>m.category||"Otro"))].sort();
     const it = d.items || (d.items = [{ code:"", dose:null, unit:"", route:"SC" }]);
     h += `<label>Tipo</label><div class="chips">${["Purga","Vacuna","Vitamina","Otro"].map(k=>`<button class="${d.kind===k?"on":""}" data-rqk="${k}">${k}</button>`).join("")}</div>
-      ${it.map((x, i)=>`<div class="hsitem"><div class="row"><select data-rqi="${i}" data-k="code" style="flex:1">${opt("", "— Insumo —", !x.code)}${cats.map(c=>`<optgroup label="${esc(c)}">${sup.filter(m=>(m.category||"Otro")===c).map(m=>opt(m.code, m.name, m.code===x.code)).join("")}</optgroup>`).join("")}</select>
+      ${it.map((x, i)=>`<div class="hsitem"><div class="row"><input class="supq" placeholder="🔍 nombre" autocomplete="off" style="flex:0 0 34%;min-width:0;padding:8px"><select data-supsel="1" data-rqi="${i}" data-k="code" style="flex:1">${opt("", "— Insumo —", !x.code)}${cats.map(c=>`<optgroup label="${esc(c)}">${sup.filter(m=>(m.category||"Otro")===c).map(m=>opt(m.code, m.name, m.code===x.code)).join("")}</optgroup>`).join("")}</select>
         <button class="del" data-rqirm="${i}">✕</button></div>
         <div class="grid4"><div><span>Dosis por animal</span><input data-rqi="${i}" data-k="dose" inputmode="decimal" value="${x.dose??""}"></div>
         <div><span>Unidad</span><input data-rqi="${i}" data-k="unit" value="${esc(x.unit||"")}"></div>
@@ -3139,7 +3193,7 @@ async function rnLoad(){
       sb.from("field_lots").select("name,label,sort,active").eq("farm_id", farm).order("sort"),
       sb.from("paddocks").select("id,predio,number,active,merged_into").eq("farm_id", farm),
       sb.from("lot_report").select("*").eq("farm_id", farm).gte("report_date", since).order("report_date"),
-      sb.from("daily_milk").select("pen,rec_date,paddock_am_id,paddock_pm_id").eq("farm_id", farm).gte("rec_date", addDays(today(), -3)),
+      sb.from("daily_milk").select("pen,rec_date,paddock_am_id,paddock_pm_id,cows").eq("farm_id", farm).gte("rec_date", addDays(today(), -7)),
       sb.from("tank_temp").select("report_date,tank,temp_c,read_time").eq("farm_id", farm).gte("report_date", addDays(today(), -120)),
     ]);
     if (l.error){ rnData = { err:"Falta correr SQL/crear_reporte_ganaderia.sql en Supabase." }; return; }
@@ -3159,9 +3213,11 @@ function rnOpen(){
   const names = same.length ? same.map(r=>r.grp) : [...new Set([...d.lots.filter(l=>l.active).map(l=>l.name), ...prev.map(r=>r.grp)])];
   const lab = n => d.lots.find(l=>l.name===n)?.label || n;
   const milkPad = n => { const m = d.dm.find(x=>x.pen===n && x.rec_date===rnState.date); return m ? (m.paddock_am_id || m.paddock_pm_id) : null; };
+  // hatos de leche: si no se escribe el # de animales, se toma el # de vacas de la Leche diaria (de ese día o la última)
+  const milkCows = n => d.dm.filter(x=>x.pen===n && x.cows && x.rec_date <= rnState.date).sort((a,b)=>b.rec_date.localeCompare(a.rec_date))[0]?.cows ?? null;
   const rows = names.map(n=>{ const s = same.find(r=>r.grp===n), p = prev.find(r=>r.grp===n);
-    const b = s || p || {};
-    return { grp:n, label:lab(n), paddock_id: s ? s.paddock_id : (milkPad(n) || b.paddock_id || null), paddock2_id: b.paddock2_id || null, animals:b.animals ?? null, horses:b.horses ?? null,
+    const b = s || p || {}, mc = milkCows(n);
+    return { grp:n, label:lab(n), paddock_id: s ? s.paddock_id : (milkPad(n) || b.paddock_id || null), paddock2_id: b.paddock2_id || null, animals: s ? (s.animals ?? mc) : (mc ?? b.animals ?? null), fromMilk: !s && mc!=null, horses:b.horses ?? null,
       water: s ? s.water : "bien de agua", fence: s ? s.fence : "bien de corriente", notes: s ? s.notes || "" : "" }; });
   const tanks = Object.fromEntries(rnTanks(d.farm).map(t=>[t, (d.temps || []).find(x=>x.report_date===rnState.date && x.tank===t)?.temp_c ?? null]));
   const tt0 = (d.temps || []).find(x=>x.report_date===rnState.date && x.read_time)?.read_time?.slice(0, 5);
@@ -3197,7 +3253,7 @@ function renderRonda(){
     ${c.rows.map((r, i)=>`<div class="card" data-rni="${i}">
       <div class="row" style="align-items:center;gap:8px"><b style="flex:1;font-size:17px">${esc(r.label)}</b>${reg ? `<button class="del" data-rndel="${i}" title="Quitar del reporte de hoy">✕</button>` : ""}</div>
       <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:6px">
-        <div><label>🐄 Animales</label><input type="number" inputmode="numeric" min="0" data-rnk="animals" value="${r.animals ?? ""}" style="min-width:0"></div>
+        <div><label>🐄 Animales${r.fromMilk ? ` <span class="sub">· de Leche diaria</span>` : ""}</label><input type="number" inputmode="numeric" min="0" data-rnk="animals" value="${r.animals ?? ""}" style="min-width:0"></div>
         <div><label>🐎 Caballos</label><input type="number" inputmode="numeric" min="0" data-rnk="horses" value="${r.horses ?? ""}" placeholder="0" style="min-width:0"></div></div>
       <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">
         <div><label>Potrero</label><select data-rnk="paddock_id" style="min-width:0">${padOpts(r.paddock_id)}</select></div>
@@ -3327,7 +3383,21 @@ const LS_LISTS = [
   ["repet", "🔁 Repetidoras", "Informativa · 3 o más servicios en esta lactancia sin quedar preñadas", "service"],
   ["novillas", "🐂 Novillas para servir", "Informativa · 16 meses o más y 380 kg o más, sin servicio", "service"],
   ["abiertas", "⚠️ Abiertas largas", "Informativa · más de 150 días de paridas y vacías", ""]];
-let lsData = null, lsState = { farm:null, list:"chequeo", pen:"", sel:new Set(), ckDate:null };   // ckDate: mañana (se pone al abrir)
+let lsData = null, lsState = { farm:null, list:"chequeo", pen:"", sel:new Set(), ckDate:null, ord:"num", q:"" };
+// lo que se ve de la lista: lote, búsqueda (uno o varios números) y orden (por número por defecto)
+function lsRowsHtml(rows){
+  const s = lsState;
+  return rows.map(x=>`<label style="display:flex;gap:10px;align-items:center;padding:8px 2px;border-top:1px solid var(--line)">
+        <input type="checkbox" data-lsc="${esc(x.c.id)}" ${s.sel.has(x.c.id) ? "checked" : ""} style="width:22px;height:22px;flex:none">
+        <span style="flex:1"><button class="lnk" data-cow="${esc(x.c.id)}" style="font-size:17px">${esc(x.c.id)}</button> <span class="sub">${esc(x.c.pen||"")} · ${esc((x.c.status||"").replace(/^\/|\/$/g, ""))}</span>
+        <div class="sub">${lsDetail(x, s.list)}</div></span></label>`).join("") || `<div class="empty">${s.q ? "Ningún número de la búsqueda está en esta lista" : "Ninguna 👍"}</div>`;
+}
+function lsView(all){
+  const s = lsState, tk = [...new Set(String(s.q || "").toUpperCase().split(/[\s,;]+/).filter(Boolean))];
+  const rows = lsPick(all, s.list).filter(x=>(!s.pen || (x.c.pen||"—")===s.pen)
+    && (!tk.length || (tk.length > 1 ? tk.includes(x.c.id) : x.c.id.includes(tk[0]))));
+  return s.ord==="num" ? rows.slice().sort((a,b)=>byNum(a.c.id, b.c.id)) : rows;
+}   // ckDate: mañana (se pone al abrir)
 async function initListas(){
   if (!lsState.ckDate) lsState.ckDate = addDays(today(), 1);
   if (!lsState.farm){ const fs = await prodFarms(); lsState.farm = jget("lsLast", {}).farm || fs[0]?.id || 1; }
@@ -3476,7 +3546,7 @@ function renderListas(){
   if (!lsData){ $("lsBody").innerHTML = `<div class="card"><div class="empty">Abre las listas una vez con señal.</div></div>`; return; }
   const all = lsCompute(), counts = Object.fromEntries(LS_LISTS.map(([k])=>[k, lsPick(all, k).length]));
   const L = LS_LISTS.find(l=>l[0]===s.list), rows0 = lsPick(all, s.list);
-  const pens = [...new Set(rows0.map(x=>x.c.pen||"—"))].sort(byNum), rows = rows0.filter(x=>!s.pen || (x.c.pen||"—")===s.pen);
+  const pens = [...new Set(rows0.map(x=>x.c.pen||"—"))].sort(byNum), rows = lsView(all);
   const chips = (opts, cur, attr) => `<div class="chips sm ckpan" style="padding:0;margin-top:6px"><div class="chips sm">${opts.map(([v,t])=>`<button class="${cur===v?"on":""}" ${attr}="${esc(v)}">${t}</button>`).join("")}</div></div>`;
   const age = Math.round((Date.now() - lsData.at)/6e4);
   $("lsBody").innerHTML = `<div class="card">${chips(farms.map(f=>[String(f.id), esc(farmLabel(f))]), String(s.farm), "data-lsf")}
@@ -3488,12 +3558,11 @@ function renderListas(){
       ${s.list==="chequeo" ? `<div class="row" style="align-items:center;margin-top:8px"><span class="sub" style="flex:none">Fecha del chequeo</span><input type="date" id="lsCkDate" value="${s.ckDate}"></div>
         <div class="list">${["EXREP","ECO1","ECO2","REPETIR","DPR","DP5","DPSEC"].map(k=>{ const n = rows.filter(x=>x.ck.cat===k).length; return n ? `<span class="chip"><span class="ckcat" style="background:var(${CK_COLOR[k]})">${k}</span>${n}</span>` : ""; }).join("")}</div>` : ""}
       ${pens.length > 1 ? chips([["", "Todos los lotes"], ...pens.map(p=>[p, esc(p)])], s.pen, "data-lsp") : ""}
+      ${chips([["num","Por número"],["prio", s.list==="chequeo" ? "Por lote y etapa" : "Por urgencia"]], s.ord, "data-lso")}
+      <input id="lsQ" placeholder="Buscar número (o varios: 1001 1007)" value="${esc(s.q || "")}" autocapitalize="characters" autocomplete="off" style="margin-top:8px">
       <div class="row" style="margin-top:8px;align-items:center"><button class="chip" data-lsall="1">Todos</button><button class="chip" data-lsall="0">Ninguno</button>
         <span class="sub" id="lsCount" style="flex:1;text-align:right">${rows.filter(x=>s.sel.has(x.c.id)).length} marcadas</span></div>
-      ${rows.map(x=>`<label style="display:flex;gap:10px;align-items:center;padding:8px 2px;border-top:1px solid var(--line)">
-        <input type="checkbox" data-lsc="${esc(x.c.id)}" ${s.sel.has(x.c.id) ? "checked" : ""} style="width:22px;height:22px;flex:none">
-        <span style="flex:1"><button class="lnk" data-cow="${esc(x.c.id)}" style="font-size:17px">${esc(x.c.id)}</button> <span class="sub">${esc(x.c.pen||"")} · ${esc((x.c.status||"").replace(/^\/|\/$/g, ""))}</span>
-        <div class="sub">${lsDetail(x, s.list)}</div></span></label>`).join("") || `<div class="empty">Ninguna 👍</div>`}
+      <div id="lsRows">${lsRowsHtml(rows)}</div>
       ${rows.length ? `<div class="row" style="margin-top:12px;gap:8px">
         <button class="btn ghost" id="lsShare">📤 Compartir lista</button>
         ${s.list==="chequeo" ? `<button class="btn ghost" id="lsPdf">📄 PDF</button><button class="btn" id="lsPdfSend">✉️ Enviar PDF</button>` : ""}
@@ -3504,13 +3573,14 @@ $("lsBody").addEventListener("click", async e=>{
   const t = e.target, q = a => t.closest(`[${a}]`)?.getAttribute(a), s = lsState;
   if (q("data-lsf")){ s.farm = +q("data-lsf"); s.pen = ""; s.sel = new Set(); jset("lsLast", { farm:s.farm }); await lsLoad(); return renderListas(); }
   if (q("data-lsl")){ s.list = q("data-lsl"); s.pen = ""; s.sel = new Set(); return renderListas(); }
+  if (q("data-lso")){ s.ord = q("data-lso"); return renderListas(); }
   if (q("data-lsp")!=null){ s.pen = q("data-lsp"); return renderListas(); }
   if (t.id==="lsReload"){ await lsLoad(true); return renderListas(); }
-  if (q("data-lsall")){ const on = q("data-lsall")==="1", all = lsPick(lsCompute(), s.list).filter(x=>!s.pen || (x.c.pen||"—")===s.pen);
+  if (q("data-lsall")){ const on = q("data-lsall")==="1", all = lsView(lsCompute());
     all.forEach(x=>on ? s.sel.add(x.c.id) : s.sel.delete(x.c.id)); return renderListas(); }
   if (q("data-cow")){ e.preventDefault(); openCow(q("data-cow")); return; }
   if (t.id==="lsShare"){
-    const L = LS_LISTS.find(l=>l[0]===s.list), rows = lsPick(lsCompute(), s.list).filter(x=>!s.pen || (x.c.pen||"—")===s.pen);
+    const L = LS_LISTS.find(l=>l[0]===s.list), rows = lsView(lsCompute());
     const farm = (jget("mkFarms", []).find(f=>f.id===s.farm));
     const txt = `${L[1].replace(/^\S+\s/, "")} · ${farm ? farmLabel(farm) : ""} · ${fmt(today())}\n` +
       rows.map(x=>`${x.c.id} (${x.c.pen||""}) ${lsDetail(x, s.list).replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim()}`).join("\n");
@@ -3525,6 +3595,8 @@ $("lsBody").addEventListener("click", async e=>{
     location.hash = "rapido"; window.scrollTo({top:0});
   }
 });
+// buscar: solo se redibuja la lista (el teclado no salta)
+$("lsBody").addEventListener("input", e=>{ if (e.target.id!=="lsQ") return; lsState.q = e.target.value; $("lsRows").innerHTML = lsRowsHtml(lsView(lsCompute())); });
 $("lsBody").addEventListener("change", e=>{
   if (e.target.id==="lsCkDate"){ lsState.ckDate = e.target.value || addDays(today(), 1); return renderListas(); }
   const c = e.target.closest("[data-lsc]"); if (!c) return;
@@ -3806,7 +3878,7 @@ async function loadRegOpts(farmId){
   const list = k => (fl.data||[]).filter(r=>r.kind===k).map(r=>r.value);
   // primero los toros que tienen pajillas en algún termo, luego los más usados
   const stock = (st.data||[]).filter(x=>+x.straws > 0), withStock = [...new Set(stock.map(x=>x.bull_code))].sort(byNum);
-  const codes = [...new Set([...withStock, ...top("bull").slice(0, 20)])];
+  const codes = [...new Set([...withStock, ...top("bull").slice(0, 20)])].sort(byNum);
   const { data:bn } = codes.length ? await sb.from("bulls").select("code,name").in("code", codes) : { data:[] };
   const names = Object.fromEntries((bn||[]).map(b=>[b.code, b.name]));
   const ins = list("inseminator");
@@ -3843,7 +3915,7 @@ async function openDry(ev){
     <label>Fecha</label><input type="date" name="date" value="${ev?.event_date || today()}" max="${today()}" required>
     <label>Pasa al grupo</label>${groups.length ? seg("pen", groups.map(g=>[g,g]), x.dest_pen || groups[0]) : `<input name="pen" value="${esc(x.dest_pen||"")}" style="text-transform:uppercase">`}
     ${ev ? "" : `<label>Producto de secado (opcional · queda en Salud y descuenta del inventario)</label>
-      <div class="row"><select name="sup" style="flex:1">${opt("", "— Ninguno —", true)}${sup.map(m=>opt(m.code, m.name + " (" + (m.unit||"") + ")", false)).join("")}</select>
+      <div class="row"><input class="supq" placeholder="🔍 nombre" autocomplete="off" style="flex:0 0 34%;min-width:0;padding:8px"><select data-supsel="1" name="sup" style="flex:1">${opt("", "— Ninguno —", true)}${sup.map(m=>opt(m.code, m.name + " (" + (m.unit||"") + ")", false)).join("")}</select>
       <input name="qty" inputmode="decimal" value="4" style="flex:0 0 80px" title="Cantidad"></div>`}
     <label>Nota (opcional)</label><input name="note" maxlength="200" value="${esc(ev?.comments || "")}">
     <div class="err" id="regErr"></div>
@@ -3964,7 +4036,7 @@ async function openReg(type, ev){
     <label>Tipo</label>${seg("tipo", tipos, tipo0)}
     <div id="svOnly" class="${tipo0==="Celo" ? "hidden" : ""}">
       <label>Toro</label>
-      <select name="bull">${o.bulls.map(b=>opt(b.code, b.code+(b.name?" · "+b.name:"")+(b.straws ? ` · ${b.straws} paj.` : ""), b.code===(ev ? ev.bull : lastBull))).join("")}${opt(OTHER,"Otro toro…",!o.bulls.length || (ev && !o.bulls.some(b=>b.code===ev.bull)))}</select>
+      <select name="bull">${o.bulls.map(b=>opt(b.code, b.code+(b.name?" · "+b.name:"")+(isAdmin && b.straws ? ` · ${b.straws} paj.` : ""), b.code===(ev ? ev.bull : lastBull))).join("")}${opt(OTHER,"Otro toro…",!o.bulls.length || (ev && !o.bulls.some(b=>b.code===ev.bull)))}</select>
       <input name="bullOther" placeholder="Código del toro (como en Interherd)" class="hidden" value="${esc(ev && !o.bulls.some(b=>b.code===ev.bull) ? ev.bull||"" : "")}" style="margin-top:6px;text-transform:uppercase">
       ${o.tanks?.length ? `<label>Termo (de dónde sale la pajilla)</label><select name="tank">${o.tanks.map(t=>opt(t.code, t.name || t.code, t.code===(ev?.details?.tank || svTank(c.pen, o.tanks)))).join("")}</select>` : ""}
       <label>Inseminador</label>
