@@ -338,6 +338,7 @@ details.lac td{padding:6px 8px}
         <div id="result" class="usHistOnly"><div class="empty">Escribe el número de la ternera</div></div>
       </div>
       <div id="usReg" class="hidden"></div>
+      <div id="usSug" class="hidden"></div>
       <div class="card usHistOnly">
         <b>Terneras a vigilar</b>
         <div class="sub">Score ≥ 2 en la última sesión</div>
@@ -5524,18 +5525,18 @@ function usNew(keep){
 }
 function usSetTab(t){
   usTab = t;
-  $("usTabs").innerHTML = canDo("terneras_registrar") ? seg("usT", [["hist","Historial"],["reg","Registrar ecografías"]], usTab) : "";
+  $("usTabs").innerHTML = seg("usT", [["hist","Historial"], ...(canDo("terneras_registrar") ? [["reg","Registrar"]] : []), ["sug","Sugerencias"]], usTab);
   document.querySelectorAll(".usHistOnly").forEach(el=>el.classList.toggle("hidden", usTab!=="hist"));
   $("usReg").classList.toggle("hidden", usTab!=="reg");
+  $("usSug").classList.toggle("hidden", usTab!=="sug");
   if (usTab==="reg"){ if (!usCur) usNew(); renderUs(); usLoadToday(); }
+  if (usTab==="sug") renderSug();
 }
 function renderUs(){
   const c = usCur, farm = $("finca").selectedOptions[0]?.textContent || "";
   $("usReg").innerHTML = `<div class="card sheet hsform" style="max-height:none">
       <div class="sub">${esc(farm)} · se registra en la finca escogida arriba</div>
-      <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">
-        <div><label>Fecha</label><input type="date" id="usDate" value="${c.date}" max="${today()}" style="min-width:0"></div>
-        <div><label>Evaluador</label><input id="usScorer" value="${esc(c.scorer)}" placeholder="quién escanea" style="min-width:0"></div></div>
+      <label>Fecha</label><input type="date" id="usDate" value="${c.date}" max="${today()}">
       <div style="display:grid;grid-template-columns:1.2fr 1fr 1fr;gap:8px">
         <div><label>N° ternera</label><input id="usCalf" inputmode="numeric" value="${esc(c.calf)}" style="min-width:0;font-size:24px;font-weight:800"></div>
         <div><label>Edad (d)</label><input id="usAge" inputmode="numeric" value="${esc(c.age)}" style="min-width:0"></div>
@@ -5550,7 +5551,8 @@ function renderUs(){
       <label style="display:flex;gap:10px;align-items:center;margin-top:12px"><input type="checkbox" id="usTreat" ${c.treat ? "checked" : ""} style="width:24px;height:24px">Tratar</label>
       <label>Comentario</label><input id="usComment" value="${esc(c.comment)}">
       <div class="err" id="usErr"></div>
-      <button class="btn" id="usSave" style="margin-top:12px;font-size:18px;padding:14px">Guardar / Siguiente</button></div>
+      <button class="btn" id="usSave" style="margin-top:12px;font-size:18px;padding:14px">Guardar / Siguiente</button>
+      <div id="usHistBox"></div></div>
     <div class="card"><div class="row" style="align-items:center"><b style="flex:1">Registradas hoy (${fmt(c.date)})</b><button class="btn ghost" id="usSum" style="width:auto">📊 Resumen</button></div>
       <div id="usList"><div class="empty">Cargando…</div></div></div>
     <div id="usSummary"></div>`;
@@ -5559,7 +5561,7 @@ function renderUs(){
 // historial rápido de la ternera: ecografías anteriores, tratamientos, nacimiento y último peso
 async function usQuick(){
   const id = (usCur.calf || "").trim(), box = $("usQuick"); if (!box) return;
-  if (!/^\d+$/.test(id)){ box.innerHTML = id ? "Solo números" : ""; return; }
+  if (!/^\d+$/.test(id)){ box.innerHTML = id ? "Solo números" : ""; if ($("usHistBox")) $("usHistBox").innerHTML = ""; return; }
   const farm = +$("finca").value, key = farm + "|" + id;
   if (!usHist[key] && navigator.onLine){
     box.innerHTML = "Buscando historial…";
@@ -5575,6 +5577,16 @@ async function usQuick(){
   const birth = h.animal?.birth_date || h.cow?.birth_date;
   if (birth && !usCur.age){ usCur.age = String(days(birth, usCur.date)); $("usAge").value = usCur.age; }
   const tx = ex.flatMap(e=>(e.treatments||[]).map(t=>t.drugs?.name).filter(Boolean));
+  // ¿crónica?: veces con score ≥ 2, sesiones seguidas enferma al final y tratamientos
+  const sick = ex.filter(e=>+e.score >= 2).length;
+  let run = 0; for (let i = ex.length - 1; i >= 0 && +ex[i].score >= 2; i--) run++;
+  const chronic = sick >= 3 || run >= 2 || tx.length >= 2;
+  $("usHistBox").innerHTML = ex.length ? `<div style="margin-top:12px;border-top:1px solid var(--line);padding-top:8px">
+      <b>Cómo venía la ${esc(id)}</b> ${chronic ? `<span class="tag" style="background:var(--s4);color:#fff">crónica</span>` : sick ? `<span class="tag">ya estuvo enferma</span>` : `<span class="tag" style="background:var(--s0);color:#fff">sana</span>`}
+      <div class="sub">${sick} de ${ex.length} ecografías con score ≥ 2 · ${run ? `${run} ${run > 1 ? "sesiones seguidas" : "sesión"} enferma al final · ` : ""}${tx.length} tratamiento${tx.length===1 ? "" : "s"}</div>
+      <table style="font-size:13px;margin-top:4px"><tr><th>Fecha</th><th>Edad</th><th>Score</th><th>Lóbulos</th><th>Antibiótico</th></tr>
+      ${ex.slice().reverse().map(e=>`<tr><td>${fmt(e.exam_date)}</td><td>${birth ? days(birth, e.exam_date) + " d" : ""}</td><td>${badge(+e.score)}</td><td>${esc(e.lobes_raw || "—")}</td>
+        <td class="drug">${(e.treatments||[]).map(t=>esc(short(t.drugs?.name || ""))).join(", ")}</td></tr>`).join("")}</table></div>` : "";
   box.innerHTML = !h.animal && !h.cow ? `<b style="color:var(--s2)">Ternera nueva</b> (no tiene registros)` :
     `${birth ? `Nació ${fmt(birth)} · ` : ""}${h.cow?.dam ? `madre ${esc(h.cow.dam)} · ` : ""}${h.w ? `último peso ${h.w.weight_kg} kg (${fmt(h.w.event_date)}) · ` : ""}
      ${ex.length ? `<b>${ex.length} ecografías:</b> ${ex.slice(-5).map(e=>`${fmt(e.exam_date).slice(0, 5)} ${badge(+e.score)}${e.lobes_raw ? `<span class="sub">(${esc(e.lobes_raw)})</span>` : ""}`).join(" ")}` : "sin ecografías"}
@@ -5593,7 +5605,7 @@ async function usLoadToday(){
   const box = $("usList"); if (!box) return;
   box.innerHTML = usToday.length ? `<div style="overflow-x:auto"><table style="font-size:13px"><tr><th>ID</th><th>Score</th><th>Lóbulos</th><th>Edad</th><th>Peso</th><th></th></tr>
     ${usToday.map(r=>`<tr><td><b>${esc(r.calf)}</b>${r.treat ? " 💉" : ""}${r.pending ? ` <span class="tag">⏳</span>` : ""}</td><td>${badge(r.score)}</td><td>${esc(r.lobes) || "—"}</td>
-      <td>${r.age ?? ""}</td><td>${r.weight ?? ""}</td><td>${r.mine && !r.pending ? `<button class="del" data-usdel="${r.id}">✕</button>` : ""}</td></tr>`).join("")}</table></div>`
+      <td>${r.age ?? ""}</td><td>${r.weight ?? ""}</td><td>${r.pending ? `<button class="del" data-uspdel="${r.client_id}">✕</button>` : r.mine ? `<button class="del" data-usdel="${r.id}">✕</button>` : ""}</td></tr>`).join("")}</table></div>`
     : `<div class="empty">Ninguna todavía</div>`;
 }
 // resumen como CalfScan: por score, % y edades (promedio, mediana, mínima, máxima); 2+ y 3+
@@ -5672,6 +5684,9 @@ $("usReg").addEventListener("click", async e=>{
     usNew(c); renderUs(); $("usCalf").focus();
     await flushUs(); usLoadToday(); return;
   }
+  const pd = t.closest("[data-uspdel]");
+  if (pd){ if (!confirm("¿Borrar esta ecografía? (todavía no se había subido)")) return;
+    jset("usOutbox", jget("usOutbox", []).filter(x=>x.client_id!==pd.dataset.uspdel)); toast("Ecografía borrada"); return usLoadToday(); }
   const dl = t.closest("[data-usdel]");
   if (dl){ if (!confirm("¿Borrar esta ecografía?")) return;
     const { data, error } = await sb.from("ultrasound_exams").delete().eq("id", +dl.dataset.usdel).select("id");
@@ -5682,7 +5697,148 @@ $("usReg").addEventListener("click", async e=>{
     try{ if (navigator.share) await navigator.share({ text:txt }); else { await navigator.clipboard.writeText(txt); toast("Resumen copiado"); } }catch(x){} }
 });
 $("usTabs").addEventListener("change", e=>{ if (e.target.name==="usT") usSetTab(e.target.value); });
-$("finca").addEventListener("change", ()=>{ if (usTab==="reg"){ usHist = {}; renderUs(); usLoadToday(); } });
+$("finca").addEventListener("change", ()=>{ if (usTab==="reg"){ usHist = {}; renderUs(); usLoadToday(); } if (usTab==="sug"){ sgDate = null; renderSug(true); } });
+
+// ═══════════════════════ NEUMONÍA · SUGERENCIAS DE TRATAMIENTO ═══════════════
+// El mismo motor de neumonias/auto_import.py (get_recommendation + compute_drug_stats) y los niveles de protocolo.json:
+//   nivel = el más alto cuya condición se cumpla (score_desde o episodio_desde); dentro del nivel, el fármaco con mejor
+//   resultado histórico (mejora y curación en ese score, menos reincidencia) y ajustado por lo que le pasó a ESTA ternera
+//   (falló −30, curó +15, mejoró +8, mejora leve +2); no repite uno que ya falló en ella.
+const SG_LEVELS = [
+  { nombre:"PRIMERA_LINEA", farmacos:["OXITETRACICLINA","TRIMETO_SULFA"] },
+  { nombre:"INTERMEDIO", farmacos:["FLORFENICOL","CEFALEXINA"], score_desde:4, episodio_desde:2 },
+  { nombre:"RESERVA", farmacos:["ENROFLOXACINA","MARBOFLOXACINA","CEFTIOFUR"], score_desde:5, episodio_desde:3 }];
+const SG_LEVEL_TXT = { PRIMERA_LINEA:"Primera línea", INTERMEDIO:"Intermedio", RESERVA:"Reserva" };
+let sgData = null, sgDate = null;
+const sgOutcome = (ts, ns) => ns===0 ? "curado" : ts - ns >= 2 ? "mejoró" : ns < ts ? "mejora_leve" : "sin_mejora";
+function sgStats(tx, ex){
+  const by = {}; ex.forEach(e=>(by[e.animal_id] ||= []).push(e));
+  Object.values(by).forEach(a=>a.sort((x,y)=>x.exam_date.localeCompare(y.exam_date)));
+  const st = {};
+  tx.forEach(t=>{
+    const dn = t.drugs?.name; if (!dn) return;
+    const ae = by[t.animal_id] || [], nx = ae.find(e=>e.exam_date > t.treatment_date); if (!nx) return;
+    const ts = +(t.score_at_treatment || 2), ns = +nx.score, sc = Math.min(Math.floor(ts), 5);
+    const s = st[dn] ||= { total:0, cured:0, improved:0, relapsed:0, rbase:0, by:{ 2:{t:0,c:0,i:0}, 3:{t:0,c:0,i:0}, 4:{t:0,c:0,i:0}, 5:{t:0,c:0,i:0} } };
+    const b = s.by[sc] ||= { t:0, c:0, i:0 };
+    s.total++; b.t++;
+    if (ns===0){ s.cured++; b.c++; }
+    if (ts - ns >= 2){ s.improved++; b.i++; } else if (ns < ts && ns !== 0){ s.improved += 0.5; b.i += 0.5; }
+    if (ns < ts){ s.rbase++; let rec = false;
+      for (const fe of ae.filter(e=>e.exam_date > nx.exam_date)){ if (+fe.score < 2) rec = true; if (rec && +fe.score >= 2){ s.relapsed++; break; } } }
+  });
+  const out = {};
+  Object.entries(st).forEach(([dn, s])=>{ if (s.total < 3) return;
+    out[dn] = { n:s.total, cured_pct:Math.round(s.cured/s.total*100), improve_pct:Math.round(s.improved/s.total*100),
+      relapse_pct: s.rbase >= 3 ? Math.round(s.relapsed/s.rbase*100) : null,
+      by: Object.fromEntries(Object.entries(s.by).filter(([,b])=>b.t > 0).map(([k,b])=>[k, { n:b.t,
+        improve_pct: b.t >= 2 ? Math.round(b.i/b.t*100) : null, cured_pct: b.t >= 2 ? Math.round(b.c/b.t*100) : null }])) }; });
+  return out;
+}
+// historial de tratamientos de una ternera con su resultado (el examen siguiente); el de hoy cuenta como control
+function sgHistory(aid, date, score){
+  const ex = (sgData.exByA[aid] || []);
+  return (sgData.txByA[aid] || []).filter(t=>t.treatment_date < date).map(t=>{
+    const nx = ex.find(e=>e.exam_date > t.treatment_date && e.exam_date <= date), ts = +(t.score_at_treatment || 2);
+    return { drug:t.drugs?.name, date:t.treatment_date, ts, outcome: nx ? sgOutcome(ts, nx.exam_date===date ? score : +nx.score) : null };
+  }).filter(h=>h.drug);
+}
+function sgRecommend(score, hist){
+  if (score < 2) return null;
+  const sc = Math.min(Math.floor(score), 5), ds = sgData.stats, ep = hist.length + 1;
+  let li = 0, motivo = `score ${sc}, 1ª vez`;
+  SG_LEVELS.forEach((lv, i)=>{ if (!i) return; if (sc >= (lv.score_desde ?? 99)){ li = i; motivo = `score ${sc}`; } else if (ep >= (lv.episodio_desde ?? 99)){ li = i; motivo = `ya recibió antibiótico (${ep - 1}x)`; } });
+  const cand = SG_LEVELS[li].farmacos.slice(), seen = new Set(cand), backup = [];
+  [...Array.from({ length:SG_LEVELS.length - li - 1 }, (_, k)=>li + 1 + k), ...Array.from({ length:li }, (_, k)=>li - 1 - k)]
+    .forEach(j=>{ const g = SG_LEVELS[j].farmacos.filter(d=>!seen.has(d)); g.forEach(d=>seen.add(d)); backup.push(g); });
+  const prev = {}; hist.forEach(h=>(prev[h.drug] ||= []).push(h.outcome));
+  const pts = d => { const s = ds[d] || {}; if ((s.n || 0) < 5) return -50;
+    const b = s.by?.[sc] || {}, nsc = b.n || 0;
+    let v = (nsc >= 3 ? b.improve_pct : s.improve_pct) || 0;
+    v += ((nsc >= 3 ? (b.cured_pct ?? s.cured_pct) : s.cured_pct) || 0) * 0.3;
+    if (s.relapse_pct) v -= s.relapse_pct * 0.5;
+    const o = prev[d] || [], k = x => o.filter(y=>y===x).length;
+    return Math.round((v - k("sin_mejora")*30 + k("curado")*15 + k("mejoró")*8 + k("mejora_leve")*2)*10)/10; };
+  const failed = d => (prev[d] || []).includes("sin_mejora"), byPts = (a,b)=>pts(b) - pts(a);
+  const ok = cand.filter(d=>!failed(d)), okL = ok.length ? ok : cand;
+  const ranked = [...okL.slice().sort(byPts), ...cand.filter(d=>!okL.includes(d)).sort(byPts), ...backup.flatMap(g=>g.slice().sort(byPts))];
+  const best = ranked[0], alt = ranked.find(d=>d !== best);
+  const efi = d => { const s = ds[d] || {}, b = s.by?.[sc] || {}; if ((s.n || 0) < 5) return "sin datos suficientes";
+    const use = (b.n || 0) >= 3, ip = use ? b.improve_pct : s.improve_pct, cp = use ? b.cured_pct : s.cured_pct;
+    return [ip!=null && `${ip}% mejora`, cp!=null && `${cp}% curación`, s.relapse_pct!=null && `${s.relapse_pct}% reincide`].filter(Boolean).join(" · ") + ` (n=${use ? b.n : s.n}${use ? "" : ", datos generales"})`; };
+  const al = [];
+  if (hist.length >= 2) al.push("⚠️ Recurrente: revisar si hay un factor predisponente");
+  Object.entries(prev).forEach(([d, o])=>{ const f = o.filter(x=>x==="sin_mejora").length; if (f && d===best) al.push(`⚡ ${d} falló ${f}x en esta ternera: considera ${alt || "escalar"}`); });
+  Object.entries(prev).forEach(([d, o])=>{ if (o.includes("curado")) al.push(`✓ ${d} la curó antes`); });
+  return { best, alt, nivel:SG_LEVELS[li].nombre, motivo, ep, epTxt: ep===1 ? "1ª vez" : ep===2 ? "⚠️ 2ª vez" : ep===3 ? "🔴 3ª vez — escalar" : `🔴 ${ep}ª vez — grave`,
+    efi:efi(best), top: ranked.slice(0, 3).map(d=>({ d, efi:efi(d) })), al };
+}
+async function sgLoad(force){
+  const farm = +$("finca").value;
+  if (!force && sgData?.farm === farm) return;
+  $("usSug").innerHTML = `<div class="card"><div class="empty">Calculando resultados de los tratamientos…</div></div>`;
+  const [tx, ex, dr] = await Promise.all([
+    psAll(()=>sb.from("treatments").select("id,animal_id,treatment_date,score_at_treatment,exam_id,created_by,drugs(name)").eq("farm_id", farm).order("treatment_date"))
+      .then(r=>r.error ? psAll(()=>sb.from("treatments").select("id,animal_id,treatment_date,score_at_treatment,exam_id,drugs(name)").eq("farm_id", farm).order("treatment_date")) : r),
+    psAll(()=>sb.from("ultrasound_exams").select("id,animal_id,exam_date,score,lobes_raw,age_days,animals(calf_id)").eq("farm_id", farm).order("exam_date")),
+    sb.from("drugs").select("id,name").order("name")]);
+  if (tx.error || ex.error){ $("usSug").innerHTML = `<div class="card"><div class="empty">No se pudo cargar: ${esc((tx.error || ex.error).message)}</div></div>`; return; }
+  const exByA = {}, txByA = {};
+  ex.data.forEach(e=>(exByA[e.animal_id] ||= []).push(e)); tx.data.forEach(t=>(txByA[t.animal_id] ||= []).push(t));
+  sgData = { farm, tx:tx.data, ex:ex.data, exByA, txByA, drugs:dr.data || [], stats: sgStats(tx.data, ex.data) };
+  sgDate = sgDate || [...new Set(ex.data.map(e=>e.exam_date))].sort().pop() || today();
+}
+async function renderSug(force){
+  await sgLoad(force); if (!sgData) return;
+  const d = sgDate, rows = sgData.ex.filter(e=>e.exam_date===d && +e.score >= 2).sort((a,b)=>+b.score - +a.score || byNum(String(a.animals?.calf_id), String(b.animals?.calf_id)));
+  const pend = jget("usOutbox", []).filter(x=>x.farm===sgData.farm && x.date===d).length;
+  const dates = [...new Set(sgData.ex.map(e=>e.exam_date))].sort().reverse().slice(0, 12);
+  $("usSug").innerHTML = `<div class="card"><div class="row" style="align-items:center;gap:8px"><b style="flex:1">Sesión</b>
+      <select id="sgDate" style="width:auto">${[...new Set([d, ...dates])].map(x=>`<option value="${x}" ${x===d ? "selected" : ""}>${fmt(x)}</option>`).join("")}</select></div>
+      <div class="sub" style="margin-top:6px">${rows.length} terneras con score ≥ 2${pend ? ` · ⚠️ ${pend} ecografías de ese día aún no se han subido` : ""} · niveles: Primera línea → Intermedio (score 4 o 2ª vez) → Reserva (score 5 o 3ª vez)</div>
+      ${rows.length ? `<button class="btn ghost" id="sgShare" style="margin-top:8px">📤 Compartir lista de tratamientos</button>` : ""}</div>
+    ${rows.map(e=>{ const h = sgHistory(e.animal_id, d, +e.score), r = sgRecommend(+e.score, h);
+      const done = (sgData.txByA[e.animal_id] || []).filter(t=>t.treatment_date===d);
+      return `<div class="card" data-sga="${e.animal_id}" data-sge="${e.id}">
+        <div class="row" style="align-items:baseline;gap:8px"><b style="font-size:22px">${esc(e.animals?.calf_id)}</b> ${badge(+e.score)}
+          <span class="sub" style="flex:1">${e.lobes_raw ? "lóbulos " + esc(e.lobes_raw) : ""}${e.age_days ? ` · ${e.age_days} d` : ""}</span><b>${r.epTxt}</b></div>
+        ${h.length ? `<div class="sub" style="margin-top:4px">Antes: ${h.map(x=>`${fmt(x.date).slice(0, 5)} ${esc(short(x.drug))}${x.outcome ? ` (${x.outcome.replace("_", " ")})` : ""}`).join(" → ")}</div>` : ""}
+        <div class="hscard" style="margin-top:8px"><div class="sub">Nivel <b>${SG_LEVEL_TXT[r.nivel] || r.nivel}</b> · ${esc(r.motivo)}</div>
+          <div style="font-size:19px;margin-top:2px">💉 <b>${esc(r.best)}</b></div><div class="sub">${esc(r.efi)}</div>
+          ${r.alt ? `<div class="sub">Alternativa: <b>${esc(r.alt)}</b></div>` : ""}
+          ${r.al.map(a=>`<div class="sub" style="color:var(--ink)">${esc(a)}</div>`).join("")}</div>
+        ${done.length ? `<div style="margin-top:8px">✅ Tratada con <b>${done.map(t=>esc(t.drugs?.name)).join(", ")}</b>
+            ${done.filter(t=>t.created_by && (t.created_by===me || isAdmin)).map(t=>` <button class="del" data-sgdel="${t.id}">quitar</button>`).join("")}</div>`
+          : canDo("terneras_registrar") ? `<div class="row" style="gap:6px;margin-top:8px;align-items:center">
+            <select data-sgdrug style="flex:1">${[...new Set([...r.top.map(x=>x.d), ...sgData.drugs.map(x=>x.name)])].map(n=>`<option>${esc(n)}</option>`).join("")}</select>
+            <button class="btn" data-sgapply style="width:auto">Aplicar</button></div>` : ""}
+      </div>`; }).join("") || `<div class="card"><div class="empty">Ninguna ternera con score ≥ 2 en esa sesión 👍</div></div>`}`;
+}
+$("usSug").addEventListener("change", e=>{ if (e.target.id==="sgDate"){ sgDate = e.target.value; renderSug(); } });
+$("usSug").addEventListener("click", async e=>{
+  const t = e.target, card = t.closest("[data-sga]");
+  if (t.id==="sgShare"){
+    const rows = sgData.ex.filter(x=>x.exam_date===sgDate && +x.score >= 2);
+    const txt = `Tratamientos neumonía ${fmt(sgDate)} · ${$("finca").selectedOptions[0]?.textContent || ""}\n` + rows.map(x=>{ const r = sgRecommend(+x.score, sgHistory(x.animal_id, sgDate, +x.score));
+      return `${x.animals?.calf_id} · score ${+x.score} · ${r.best}${r.ep > 1 ? ` (${r.ep}ª vez)` : ""}`; }).join("\n");
+    try{ if (navigator.share) await navigator.share({ text:txt }); else { await navigator.clipboard.writeText(txt); toast("Lista copiada"); } }catch(x){}
+    return;
+  }
+  if (t.closest("[data-sgapply]") && card){
+    const drug = card.querySelector("[data-sgdrug]").value, dr = sgData.drugs.find(x=>x.name===drug), ex = sgData.ex.find(x=>x.id===+card.dataset.sge);
+    t.disabled = true;
+    const { error } = await sb.from("treatments").insert({ animal_id:+card.dataset.sga, farm_id:sgData.farm, exam_id:ex.id, treatment_date:sgDate,
+      drug_id:dr?.id || null, drug_raw:drug, score_at_treatment:+ex.score });
+    t.disabled = false;
+    if (error) return toast(/row-level|permission/i.test(error.message) ? "Sin permiso (¿falta correr SQL/registrar_ecografias.sql?)" : "No se pudo guardar: " + error.message);
+    toast(`${ex.animals?.calf_id}: ${drug} ✓`); return renderSug(true);
+  }
+  const dl = t.closest("[data-sgdel]");
+  if (dl){ if (!confirm("¿Quitar este tratamiento?")) return;
+    const { data, error } = await sb.from("treatments").delete().eq("id", +dl.dataset.sgdel).select("id");
+    if (error || !data?.length) return toast("No se pudo quitar" + (error ? ": " + error.message : " (sin permiso)"));
+    return renderSug(true); }
+});
 
 // ═══════════════════════ TERNERAS ═══════════════════════════
 async function loadFarms(){
