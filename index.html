@@ -2547,7 +2547,7 @@ function rqForm(f){
     const o = rq.opts || { bulls:[], ops:[] };
     h += `<label>Toro (para todas)</label><input id="rqBull" list="rqBulls" value="${esc(d.bull||"")}" autocapitalize="characters"><datalist id="rqBulls">${o.bulls.map(b=>`<option value="${esc(b.code)}">${esc((b.name||"") + (isAdmin && b.straws ? ` · ${b.straws} paj.` : ""))}</option>`).join("")}</datalist>
       ${o.tanks?.length ? `<label>Termo (de dónde salen las pajillas)</label><select id="rqTank"><option value="">Según el lote de cada vaca</option>${o.tanks.map(t=>`<option value="${esc(t.code)}" ${d.tank===t.code ? "selected" : ""}>${esc(t.name || t.code)}</option>`).join("")}</select>` : ""}
-      <label>Inseminador</label>${o.ops.length ? seg("rqOp", o.ops.map(x=>[x,x]), d.op || o.ops[0]) : `<input id="rqOpT" value="${esc(d.op||"")}">`}
+      <label>Inseminador</label>${o.ops.length ? seg("rqOp", o.ops.map(x=>[x, (o.subs||[]).includes(x) ? x + " (reemplazo)" : x]), d.op || o.ops[0]) : `<input id="rqOpT" value="${esc(d.op||"")}">`}
       <label>Tipo</label>${seg("rqCat", [["Inseminación","Inseminación"],["Ovsynch","Ovsynch"]], d.cat || "Inseminación")}
       <label>Pajillas por vaca (para todas)</label>${seg("rqStraws", [["1","1"],["2","2"],["3","3"]], String(d.straws || 1))}
       <label>Toro y pajillas de cada vaca</label><div class="sub">Si alguna va con otro toro, cámbialo aquí. Las que dicen "toro general" van con el de arriba.</div>
@@ -3901,7 +3901,8 @@ async function loadRegOpts(farmId){
   const [sv, fl, st, tk] = await Promise.all([
     sb.from("cow_events").select("bull,operator,cows!inner(farm_id)").eq("event_type","service")
       .eq("cows.farm_id", farmId).gte("event_date", since).limit(5000),
-    sb.from("farm_lists").select("kind,value").eq("farm_id", farmId).order("sort"),
+    sb.from("farm_lists").select("kind,value,active").eq("farm_id", farmId).order("sort")
+      .then(r=>r.error ? sb.from("farm_lists").select("kind,value").eq("farm_id", farmId).order("sort") : r),
     sb.from("semen_stock").select("tank,bull_code,straws"),
     sb.from("semen_tanks").select("code,name").eq("active", true).order("sort"),
   ]);
@@ -3913,10 +3914,12 @@ async function loadRegOpts(farmId){
   const codes = [...new Set([...withStock, ...top("bull").slice(0, 20)])].sort(byNum);
   const { data:bn } = codes.length ? await sb.from("bulls").select("code,name").in("code", codes) : { data:[] };
   const names = Object.fromEntries((bn||[]).map(b=>[b.code, b.name]));
-  const ins = list("inseminator");
+  // inseminadores activos (salen de una vez) y de reemplazo (inactivos: salen aparte, p. ej. JEFERSON en La Isla)
+  const ins = (fl.data||[]).filter(r=>r.kind==="inseminator" && r.active!==false).map(r=>r.value);
+  const subs = (fl.data||[]).filter(r=>r.kind==="inseminator" && r.active===false).map(r=>r.value);
   return regOpts[farmId] = { bulls: codes.map(c=>({ code:c, name:names[c], straws: stock.filter(x=>x.bull_code===c).reduce((a,x)=>a + +x.straws, 0) })),
     tanks: tk.data || [],
-    ops: ins.length ? ins : top("operator"), fixedOps: ins.length > 0, groups: list("calving_group") };
+    ops: ins.length ? [...ins, ...subs] : top("operator"), subs, fixedOps: ins.length > 0, groups: list("calving_group") };
 }
 // ── Secado y salida (venta, descarte, muerte) ──
 // Actualizan la ficha al momento (Supabase: cow_apply_app). Mientras exista Interherd quedan pendientes y el
@@ -4073,7 +4076,7 @@ async function openReg(type, ev){
       ${o.tanks?.length ? `<label>Termo (de dónde sale la pajilla)</label><select name="tank">${o.tanks.map(t=>opt(t.code, t.name || t.code, t.code===(ev?.details?.tank || svTank(c.pen, o.tanks)))).join("")}</select>` : ""}
       <label>Pajillas</label>${seg("straws", [["1","1"],["2","2"],["3","3"]], String(ev?.details?.straws || 1))}
       <label>Inseminador</label>
-      <select name="op">${o.ops.map(p=>opt(p, p, p===(ev ? ev.operator : lastOp))).join("")}${o.fixedOps && !(ev && !o.ops.includes(ev.operator)) ? "" : opt(OTHER,"Otro…",!o.ops.length || (ev && !o.ops.includes(ev.operator)))}</select>
+      <select name="op">${o.ops.map(p=>opt(p, (o.subs||[]).includes(p) ? p + " (reemplazo)" : p, p===(ev ? ev.operator : lastOp))).join("")}${o.fixedOps && !(ev && !o.ops.includes(ev.operator)) ? "" : opt(OTHER,"Otro…",!o.ops.length || (ev && !o.ops.includes(ev.operator)))}</select>
       <input name="opOther" placeholder="Nombre del inseminador" class="hidden" value="${esc(ev && !o.ops.includes(ev.operator) ? ev.operator||"" : "")}" style="margin-top:6px;text-transform:uppercase"></div>
     <div id="heatOnly" class="${tipo0==="Celo" ? "" : "hidden"}"><label>Observación</label>${seg("obs", [["","Normal"],["sucia","Sucia"]], type==="heat" ? ev?.category || "" : "")}</div>
     <label>Nota (opcional)</label><input name="note" maxlength="200" value="${esc(ev?.comments || "")}">
