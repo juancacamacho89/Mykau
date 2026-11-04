@@ -5521,7 +5521,7 @@ let usTab = "hist", usCur = null, usHist = {}, usToday = [];
 const usUid = () => crypto.randomUUID ? crypto.randomUUID() : String(Date.now()) + Math.random();
 function usNew(keep){
   const k = keep || usCur || {};
-  usCur = { date: k.date || today(), scorer: k.scorer || store.get("usScorer") || "", calf:"", birth:"", age:"", weight:"", score:null, lobes:[], treat:false, comment:"" };
+  usCur = { date: k.date || today(), scorer: k.scorer || store.get("usScorer") || "", calf:"", birth:"", age:"", weight:"", score:null, lobes:[], jb2:false, comment:"" };
 }
 function usSetTab(t){
   usTab = t;
@@ -5548,7 +5548,7 @@ function renderUs(){
         ${[1,2,3,4].map(n=>`<button type="button" class="chip uslobe ${c.lobes.includes(n) ? "on" : ""}" data-uslobe="${n}" style="min-width:42px;font-size:18px">${n}</button>`).join("")}
         <b style="font-size:22px;margin:0 4px">|</b>
         ${[5,6,7].map(n=>`<button type="button" class="chip uslobe ${c.lobes.includes(n) ? "on" : ""}" data-uslobe="${n}" style="min-width:42px;font-size:18px">${n}</button>`).join("")}</div>
-      <label style="display:flex;gap:10px;align-items:center;margin-top:12px"><input type="checkbox" id="usTreat" ${c.treat ? "checked" : ""} style="width:24px;height:24px">Tratar</label>
+      <div id="usJb2Box" class="${c.score===0 ? "" : "hidden"}"><label style="display:flex;gap:10px;align-items:center;margin-top:12px"><input type="checkbox" id="usJb2" ${c.jb2 ? "checked" : ""} style="width:24px;height:24px">JB2 (observación)</label></div>
       <label>Comentario</label><input id="usComment" value="${esc(c.comment)}">
       <div class="err" id="usErr"></div>
       <button class="btn" id="usSave" style="margin-top:12px;font-size:18px;padding:14px">Guardar / Siguiente</button>
@@ -5594,15 +5594,15 @@ async function usLoadToday(){
   const farm = +$("finca").value, d = usCur.date;
   let rows = [];
   if (navigator.onLine){
-    const { data } = await sb.from("ultrasound_exams").select("id,score,age_days,weight_kg,lobes_raw,treat,comment,created_by,source,animals(calf_id)")
+    const { data } = await sb.from("ultrasound_exams").select("id,score,age_days,weight_kg,lobes_raw,grupo,comment,created_by,source,animals(calf_id)")
       .eq("farm_id", farm).eq("exam_date", d).order("id", { ascending:false });
-    rows = (data || []).map(r=>({ id:r.id, calf:String(r.animals?.calf_id ?? ""), score:+r.score, age:r.age_days, weight:r.weight_kg, lobes:r.lobes_raw || "", treat:r.treat, comment:r.comment, mine: r.source==="MANUAL" && (r.created_by===me || isAdmin) }));
+    rows = (data || []).map(r=>({ id:r.id, calf:String(r.animals?.calf_id ?? ""), score:+r.score, age:r.age_days, weight:r.weight_kg, lobes:r.lobes_raw || "", jb2:r.grupo==="JB2_OBSERVACION", comment:r.comment, mine: r.source==="MANUAL" && (r.created_by===me || isAdmin) }));
   }
   const pend = jget("usOutbox", []).filter(x=>x.farm===farm && x.date===d).map(x=>({ ...x, lobes:x.lobes.join(""), pending:true }));
   usToday = [...pend, ...rows];
   const box = $("usList"); if (!box) return;
   box.innerHTML = usToday.length ? `<div style="overflow-x:auto"><table style="font-size:13px"><tr><th>ID</th><th>Score</th><th>Lóbulos</th><th>Edad</th><th>Peso</th><th></th></tr>
-    ${usToday.map(r=>`<tr><td><b>${esc(r.calf)}</b>${r.treat ? " 💉" : ""}${r.pending ? ` <span class="tag">⏳</span>` : ""}</td><td>${badge(r.score)}</td><td>${esc(r.lobes) || "—"}</td>
+    ${usToday.map(r=>`<tr><td><b>${esc(r.calf)}</b>${r.jb2 ? ` <span class="tag">JB2</span>` : ""}${r.pending ? ` <span class="tag">⏳</span>` : ""}</td><td>${badge(r.score)}</td><td>${esc(r.lobes) || "—"}</td>
       <td>${r.age ?? ""}</td><td>${r.weight ?? ""}</td><td>${r.pending ? `<button class="del" data-uspdel="${r.client_id}">✕</button>` : r.mine ? `<button class="del" data-usdel="${r.id}">✕</button>` : ""}</td></tr>`).join("")}</table></div>`
     : `<div class="empty">Ninguna todavía</div>`;
 }
@@ -5614,7 +5614,7 @@ function usSummaryHtml(){
     return `edad prom ${(a.reduce((x,y)=>x + y, 0)/a.length).toFixed(1)} · mediana ${med} · mín ${a[0]} · máx ${a[a.length - 1]}`; };
   const row = (t, list) => `<tr><td><b>${t}</b></td><td style="text-align:right">${list.length}</td><td style="text-align:right">${(100*list.length/n).toFixed(1)}%</td><td class="sub">${st(list)}</td></tr>`;
   const farm = $("finca").selectedOptions[0]?.textContent || "";
-  return `<div class="card"><b>Resumen ${fmt(usCur.date)} · ${esc(farm)}</b><div class="sub">Terneras escaneadas: <b>${n}</b> · a tratar: <b>${rs.filter(r=>r.treat).length}</b></div>
+  return `<div class="card"><b>Resumen ${fmt(usCur.date)} · ${esc(farm)}</b><div class="sub">Terneras escaneadas: <b>${n}</b> · JB2: <b>${rs.filter(r=>r.jb2).length}</b></div>
     <table style="margin-top:6px;font-size:13px"><tr><th>Score</th><th style="text-align:right">N°</th><th style="text-align:right">%</th><th>Edad (días)</th></tr>
     ${[0,1,2,3,4,5].map(s=>row(`${badge(s)}`, rs.filter(r=>r.score===s))).join("")}
     ${row("2+", rs.filter(r=>r.score >= 2))}${row("3+", rs.filter(r=>r.score >= 3))}</table>
@@ -5624,7 +5624,7 @@ function usSummaryText(){
   const rs = usToday, n = rs.length, pct = k => (100*k/n).toFixed(1);
   const farm = $("finca").selectedOptions[0]?.textContent || "";
   return `Resumen ecografías ${fmt(usCur.date)} · ${farm}\nTerneras escaneadas: ${n}\n` + [0,1,2,3,4,5].map(s=>{ const k = rs.filter(r=>r.score===s).length; return `Score ${s}: ${k} (${pct(k)}%)`; }).join("\n")
-    + `\nScore 2+: ${rs.filter(r=>r.score >= 2).length} (${pct(rs.filter(r=>r.score >= 2).length)}%)\nScore 3+: ${rs.filter(r=>r.score >= 3).length} (${pct(rs.filter(r=>r.score >= 3).length)}%)\nA tratar: ${rs.filter(r=>r.treat).length}`;
+    + `\nScore 2+: ${rs.filter(r=>r.score >= 2).length} (${pct(rs.filter(r=>r.score >= 2).length)}%)\nScore 3+: ${rs.filter(r=>r.score >= 3).length} (${pct(rs.filter(r=>r.score >= 3).length)}%)\nJB2: ${rs.filter(r=>r.jb2).length}`;
 }
 let usFlushing = false;
 async function flushUs(){
@@ -5641,8 +5641,8 @@ async function flushUs(){
       }
       const { error } = await sb.from("ultrasound_exams").upsert({ client_id:x.client_id, animal_id:a.id, farm_id:x.farm, exam_date:x.date,
         age_days: x.age==="" || x.age==null ? null : +x.age, weight_kg: x.weight==="" || x.weight==null ? null : +String(x.weight).replace(",", "."),
-        score:x.score, lobes_affected: x.lobes.length ? x.lobes : null, lobes_raw: x.lobes.join("") || null, treat:x.treat,
-        grupo: x.treat ? "ANTIBIOTICO" : (x.comment ? "OTRO" : "SIN_COMENTARIO"), comment: x.comment || null, scorer: x.scorer || null, source:"MANUAL" },
+        score:x.score, lobes_affected: x.lobes.length ? x.lobes : null, lobes_raw: x.lobes.join("") || null, treat:false,
+        grupo: x.jb2 ? "JB2_OBSERVACION" : (x.comment ? "OTRO" : "SIN_COMENTARIO"), comment: x.comment || null, scorer: x.scorer || null, source:"MANUAL" },
         { onConflict:"client_id", ignoreDuplicates:true });
       if (error) throw error;
       // el peso también queda en la hoja de vida (pendiente para Interherd) si la ternera existe en Mykau
@@ -5664,8 +5664,8 @@ $("usReg").addEventListener("input", e=>{
 });
 $("usReg").addEventListener("change", e=>{
   const t = e.target;
-  if (t.name==="usScore") usCur.score = +t.value;
-  if (t.id==="usTreat") usCur.treat = t.checked;
+  if (t.name==="usScore"){ usCur.score = +t.value; $("usJb2Box").classList.toggle("hidden", usCur.score!==0); if (usCur.score!==0){ usCur.jb2 = false; $("usJb2").checked = false; } }
+  if (t.id==="usJb2") usCur.jb2 = t.checked;
   if (t.id==="usDate"){ usCur.date = t.value || today(); usLoadToday(); $("usSummary").innerHTML = ""; }
 });
 $("usReg").addEventListener("click", async e=>{
@@ -5677,7 +5677,7 @@ $("usReg").addEventListener("click", async e=>{
     if (c.score==null) return err("Escoge el score.");
     if (usToday.some(r=>r.calf===c.calf) && !confirm(`La ${c.calf} ya tiene ecografía este día. ¿Guardar otra?`)) return;
     err("");
-    const ob = jget("usOutbox", []); ob.push({ client_id:usUid(), farm:+$("finca").value, date:c.date, scorer:c.scorer, calf:c.calf, age:c.age, weight:c.weight, score:c.score, lobes:c.lobes.slice(), treat:c.treat, comment:c.comment.trim() });
+    const ob = jget("usOutbox", []); ob.push({ client_id:usUid(), farm:+$("finca").value, date:c.date, scorer:c.scorer, calf:c.calf, age:c.age, weight:c.weight, score:c.score, lobes:c.lobes.slice(), jb2: c.score===0 && c.jb2, comment:c.comment.trim() });
     jset("usOutbox", ob); delete usHist[+$("finca").value + "|" + c.calf];
     usNew(c); renderUs(); $("usCalf").focus();
     await flushUs(); usLoadToday(); return;
