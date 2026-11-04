@@ -5794,7 +5794,7 @@ async function renderSug(force){
   $("usSug").innerHTML = `<div class="card"><div class="row" style="align-items:center;gap:8px"><b style="flex:1">Sesión</b>
       <select id="sgDate" style="width:auto">${[...new Set([d, ...dates])].map(x=>`<option value="${x}" ${x===d ? "selected" : ""}>${fmt(x)}</option>`).join("")}</select></div>
       <div class="sub" style="margin-top:6px">${rows.length} terneras con score ≥ 2${pend ? ` · ⚠️ ${pend} ecografías de ese día aún no se han subido` : ""} · niveles: Primera línea → Intermedio (score 4 o 2ª vez) → Reserva (score 5 o 3ª vez)</div>
-      ${rows.length ? `<button class="btn ghost" id="sgShare" style="margin-top:8px">📤 Compartir lista de tratamientos</button>` : ""}</div>
+      ${rows.length ? `<button class="btn ghost" id="sgShare" style="margin-top:8px">📄 Compartir reporte (PDF)</button>` : ""}</div>
     ${rows.map(e=>{ const h = sgHistory(e.animal_id, d, +e.score), r = sgRecommend(+e.score, h);
       const done = (sgData.txByA[e.animal_id] || []).filter(t=>t.treatment_date===d);
       return `<div class="card" data-sga="${e.animal_id}" data-sge="${e.id}">
@@ -5813,15 +5813,53 @@ async function renderSug(force){
       </div>`; }).join("") || `<div class="card"><div class="empty">Ninguna ternera con score ≥ 2 en esa sesión 👍</div></div>`}`;
 }
 $("usSug").addEventListener("change", e=>{ if (e.target.id==="sgDate"){ sgDate = e.target.value; renderSug(); } });
+// reporte en PDF (formato "Reporte de Ecografía Pulmonar"): escaneadas, con tratamiento, % sanas y la lista con su antibiótico
+async function sgPdf(){
+  let JsPDF; try{ JsPDF = await lsLoadJsPdf(); }catch(e){ return toast("Se necesita señal la primera vez para armar el PDF"); }
+  const d = sgDate, farm = $("finca").selectedOptions[0]?.textContent || "", all = sgData.ex.filter(x=>x.exam_date===d);
+  const sick = all.filter(x=>+x.score >= 2).sort((a,b)=>byNum(String(a.animals?.calf_id), String(b.animals?.calf_id)));
+  const drugOf = x => { const done = (sgData.txByA[x.animal_id] || []).filter(t=>t.treatment_date===d).map(t=>t.drugs?.name || t.drug_raw).filter(Boolean);
+    return done.length ? done.join(" + ") : sgRecommend(+x.score, sgHistory(x.animal_id, d, +x.score))?.best || ""; };
+  const navy = [11, 35, 64], ink = [16, 32, 56], fill = { 2:[251,248,196], 3:[253,233,199], 4:[251,213,213], 5:[252,224,228] };
+  const doc = new JsPDF({ unit:"pt", format:"letter", compress:true }), M = 54, W = 612 - 2*M;
+  const page = () => { doc.setFillColor(...navy); doc.rect(M, 48, W, 56, "F");
+    doc.setTextColor(255); doc.setFont("helvetica", "bold"); doc.setFontSize(17); doc.text("Reporte de Ecografía Pulmonar", M + 14, 82);
+    doc.setFont("helvetica", "normal"); doc.setFontSize(10); doc.setTextColor(140, 180, 220); doc.text(`${d} | ${farm}`, M + W - 14, 70, { align:"right" }); };
+  page();
+  // indicadores
+  const kp = [[all.length, "Escaneadas"], [sick.length, "Con tratamiento"], [all.length ? Math.round(100*(all.length - sick.length)/all.length) + "%" : "—", "% Sanas"]];
+  doc.setFillColor(240, 243, 248); doc.setDrawColor(200, 208, 220); doc.rect(M, 104, W, 40, "FD");
+  kp.forEach(([v, l], k)=>{ const x = M + k*W/3; if (k) doc.line(x, 104, x, 144);
+    doc.setTextColor(...ink); doc.setFont("helvetica", "bold"); doc.setFontSize(10); doc.text(String(v), x + 8, 120);
+    doc.setFont("helvetica", "normal"); doc.setFontSize(6.5); doc.text(l, x + 8, 134); });
+  // tabla
+  const cx = [M, M + W*0.142, M + W*0.257, M + W*0.471], RH = 22;
+  const head = y => { doc.setFillColor(...navy); doc.rect(M, y, W, RH, "F"); doc.setTextColor(255); doc.setFont("helvetica", "bold"); doc.setFontSize(8.5);
+    ["ID", "Score", "Lóbulos", "Tratamiento"].forEach((h, k)=>doc.text(h, cx[k] + 7, y + 14)); return y + RH; };
+  let y = head(156);
+  sick.forEach(x=>{
+    if (y + RH > 792 - 60){ doc.addPage(); page(); y = head(116); }
+    const sc = Math.min(5, Math.floor(+x.score));
+    doc.setFillColor(...(fill[sc] || fill[2])); doc.rect(M, y, W, RH, "F");
+    doc.setDrawColor(255); doc.setLineWidth(0.6); doc.line(M, y + RH, M + W, y + RH); [1, 2, 3].forEach(k=>doc.line(cx[k], y, cx[k], y + RH));
+    doc.setTextColor(...ink); doc.setFont("helvetica", "bold"); doc.setFontSize(8.5);
+    doc.text(String(x.animals?.calf_id ?? ""), cx[0] + 7, y + 14); doc.text(String(+x.score), cx[1] + 7, y + 14);
+    doc.setFont("helvetica", "normal"); doc.text(String(x.lobes_raw || ""), cx[2] + 7, y + 14);
+    doc.setFont("helvetica", "bold"); doc.text(drugOf(x), cx[3] + 7, y + 14);
+    y += RH;
+  });
+  if (!sick.length){ doc.setTextColor(...ink); doc.setFontSize(10); doc.text("Ninguna ternera con score 2 o más 👍".replace(" 👍", ""), M + 7, y + 16); y += RH; }
+  doc.setDrawColor(200, 208, 220); doc.line(M + 6, y + 10, M + W - 6, y + 10);
+  doc.setTextColor(150, 160, 175); doc.setFont("helvetica", "normal"); doc.setFontSize(6.5); doc.text(`Score Ollivett 0–5 · ${d} · Juan Camilo Camacho MV`, M + 6, y + 22);
+  const name = `reporte_ecografia_${(farm.split(" ").pop() || "finca").toLowerCase()}_${d}.pdf`;
+  const file = new File([doc.output("blob")], name, { type:"application/pdf" });
+  if (navigator.canShare?.({ files:[file] })){ try{ await navigator.share({ files:[file], title:name.replace(/\.pdf$/, "") }); }catch(e){} return; }
+  const a = document.createElement("a"); a.href = URL.createObjectURL(file); a.download = name; document.body.appendChild(a); a.click();
+  setTimeout(()=>{ URL.revokeObjectURL(a.href); a.remove(); }, 2000);
+}
 $("usSug").addEventListener("click", async e=>{
   const t = e.target, card = t.closest("[data-sga]");
-  if (t.id==="sgShare"){
-    const rows = sgData.ex.filter(x=>x.exam_date===sgDate && +x.score >= 2);
-    const txt = `Tratamientos neumonía ${fmt(sgDate)} · ${$("finca").selectedOptions[0]?.textContent || ""}\n` + rows.map(x=>{ const r = sgRecommend(+x.score, sgHistory(x.animal_id, sgDate, +x.score));
-      return `${x.animals?.calf_id} · score ${+x.score} · ${r.best}${r.ep > 1 ? ` (${r.ep}ª vez)` : ""}`; }).join("\n");
-    try{ if (navigator.share) await navigator.share({ text:txt }); else { await navigator.clipboard.writeText(txt); toast("Lista copiada"); } }catch(x){}
-    return;
-  }
+  if (t.id==="sgShare"){ t.disabled = true; await sgPdf(); t.disabled = false; return; }
   if (t.closest("[data-sgapply]") && card){
     const drug = card.querySelector("[data-sgdrug]").value, dr = sgData.drugs.find(x=>x.name===drug), ex = sgData.ex.find(x=>x.id===+card.dataset.sge);
     t.disabled = true;
