@@ -5525,7 +5525,7 @@ function usNew(keep){
 }
 function usSetTab(t){
   usTab = t;
-  $("usTabs").innerHTML = seg("usT", [["hist","Historial"], ...(canDo("terneras_registrar") ? [["reg","Registrar"]] : []), ["sug","Sugerencias"]], usTab);
+  $("usTabs").innerHTML = seg("usT", [["hist","Historial"], ...(canDo("terneras_registrar") ? [["reg","Registrar"]] : []), ["sug","Tratamientos"]], usTab);
   document.querySelectorAll(".usHistOnly").forEach(el=>el.classList.toggle("hidden", usTab!=="hist"));
   $("usReg").classList.toggle("hidden", usTab!=="reg");
   $("usSug").classList.toggle("hidden", usTab!=="sug");
