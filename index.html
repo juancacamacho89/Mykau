@@ -1903,14 +1903,18 @@ async function loadRegistros(){
       status:e.status }));
   })());
   if (want("pesaje")) jobs.push((async()=>{
-    let q = sb.from("cow_milk").select("cow_id,test_date,herd,source,am_kg,pm_kg,entered_by,entered_at").not("entered_by", "is", null).limit(5000);
-    q = pend ? q.eq("source", "app") : q.gte("entered_at", s.from).lt("entered_at", t1);
-    const { data, error } = await q;
+    // in_interherd: lo marca el importador cuando la "Ult. leche" del listado coincide (SQL/leche_en_interherd.sql)
+    const mq = cols => { let q = sb.from("cow_milk").select(cols).not("entered_by", "is", null).limit(5000);
+      if (pend){ q = q.eq("source", "app"); if (/in_interherd/.test(cols)) q = q.eq("in_interherd", false); }
+      else q = q.gte("entered_at", s.from).lt("entered_at", t1);
+      return q; };
+    let { data, error } = await mq("cow_id,test_date,herd,source,am_kg,pm_kg,entered_by,entered_at,in_interherd");
+    if (error) ({ data, error } = await mq("cow_id,test_date,herd,source,am_kg,pm_kg,entered_by,entered_at"));
     if (error){ notes.push("Pesaje: corre SQL/agregar_leche_app.sql (falta para subir pesajes desde la app)."); return; }
     const g = {};
     (data||[]).forEach(m=>{ const k = m.test_date + "|" + m.herd + "|" + m.entered_by;
       const x = g[k] = g[k] || { date:m.test_date, herd:m.herd, who:m.entered_by, when:m.entered_at, n:0, am:0, pm:0, app:0 };
-      x.n++; if (m.am_kg!=null) x.am++; if (m.pm_kg!=null) x.pm++; if (m.source==="app") x.app++; if (m.entered_at > x.when) x.when = m.entered_at; });
+      x.n++; if (m.am_kg!=null) x.am++; if (m.pm_kg!=null) x.pm++; if (m.source==="app" && !m.in_interherd) x.app++; if (m.entered_at > x.when) x.when = m.entered_at; });
     Object.values(g).forEach(x=>add({ kind:"pesaje", icon:"⚖️", when:x.when, date:x.date, farm:RG_HERD_FARM[x.herd], who:x.who,
       title:"Pesaje de leche", detail:`${x.n} vacas · mañana ${x.am} · tarde ${x.pm}`, status: x.app ? "pendiente" : "en Interherd" }));
   })());
