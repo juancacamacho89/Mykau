@@ -166,6 +166,11 @@ details.lac summary::-webkit-details-marker{display:none}
 details.lac summary b{font-size:15px}
 details.lac[open] summary{border-bottom:1px solid var(--line)}
 details.lac table{font-size:13px}
+.gnwrap{overflow-x:auto;-webkit-overflow-scrolling:touch;margin-top:8px;border:1px solid var(--line);border-radius:10px}
+.gnwrap table{font-size:12.5px;white-space:nowrap}
+.gnwrap th{position:sticky;top:0;background:var(--card);cursor:pointer;text-align:left;padding:6px 8px;border-bottom:1px solid var(--line)}
+.gnwrap td{padding:4px 8px;border-bottom:1px solid var(--line)}
+.gnwrap th.on{color:var(--accent)}
 details.lac td{padding:6px 8px}
 .ev{font-weight:700;white-space:nowrap}
 .ok{color:var(--s0);font-weight:700}
@@ -270,6 +275,7 @@ details.lac td{padding:6px 8px}
         <a class="appicon hidden" href="#ronda" data-perm="ronda_registrar ronda_ver"><span class="ic" style="--g1:#9be38f;--g2:#2e8b57">📝</span><b>Reporte ganadería</b><i class="badge hidden" id="badgeRonda"></i></a>
         <a class="appicon hidden" href="#rapido" data-perm="vacas_servicio vacas_celo vacas_secado salud_tratar traslados vacas_salida"><span class="ic" style="--g1:#ffe066;--g2:#f08c00">⚡</span><b>Ingreso rápido</b></a>
         <a class="appicon hidden" href="#listas" data-perm="listas_ver"><span class="ic" style="--g1:#8fd3fe;--g2:#3b6fd8">📋</span><b>Listas de trabajo</b></a>
+        <a class="appicon hidden" href="#generador" data-perm="generador_ver"><span class="ic" style="--g1:#b9f3cf;--g2:#1f9e6b">🧾</span><b>Generador de listas</b></a>
         <a class="appicon hidden" href="#toros" data-perm="toros_ver toros_registrar"><span class="ic" style="--g1:#d9b38c;--g2:#7a4a24">🐂</span><b>Toros y semen</b><i class="badge hidden" id="badgeToros"></i></a>
         <a class="appicon hidden" href="#racion" data-perm="racion_ver racion_registrar"><span class="ic" style="--g1:#f7d08a;--g2:#b8742a">🌾</span><b>Suplementación</b></a>
         <a class="appicon" href="#vacas" data-perm="vacas_ver"><span class="ic" style="--g1:#14a38f;--g2:#0b6b5e"><img src="logo.png" alt=""></span><b>Mis vacas</b><i class="badge hidden" id="badgeRepro"></i></a>
@@ -420,6 +426,15 @@ details.lac td{padding:6px 8px}
         <button class="link logout">Salir</button>
       </header>
       <div id="trBody"><div class="empty">Cargando…</div></div>
+    </section>
+
+    <!-- ═══ GENERADOR DE LISTAS ═══ -->
+    <section id="tabGen" class="hidden">
+      <header>
+        <div class="brand"><button class="back" data-home aria-label="Inicio">‹</button><div><h1>Generador de listas</h1><div class="sub">Escoge vacas y columnas, y exporta a texto</div></div></div>
+        <button class="link logout">Salir</button>
+      </header>
+      <div id="gnBody"><div class="empty">Cargando…</div></div>
     </section>
 
     <!-- ═══ LISTAS DE TRABAJO ═══ -->
@@ -598,10 +613,12 @@ function jget0(k, d){ try{ return JSON.parse(store.get(k)) ?? d; }catch(e){ retu
 const PERM_FALLBACK = { vacas_repro:"vacas_ver", calidad_ver:"reporte_editar",
   salud_ver:"vacas_ver", salud_tratar:"vacas_parto", salud_diagnostico:"reporte_editar", inventario_ver:"reporte_editar",
   pastos_ver:"reporte_editar", pastos_registrar:"reporte_editar", produccion_ver:"reporte_editar", registros_todos:"reporte_editar", pesot_registrar:"vacas_parto",
-  vacas_secado:"vacas_parto", vacas_salida:"vacas_parto", terneras_registrar:"reporte_editar", listas_ver:"vacas_repro",
+  vacas_secado:"vacas_parto", vacas_salida:"vacas_parto", terneras_registrar:"reporte_editar", listas_ver:"vacas_repro", generador_ver:"listas_ver",
   toros_ver:"reporte_editar", toros_registrar:"reporte_editar", racion_ver:"reporte_editar", racion_registrar:"reporte_editar",
   ronda_registrar:"diaria_registrar", ronda_ver:"diaria_registrar" };   // funciones nuevas: mientras no estén en el perfil
-const can = k => perms[k] || (PERM_FALLBACK[k] ? perms[PERM_FALLBACK[k]] : null)
+// si el perfil no tiene la función, se usa la de la que depende (en cadena: generador → listas → reproducción…)
+const permOf = (k, n = 0) => perms[k] || (PERM_FALLBACK[k] && n < 5 ? permOf(PERM_FALLBACK[k], n + 1) : null);
+const can = k => permOf(k)
   || (k==="registros_ver" && Object.entries(perms).some(([f, v])=>v==="R" && f!=="registros_todos") ? "V" : null) || "N";   // "R" | "V" | "N"
 const canSee = k => can(k) !== "N", canDo = k => can(k) === "R";
 const ADMIN_PROFILES = ["Administrador", "Admin Principal"];
@@ -671,6 +688,8 @@ function setTab(tab){
   $("tabRapido").classList.toggle("hidden", tab!=="rapido");
   $("tabListas").classList.toggle("hidden", tab!=="listas");
   if (tab==="listas") initListas();
+  $("tabGen").classList.toggle("hidden", tab!=="generador");
+  if (tab==="generador") initGen();
   $("tabToros").classList.toggle("hidden", tab!=="toros");
   if (tab==="toros") initToros();
   $("tabRacion").classList.toggle("hidden", tab!=="racion");
@@ -688,7 +707,7 @@ function setTab(tab){
 // pantallas y el permiso que las abre (si no lo tiene, vuelve al inicio)
 const TAB_PERM = { terneras:"terneras_historial terneras_vigilar terneras_registrar", traslados:"traslados", leche:"pesaje_registrar",
   diaria:"diaria_registrar diaria_totales diaria_resumen", reporte:"reporte_ver produccion_ver pastos_ver calidad_ver", registros:"registros_ver", chequeo:"chequeo",
-  mastitis:"mastitis_historial mastitis_vigilar", salud:"salud_ver salud_tratar", pastos:"pastos_ver pastos_registrar", pesot:"pesot_registrar", listas:"listas_ver", toros:"toros_ver toros_registrar", racion:"racion_ver racion_registrar", ronda:"ronda_registrar ronda_ver", rapido:"vacas_servicio vacas_celo vacas_secado salud_tratar traslados vacas_salida", vaca:"vacas_ver" };
+  mastitis:"mastitis_historial mastitis_vigilar", salud:"salud_ver salud_tratar", pastos:"pastos_ver pastos_registrar", pesot:"pesot_registrar", listas:"listas_ver", generador:"generador_ver", toros:"toros_ver toros_registrar", racion:"racion_ver racion_registrar", ronda:"ronda_registrar ronda_ver", rapido:"vacas_servicio vacas_celo vacas_secado salud_tratar traslados vacas_salida", vaca:"vacas_ver" };
 function route(){
   const h = decodeURIComponent(location.hash.slice(1));
   const tk = Object.keys(TAB_PERM).find(k=>h.startsWith(k));
@@ -705,6 +724,7 @@ function route(){
   if (h.startsWith("pesot")) { setTab("pesot"); return; }
   if (h.startsWith("rapido")) { setTab("rapido"); return; }
   if (h.startsWith("listas")) { setTab("listas"); return; }
+  if (h.startsWith("generador")) { setTab("generador"); return; }
   if (h.startsWith("toros")) { setTab("toros"); return; }
   if (h.startsWith("racion")) { setTab("racion"); return; }
   if (h.startsWith("ronda")) { setTab("ronda"); return; }
@@ -3480,6 +3500,181 @@ function lsView(all){
     && (!tk.length || (tk.length > 1 ? tk.includes(x.c.id) : x.c.id.includes(tk[0]))));
   return s.ord==="num" ? rows.slice().sort((a,b)=>byNum(a.c.id, b.c.id)) : rows;
 }   // ckDate: mañana (se pone al abrir)
+// ═══════════════════════ GENERADOR DE LISTAS ═══════════════
+// Toda la información de cada vaca en una tabla: se filtra (finca, vacas/novillas, estado, grupo) y se escogen
+// las columnas; se exporta a un archivo de texto separado por tabulaciones (abre en Excel).
+let gnState = { farm:null, tipo:"todas", est:[], pens:[], q:"", sort:{ k:"id", dir:1 }, showCols:false }, gnData = null;
+const GN_EST = [["vacia","Vacías"],["cargada","Cargadas"],["lac","Lactando"],["seca","Secas"],["desc","Descartes"]];
+const gnIsPR = st => /(^|\/)PR(\/|$)/i.test(st || "");
+const gnIsLac = st => /(^|\/)Lac/i.test(st || "");
+const gnIsDry = st => /Horra|Seca/i.test(st || "");
+const gnIsDesc = st => /^Desc/i.test(st || "");
+const gnNum = v => v==null || v==="" || isNaN(v) ? null : +v;
+// columnas: [clave, título, valor, ¿sale de entrada?, tipo]
+const GN_COLS = [
+  ["id","ID", r=>r.c.id, true], ["finca","Finca", r=>r.farm, false], ["grupo","Grupo", r=>r.c.pen, true],
+  ["estado","Estado", r=>r.c.status, true], ["tipo","Vaca / novilla", r=>r.nov ? "Novilla" : "Vaca", false],
+  ["partos","Partos", r=>r.c.lactation_num, true], ["nac","Nacimiento", r=>r.c.birth_date, false, "d"],
+  ["edad","Edad (meses)", r=>r.ageM, false], ["raza","Raza", r=>r.c.breed, false], ["sexo","Sexo", r=>r.c.sex, false],
+  ["padre","Padre", r=>r.c.sire, false], ["madre","Madre", r=>r.c.dam, false], ["abuelo","Abuelo materno", r=>r.c.maternal_grandsire, false],
+  ["registro","Registro", r=>r.c.registration, false],
+  ["uparto","Último parto", r=>r.C, true, "d"], ["del","Días de parida", r=>r.del, true],
+  ["userv","Último servicio", r=>r.sv?.event_date, true, "d"], ["dserv","Días de servida", r=>r.dsv, false],
+  ["nserv","# servicios (lactancia)", r=>r.nsv, false], ["toro","Toro último servicio", r=>r.sv?.bull, false],
+  ["insem","Inseminador", r=>r.sv?.operator, false],
+  ["gest","Días de preñez", r=>r.gest, false], ["pparto","Parto probable", r=>r.due, false, "d"], ["secado","Secado esperado", r=>r.dry, false, "d"],
+  ["udiag","Último diagnóstico", r=>r.dg ? noSex(r.dg.result) : null, false], ["fdiag","Fecha último diagnóstico", r=>r.dg?.event_date, false, "d"],
+  ["uleche","Última leche (kg)", r=>r.lm?.v, true], ["fleche","Fecha última leche", r=>r.lm?.d, true, "d"],
+  ["p305","Producción 305 d (kg)", r=>r.p305?.kg305, true], ["plact","Leche lactancia actual (kg)", r=>r.p305?.sofar, false],
+  ["racion","Concentrado (kg/día)", r=>r.conc, false],
+  ["upeso","Último peso (kg)", r=>r.w?.weight_kg, false], ["fpeso","Fecha último peso", r=>r.w?.event_date, false, "d"],
+];
+async function initGen(){
+  if (!gnState.farm){ const fs = await prodFarms(); gnState.farm = jget("gnLast", {}).farm || fs[0]?.id || 1; }
+  if (!gnData || gnData.farm !== gnState.farm) await gnLoad();
+  renderGen();
+}
+async function gnLoad(){
+  const farm = gnState.farm;
+  if (!navigator.onLine){ $("gnBody").innerHTML = `<div class="card"><div class="empty">El generador necesita señal.</div></div>`; gnData = null; return; }
+  $("gnBody").innerHTML = `<div class="card"><div class="empty">Descargando vacas, eventos y leche…</div></div>`;
+  const since = addDays(today(), -700);
+  const [c, e, m, k] = await Promise.all([
+    psAll(()=>sb.from("cows").select("*").eq("farm_id", farm).eq("active", true).order("id")),
+    psAll(()=>sb.from("cow_events").select("cow_id,event_date,event_type,result,bull,operator,category,weight_kg,cows!inner(farm_id)").eq("cows.farm_id", farm)
+      .gte("event_date", since).in("event_type", ["calving","service","preg_check","ultrasound","weight","dry_off"]).order("event_date")),
+    psAll(()=>sb.from("cow_milk").select("cow_id,test_date,total_kg,adjusted_kg,cows!inner(farm_id)").eq("cows.farm_id", farm)
+      .gte("test_date", addDays(today(), -420)).not("total_kg", "is", null).order("test_date")),
+    psAll(()=>sb.from("cow_concentrate").select("cow_id,rec_date,kg_day,source,cows!inner(farm_id)").eq("cows.farm_id", farm).gte("rec_date", addDays(today(), -365)).order("rec_date")),
+  ]);
+  if (c.error || e.error){ $("gnBody").innerHTML = `<div class="card"><div class="empty">No se pudo cargar: ${esc((c.error || e.error).message)}</div></div>`; gnData = null; return; }
+  const by = (rows, f) => { const o = {}; (rows || []).forEach(x=>(o[x.cow_id] ||= []).push(f ? f(x) : x)); return o; };
+  const ev = by(e.data), milk = by(m.data, x=>[x.test_date, +(x.adjusted_kg ?? x.total_kg)]), conc = {};
+  // ración vigente: la última de Mykau (app o n8n); la de Interherd solo si no hay ninguna (igual que Suplementación)
+  const concIH = {};
+  (k.data || []).forEach(x=>{ if (x.source==="app" || /^n8n/.test(x.source || "")) conc[x.cow_id] = +x.kg_day; else concIH[x.cow_id] = +x.kg_day; });
+  Object.keys(concIH).forEach(id=>{ if (conc[id]==null) conc[id] = concIH[id]; });
+  const farmName = farmLabel((jget("mkFarms", []).find(f=>f.id===farm)) || { herd: farm===7 ? "ISLA" : "RC" });
+  const D = today();
+  const rows = c.data.map(cw=>{
+    const es = ev[cw.id] || [], C = cw.last_calving;
+    const lac = gnIsLac(cw.status), preg = gnIsPR(cw.status);
+    const svs = es.filter(x=>x.event_type==="service" && (!C || x.event_date > C)), sv = svs[svs.length - 1];
+    const dg = es.filter(x=>(x.event_type==="preg_check" || x.event_type==="ultrasound") && (!C || x.event_date > C)).pop();   // de esta lactancia
+    const w = es.filter(x=>x.event_type==="weight" && x.weight_kg).pop();
+    const ms = milk[cw.id] || [], lmA = ms[ms.length - 1];
+    const msLac = ms.filter(x=>!C || x[0] >= C);
+    const dryDel = preg && sv && C ? days(C, addDays(sv.event_date, LS_GEST - LS_DRY)) : null;
+    let p305 = lac && C && msLac.length ? ck305({ milk:ms }, C, D, dryDel) : null;
+    if (p305){ const r = ck305({ milk:ms }, C, D, days(C, D)); p305 = { ...p305, sofar: r?.lact ?? null }; }
+    return { c:cw, farm:farmName, C, lac,
+      nov: !(cw.lactation_num > 0) && !lac && !gnIsDry(cw.status),
+      ageM: cw.birth_date ? Math.floor(days(cw.birth_date, D)/30.44) : null,
+      del: C && lac ? days(C, D) : null, sv, nsv: C ? svs.length : es.filter(x=>x.event_type==="service").length,
+      dsv: sv ? days(sv.event_date, D) : null,
+      gest: preg && sv ? days(sv.event_date, D) : null,
+      due: preg && sv ? addDays(sv.event_date, LS_GEST) : null, dry: preg && sv && lac ? addDays(sv.event_date, LS_GEST - LS_DRY) : null,
+      dg, w, lm: lmA ? { d:lmA[0], v:Math.round(lmA[1]*10)/10 } : null, p305, conc: conc[cw.id] ?? null,
+      snap: cw.snapshot || {} };
+  });
+  const snapKeys = [...new Set(rows.flatMap(r=>Object.keys(r.snap)))].sort();
+  gnData = { farm, rows, snapKeys, pens:[...new Set(rows.map(r=>r.c.pen).filter(Boolean))].sort(byNumTxt) };
+}
+// columnas escogidas (se recuerdan en el celular)
+const gnCols = () => { const saved = jget("gnCols", null); return saved || GN_COLS.filter(x=>x[3]).map(x=>x[0]); };
+const gnColDef = k => { const d = GN_COLS.find(x=>x[0]===k); if (d) return d;
+  if (k.startsWith("ih:")) { const f = k.slice(3); return [k, f + " (Interherd)", r=>r.snap[f] ?? null, false]; } return null; };
+function gnFilter(){
+  const s = gnState, q = s.q.trim() ? s.q.toUpperCase().split(/[\s,;]+/).filter(Boolean) : null;
+  const repro = s.est.filter(x=>x==="vacia" || x==="cargada"), prod = s.est.filter(x=>x==="lac" || x==="seca");
+  return gnData.rows.filter(r=>{
+    const st = r.c.status;
+    if (s.tipo==="vacas" && r.nov) return false;
+    if (s.tipo==="novillas" && !r.nov) return false;
+    // se combinan: (vacías o cargadas) Y (lactando o secas) Y (descartes)
+    if (repro.length && !repro.some(x=>x==="cargada" ? gnIsPR(st) : !gnIsPR(st))) return false;
+    if (prod.length && !prod.some(x=>x==="lac" ? gnIsLac(st) : gnIsDry(st))) return false;
+    if (s.est.includes("desc") && !gnIsDesc(st)) return false;
+    if (s.pens.length && !s.pens.includes(r.c.pen)) return false;
+    if (q && !q.some(n=>r.c.id===n || r.c.id.replace(/^0+/, "")===n.replace(/^0+/, ""))) return false;
+    return true;
+  });
+}
+function gnSorted(rows, cols){
+  const d = gnColDef(gnState.sort.k) || GN_COLS[0], dir = gnState.sort.dir;
+  const v = r => d[2](r);
+  return rows.slice().sort((a, b)=>{ const x = v(a), y = v(b);
+    if (x==null || x==="") return y==null || y==="" ? 0 : 1; if (y==null || y==="") return -1;
+    const nx = gnNum(x), ny = gnNum(y);
+    return dir * (nx!=null && ny!=null ? nx - ny : byNumTxt(String(x), String(y))); });
+}
+const gnFmt = (d, v) => v==null || v==="" ? "" : d[4]==="d" ? fmt(v) : String(v);
+function renderGen(){
+  const s = gnState, d = gnData;
+  if (!d){ return; }
+  const farms = jget("mkFarms", []).length ? jget("mkFarms", []) : [{ id:1, herd:"RC" }, { id:7, herd:"ISLA" }];
+  const chips = (opts, on, attr) => `<div class="chips sm ckpan" style="padding:0;margin-top:6px"><div class="chips sm">${opts.map(([v, t])=>`<button class="${on(v) ? "on" : ""}" ${attr}="${esc(v)}">${t}</button>`).join("")}</div></div>`;
+  const cols = gnCols().map(gnColDef).filter(Boolean), rows = gnSorted(gnFilter(), cols);
+  const colChips = (list) => list.map(([k, t])=>`<button class="${cols.some(c=>c[0]===k) ? "on" : ""}" data-gncol="${esc(k)}">${esc(t)}</button>`).join("");
+  $("gnBody").innerHTML = `<div class="card">
+      ${chips(farms.map(f=>[String(f.id), esc(farmLabel(f))]), v=>+v===s.farm, "data-gnf")}
+      ${chips([["todas","Vacas y novillas"],["vacas","Solo vacas"],["novillas","Solo novillas"]], v=>v===s.tipo, "data-gnt")}
+      ${chips(GN_EST, v=>s.est.includes(v), "data-gne")}
+      <div class="sub" style="margin-top:4px">Los estados se combinan: <b>Cargadas + Lactando</b> = preñadas en ordeño. Toca de nuevo para quitar.</div>
+      ${chips([["", "Todos los grupos"], ...d.pens.map(p=>[p, esc(p)])], v=>v==="" ? !s.pens.length : s.pens.includes(v), "data-gnp")}
+      <input id="gnQ" placeholder="🔍 Números de vaca (varios separados por espacio)" value="${esc(s.q)}" inputmode="numeric" autocomplete="off" style="margin-top:8px">
+    </div>
+    <div class="card">
+      <div style="display:flex;justify-content:space-between;align-items:center;gap:8px">
+        <b><span id="gnN">${rows.length}</span> animales · ${cols.length} columnas</b>
+        <button class="lnk" id="gnColsBtn">${s.showCols ? "Ocultar columnas" : "Escoger columnas"}</button></div>
+      ${s.showCols ? `<div class="chips sm" style="margin-top:8px">${colChips(GN_COLS.map(x=>[x[0], x[1]]))}</div>
+        ${d.snapKeys.length ? `<details style="margin-top:8px"><summary class="sub">Más datos tal como vienen del listado de Interherd (${d.snapKeys.length})</summary>
+          <div class="chips sm" style="margin-top:6px">${colChips(d.snapKeys.map(k=>["ih:" + k, k]))}</div></details>` : ""}
+        <div class="row" style="gap:8px;margin-top:8px"><button class="lnk" id="gnColsAll">Todas</button><button class="lnk" id="gnColsDef">Las de siempre</button></div>` : ""}
+      <div class="row" style="gap:8px;margin-top:10px"><button class="btn" id="gnTxt">📄 Exportar a texto</button></div>
+      <div class="sub" style="margin-top:4px">Archivo .txt separado por tabulaciones: se abre directo en Excel. Toca el título de una columna para ordenar.</div>
+      <div class="gnwrap" id="gnTable">${gnTable(rows, cols)}</div>
+    </div>`;
+}
+function gnTable(rows, cols){
+  const s = gnState, max = 400;
+  return `<table><tr>${cols.map(c=>`<th class="${s.sort.k===c[0] ? "on" : ""}" data-gns="${esc(c[0])}">${esc(c[1])}${s.sort.k===c[0] ? (s.sort.dir > 0 ? " ▲" : " ▼") : ""}</th>`).join("")}</tr>
+    ${rows.slice(0, max).map(r=>`<tr>${cols.map((c, i)=>i===0 ? `<td><button class="lnk" data-cow="${esc(r.c.id)}">${esc(gnFmt(c, c[2](r)))}</button></td>` : `<td>${esc(gnFmt(c, c[2](r)))}</td>`).join("")}</tr>`).join("")}</table>
+    ${rows.length > max ? `<div class="sub" style="padding:6px">Se muestran ${max} de ${rows.length}; el archivo lleva todos.</div>` : ""}`;
+}
+async function gnExport(){
+  const cols = gnCols().map(gnColDef).filter(Boolean), rows = gnSorted(gnFilter(), cols);
+  if (!rows.length) return toast("No hay animales con esos filtros");
+  const cell = v => String(v ?? "").replace(/[\t\r\n]+/g, " ");
+  const txt = "\ufeff" + [cols.map(c=>cell(c[1])).join("\t"), ...rows.map(r=>cols.map(c=>cell(gnFmt(c, c[2](r)))).join("\t"))].join("\r\n");
+  const farm = (jget("mkFarms", []).find(f=>f.id===gnState.farm)?.herd || gnState.farm).toString().toLowerCase();
+  const name = `lista_${farm}_${today()}.txt`, file = new File([txt], name, { type:"text/plain" });
+  if (navigator.canShare?.({ files:[file] })){ try{ await navigator.share({ files:[file], title:name }); return; }catch(e){ if (e.name==="AbortError") return; } }
+  const a = document.createElement("a"); a.href = URL.createObjectURL(file); a.download = name; document.body.appendChild(a); a.click();
+  setTimeout(()=>{ URL.revokeObjectURL(a.href); a.remove(); }, 2000);
+}
+$("gnBody").addEventListener("click", async e=>{
+  const t = e.target, q = a => t.closest(`[${a}]`)?.getAttribute(a), s = gnState;
+  if (q("data-cow")){ e.preventDefault(); return openCow(q("data-cow")); }
+  if (q("data-gnf")!=null){ s.farm = +q("data-gnf"); s.pens = []; jset("gnLast", { farm:s.farm }); await gnLoad(); return renderGen(); }
+  if (q("data-gnt")!=null){ s.tipo = q("data-gnt"); return renderGen(); }
+  if (q("data-gne")!=null){ const v = q("data-gne"); s.est = s.est.includes(v) ? s.est.filter(x=>x!==v) : [...s.est, v]; return renderGen(); }
+  if (q("data-gnp")!=null){ const v = q("data-gnp"); s.pens = v==="" ? [] : s.pens.includes(v) ? s.pens.filter(x=>x!==v) : [...s.pens, v]; return renderGen(); }
+  if (q("data-gncol")!=null){ const k = q("data-gncol"), cur = gnCols(); jset("gnCols", cur.includes(k) ? cur.filter(x=>x!==k) : [...cur, k]); return renderGen(); }
+  if (q("data-gns")!=null){ const k = q("data-gns"); s.sort = s.sort.k===k ? { k, dir:-s.sort.dir } : { k, dir:1 }; return renderGen(); }
+  if (t.id==="gnColsBtn"){ s.showCols = !s.showCols; return renderGen(); }
+  if (t.id==="gnColsAll"){ jset("gnCols", GN_COLS.map(x=>x[0])); return renderGen(); }
+  if (t.id==="gnColsDef"){ try{ localStorage.removeItem("gnCols"); }catch(x){} return renderGen(); }
+  if (t.id==="gnTxt"){ t.disabled = true; await gnExport(); t.disabled = false; }
+});
+// buscar números: solo se redibuja la tabla (el teclado no se traba)
+$("gnBody").addEventListener("input", e=>{
+  if (e.target.id!=="gnQ") return;
+  gnState.q = e.target.value; const cols = gnCols().map(gnColDef).filter(Boolean), rows = gnSorted(gnFilter(), cols);
+  $("gnN").textContent = rows.length; $("gnTable").innerHTML = gnTable(rows, cols);
+});
+
 async function initListas(){
   if (!lsState.ckDate) lsState.ckDate = addDays(today(), 1);
   if (!lsState.farm){ const fs = await prodFarms(); lsState.farm = jget("lsLast", {}).farm || fs[0]?.id || 1; }
