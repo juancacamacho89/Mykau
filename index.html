@@ -604,6 +604,10 @@ const canSee = k => can(k) !== "N", canDo = k => can(k) === "R";
 const ADMIN_PROFILES = ["Administrador", "Admin Principal"];
 const adminNow = () => ADMIN_PROFILES.includes(myProfile) || perms.registros_todos === "R";
 let isAdmin = adminNow();
+// administrador principal: SOLO por nombre de perfil (corrige/borra todo y ve el sexo en el DPR)
+const isMain = () => ADMIN_PROFILES.includes(myProfile);
+// "Cargada Hembra/Macho" → "Cargada" para los demás perfiles
+const noSex = r => r == null || isMain() ? r : String(r).replace(/^(cargad[ao])\s+(hembra|macho)\b/i, "$1");
 async function loadRole(){
   if (!navigator.onLine) return;
   const email = (await sb.auth.getUser().catch(()=>({data:{}}))).data?.user?.email?.toLowerCase();
@@ -803,7 +807,7 @@ async function loadCow(id){
   // Interherd reutiliza números: solo lo ocurrido desde que nació este animal
   const since = c.birth_date || "1900-01-01";
   const [ev, milk, kids, calf, photo, conc, mast] = await Promise.all([
-    sb.from("cow_events").select("id,event_date,event_type,result,bull,operator,category,days_value,weight_kg,body_condition,comments,source,created_by,details")
+    sb.from("cow_events").select("id,event_date,event_type,result,bull,operator,category,days_value,weight_kg,body_condition,comments,source,sync_status,created_by,details")
       .eq("cow_id", id).gte("event_date", since).order("event_date").order("id"),
     sb.from("cow_milk").select("test_date,total_kg").eq("cow_id", id).gte("test_date", since).not("total_kg","is",null).order("test_date"),
     sb.from("cows").select("id,birth_date,sex,active,exit_type").eq("dam", id).gt("birth_date", since).order("birth_date"),
@@ -817,7 +821,7 @@ async function loadCow(id){
   const tx = await sb.from("treatments_cow").select("id,start_date,diagnosis,protocol,prescribed_by,notes,outcome,created_by,treatment_items(supply_code,dose,unit,route,days)")
     .eq("cow_id", id).gte("start_date", since).order("start_date", { ascending:false }).limit(100);
   if (seq !== cowSeq) return;
-  const events = ev.data || [];
+  const events = (ev.data || []).map(e=>({ ...e, result:noSex(e.result) }));
   const codes = [...new Set([c.sire, c.maternal_grandsire, ...events.map(e=>e.bull)].filter(Boolean))];
   const { data:bulls } = codes.length ? await sb.from("bulls").select("code,name").in("code", codes) : {data:[]};
   if (seq !== cowSeq) return;
@@ -1857,14 +1861,14 @@ const RG_EDIT_TYPES = ["calving","service","heat","dry_off","exit","weight"];
 function rgActs(r){
   if (!r.id || !(isAdmin || (me && r.who===me))) return "";
   const b = (attr, txt, color) => ` <button class="del" ${attr} ${color ? `style="color:var(${color})"` : ""}>${txt}</button>`;
-  if (r.kind==="vacas") return r.status!=="pendiente" ? "" :
+  if (r.kind==="vacas") return r.status!=="pendiente" && !(isMain() && r.status==="en Interherd") ? "" :
     (RG_EDIT_TYPES.includes(r.etype) ? b(`data-rged="${r.id}|${esc(r.cow)}"`, "editar", "--accent") : "") + b(`data-rgdel="cow_events|${r.id}"`, "borrar");
   if (r.kind==="diaria") return b(`data-rgdm="${r.farm}|${esc(r.pen)}|${r.date}"`, "editar", "--accent") + b(`data-rgdel="daily_milk|${r.id}"`, "borrar");
   if (r.kind==="salud") return b(`data-rgdel="treatments_cow|${r.id}"`, "borrar");
   if (r.kind==="pastos") return b(`data-rgdel="${r.tbl}|${r.id}"`, "borrar");
   return "";
 }
-const RG_DEL_MSG = { cow_events:"¿Borrar este registro de la vaca? (aún no estaba en Interherd)", daily_milk:"¿Borrar esta planilla de leche diaria?",
+const RG_DEL_MSG = { cow_events:"¿Borrar este registro de la vaca? Si ya estaba en Interherd, bórralo también allá.", daily_milk:"¿Borrar esta planilla de leche diaria?",
   treatments_cow:"¿Borrar este tratamiento? Los insumos vuelven al inventario.", paddock_works:"¿Borrar esta labor? Los insumos vuelven al inventario.",
   grazing:"¿Borrar este movimiento de lote?", rainfall:"¿Borrar este registro de lluvia?" };
 let rgEditAfter = null;   // al abrir la hoja de vida desde Registros, abre de una vez el formulario para editar
@@ -1891,7 +1895,7 @@ async function loadRegistros(){
     (data||[]).forEach(e=>add({ kind:"vacas", icon:"🐄", when:e.created_at, date:e.event_date, farm:e.farm_id, who:e.created_by, cow:e.cow_id,
       id:e.event_id, etype:e.event_type,
       title:EV[e.event_type] || e.event_type,
-      detail:([e.bull && "Toro " + e.bull, e.result, e.category, e.operator, e.comments].filter(Boolean).join(" · ")
+      detail:([e.bull && "Toro " + e.bull, noSex(e.result), e.category, e.operator, e.comments].filter(Boolean).join(" · ")
         + (e.event_type==="calving" ? calvingTxt(e).replace(/&amp;/g, "&").replace(/&quot;/g, '"') : "")).replace(/^ · /, ""),
       status:e.status }));
   })());
@@ -3443,7 +3447,7 @@ async function lsLoad(force){
     const e = await psAll(()=>sb.from("cow_events").select("cow_id,event_date,event_type,result,weight_kg,category,cows!inner(farm_id)").eq("cows.farm_id", farm)
       .gte("event_date", addDays(today(), -600)).in("event_type", ["service","calving","ultrasound","preg_check","repro_exam","embryo_loss","abortion","weight"]).order("event_date"));
     const lc = await sb.from("lacto_cows").select("cow_id,pen,list_date").eq("farm_id", farm);   // si falta la tabla, sin lacto
-    if (!c.error && !e.error){ jset(key, { farm, at:Date.now(), cows:c.data, ev:e.data.map(x=>[x.cow_id, x.event_date, x.event_type, x.result, x.weight_kg, x.category]),
+    if (!c.error && !e.error){ jset(key, { farm, at:Date.now(), cows:c.data, ev:e.data.map(x=>[x.cow_id, x.event_date, x.event_type, noSex(x.result), x.weight_kg, x.category]),
       lacto: lc.error ? [] : lc.data }); }
   }
   lsData = jget(key, null);
@@ -3968,7 +3972,7 @@ async function openDry(ev){
     if (!pen) return err("Escoge el grupo de secas.");
     const row = { cow_id:c.id, event_date:date, event_type:"dry_off", source:"app", sync_status:"pending",
                   comments: f.note.value.trim() || null, details:{ dest_pen:pen } };
-    const { error } = ev ? await sb.from("cow_events").update(onlyEditable(row)).eq("id", ev.id) : await sb.from("cow_events").insert(row);
+    const { error } = ev ? await sb.from("cow_events").update(editRow(row)).eq("id", ev.id) : await sb.from("cow_events").insert(row);
     if (error) return err(/row-level|permission/i.test(error.message) ? "No tienes permiso para registrar en esta finca." : "No se pudo guardar: " + error.message);
     // producto de secado: un tratamiento en Salud (descuenta del inventario)
     const code = f.sup?.value, qty = +String(f.qty?.value||"").replace(",", ".");
@@ -4020,7 +4024,7 @@ async function openExit(ev){
     const row = { cow_id:c.id, event_date:date, event_type:"exit", source:"app", sync_status:"pending",
                   category:type, result: why.join("/") || null, comments: f.note.value.trim() || null,
                   details:{ destination: f.dest.value.trim() || null, value: num(f.value.value), weight: num(f.weight.value) } };
-    const { error } = ev ? await sb.from("cow_events").update(onlyEditable(row)).eq("id", ev.id) : await sb.from("cow_events").insert(row);
+    const { error } = ev ? await sb.from("cow_events").update(editRow(row)).eq("id", ev.id) : await sb.from("cow_events").insert(row);
     if (error) return err(/row-level|permission/i.test(error.message) ? "No tienes permiso para registrar en esta finca." : "No se pudo guardar: " + error.message);
     bg.remove(); toast(`Salida ${ev ? "corregida" : "guardada"} ✓`); loadCow(c.id); loadPending();
   });
@@ -4028,11 +4032,14 @@ async function openExit(ev){
 
 // termo del que sale la pajilla: el del lote de la vaca (R 1 → R1, JCAL → JCAL…); si no tiene, el Principal
 const svTank = (pen, tanks) => (tanks||[]).find(t=>t.code===String(pen||"").toUpperCase().replace(/\s/g, ""))?.code || "PRINCIPAL";
-const pendTag = e => ` <span class="tag">⏳ falta en Interherd</span>${e.created_by===me || isAdmin ? `${["calving","service","heat","dry_off","exit","weight"].includes(e.event_type)
+const pendTag = e => (e.sync_status && e.sync_status!=="pending" ? ` <span class="tag" style="background:var(--s0);color:#fff">✓ en Interherd</span>` : ` <span class="tag">⏳ falta en Interherd</span>`)
+  + `${(e.sync_status==="pending" || !e.sync_status) && (e.created_by===me || isAdmin) || isMain() ? `${["calving","service","heat","dry_off","exit","weight"].includes(e.event_type)
   ? ` <button class="del" data-edit="${e.id}" style="color:var(--accent)">editar</button>` : ""} <button class="del" data-del="${e.id}">borrar</button>` : ""}`;
 // columnas que se pueden corregir en un registro pendiente
 const EDITABLE = ["event_date","result","bull","operator","category","comments","details"];
 const onlyEditable = row => Object.fromEntries(Object.entries(row).filter(([k])=>EDITABLE.includes(k)));
+// al corregir, vuelve a "pendiente": la corrección hay que pasarla a Interherd
+const editRow = row => ({ ...onlyEditable(row), sync_status:"pending" });
 const FATE = { keep:"se queda", sell:"se vende" };
 function calvingTxt(e){
   const x = e.details || {}; const parts = [];
@@ -4115,7 +4122,7 @@ async function openReg(type, ev){
         if (!ex) return err(`El toro ${row.bull} no existe en Interherd. Revisa el código.`);
       }
     }
-    const { error } = ev ? await sb.from("cow_events").update(onlyEditable(row)).eq("id", ev.id)
+    const { error } = ev ? await sb.from("cow_events").update(editRow(row)).eq("id", ev.id)
                          : await sb.from("cow_events").insert(row);
     if (error) return err(/row-level|permission/i.test(error.message) ? "No tienes permiso para registrar en esta finca." : "No se pudo guardar: " + error.message);
     if (isSv){ store.set("ultimoToro"+c.farm_id, row.bull); store.set("ultimoOperador"+c.farm_id, row.operator);
@@ -4283,7 +4290,7 @@ async function openCalving(ev){
     const row = { cow_id:c.id, event_date:date, event_type:"calving", source:"app", sync_status:"pending",
                   category: cat.join("/"), bull, comments: f.note.value.trim() || null,
                   details: { dest_pen: pen || null, ease, preterm: !aborto && f.pre.checked, calves } };
-    const { error } = ev ? await sb.from("cow_events").update(onlyEditable(row)).eq("id", ev.id)
+    const { error } = ev ? await sb.from("cow_events").update(editRow(row)).eq("id", ev.id)
                          : await sb.from("cow_events").insert(row);
     if (error) return err(/row-level|permission/i.test(error.message) ? "No tienes permiso para registrar en esta finca." : "No se pudo guardar: " + error.message);
     bg.remove(); toast(`${aborto?"Aborto":"Parto"} ${ev ? "corregido" : "guardado"} ✓`); loadCow(c.id); loadPending();
@@ -4291,7 +4298,10 @@ async function openCalving(ev){
 }
 
 async function delReg(id){
-  if (!confirm("¿Borrar este registro? (solo se borra de la app; aún no estaba en Interherd)")) return;
+  const { data:it } = await sb.from("cow_events").select("sync_status").eq("id", id).maybeSingle();
+  if (!confirm(it && it.sync_status && it.sync_status!=="pending"
+      ? "¿Borrar este registro? Ya estaba en Interherd: bórralo también allá. (Queda en la papelera de Mykau.)"
+      : "¿Borrar este registro? (aún no estaba en Interherd)")) return;
   const { data, error } = await sb.from("cow_events").delete().eq("id", id).select("id");
   if (error || !data?.length) { alert("No se pudo borrar" + (error ? ": "+error.message : " (sin permiso)")); return; }
   toast("Registro borrado"); if (currentCow) loadCow(currentCow); loadPending();
@@ -4939,7 +4949,7 @@ async function ckDownload(){
         .in("event_type", ["service","calving","ultrasound","preg_check","repro_exam","embryo_loss","abortion","weight"])
         .order("id").range(i, i+999);
       if (e2) throw e2;
-      data.forEach(e=>{ if (ids.has(e.cow_id)) ev.push([e.cow_id, e.event_date, e.event_type, e.result, e.category, e.weight_kg, e.bull]); });
+      data.forEach(e=>{ if (ids.has(e.cow_id)) ev.push([e.cow_id, e.event_date, e.event_type, noSex(e.result), e.category, e.weight_kg, e.bull]); });
       if (data.length < 1000) break;
     }
     // leche de la lactancia actual (para la ficha: última leche y 305 días proyectada)
@@ -4992,7 +5002,7 @@ function ckInfoTxt(k){
     const p = [];
     if (k.heifer) p.push(`Novilla ${Math.floor(k.ageM||0)} m${k.weight ? ` · ${k.weight} kg` : " · sin peso"}`);
     else if (k.del!=null) p.push(`${k.del} DEL${k.ready ? " · <b>lista para servir</b>" : ""}`);
-    if (k.last) p.push(`último ${esc(k.last.r||"")} ${fmt(k.last.d)}`);
+    if (k.last) p.push(`último ${esc(noSex(k.last.r)||"")} ${fmt(k.last.d)}`);
     if (k.ovsynch) p.push(`OVSYNCH → servir ~${fmt(k.ovsynch)}`);
     if (k.why) p.push(esc(k.why));
     return p.join(" · ");
@@ -5069,7 +5079,7 @@ function ckCard(id, list){
       ${big(p305 ? p305.kg305.toLocaleString("es-CO") : "—", "305 d proyectada kg", p305?.early ? "estimado (antes del pico)" : "")}
       ${big(p305?.lact ? p305.lact.toLocaleString("es-CO") : "—", "Lactancia total kg", p305?.lact ? `secado ~${fmt(preg)} · ${p305.dryDel} d` : "sin fecha de secado (no preñada)")}
     </div>
-    ${hist.length ? `<div class="sub" style="margin-top:6px">Últimos: ${hist.map(e=>`${fmt(e.d)} ${esc(EV[e.t]||e.t)} ${esc(e.r||"")}`).join(" · ")}</div>` : ""}
+    ${hist.length ? `<div class="sub" style="margin-top:6px">Últimos: ${hist.map(e=>`${fmt(e.d)} ${esc(EV[e.t]||e.t)} ${esc(noSex(e.r)||"")}`).join(" · ")}</div>` : ""}
     ${ckMoreInfo(c)}
     ${cat ? ckPanel(c, { cat }, r) :
       `<div class="ckpan"><div class="chips">${["EXREP","ECO1","ECO2","DPR","DP5","DPSEC"].map(x=>`<button data-setcat="${x}">${x}</button>`).join("")}</div></div>`}
@@ -5131,7 +5141,7 @@ function ckExrepOpts(){
 const ckResTxt = r => r.cat==="EXREP" ? (r.sel||[]).join(" + ") : [r.main, ...(r.fol||[])].filter(Boolean).join(" · ");
 function ckPanel(c, k, r){
   const cat = k.cat==="REPETIR" ? k.stage : k.cat, ex = cat==="EXREP";
-  const opts = ex ? ckExrepOpts() : /^ECO/.test(cat) ? CK_RES.ECO : CK_RES.DP;
+  const opts = ex ? ckExrepOpts() : /^ECO/.test(cat) ? CK_RES.ECO : isMain() ? CK_RES.DP : CK_RES.DP.filter(x=>!/hembra|macho/i.test(x));
   const chip = (v, on, attr) => `<button class="${on?"on":""}" ${attr}="${esc(v)}">${esc(v)}</button>`;
   const neg = /^ECO/.test(cat) && /^(Negativo|ME)$/.test(r.main||"");
   const ready = ex ? (r.sel||[]).length : !!r.main;
