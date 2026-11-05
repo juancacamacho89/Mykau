@@ -1291,8 +1291,9 @@ const psCanWork = () => psCanMove() || psCanLabor();
 let psFarm = null, psReady = false, psPredio = "", psSort = "num", psList = [], psLots = [], psSheet = null;
 const psName = p => `${p.predio==="RECODO" ? "" : p.predio.split(" ").map(w=>w[0]).join("") + " "}${p.number}`;
 const psHa = p => p.area_m2 ? (p.area_m2/10000).toLocaleString("es-CO", { maximumFractionDigits:2 }) + " ha" : "";
-const psRest = p => p.last_exit ? Math.max(0, days(p.last_exit, today())) : null;
-const psColor = p => { const r = psRest(p); return r==null ? "--line" : r <= 1 ? "--milk" : r < PS_TARGET*0.6 ? "--s4" : r < PS_TARGET ? "--s2" : "--s0"; };
+// descanso: 0 = ocupado HOY (lo dice Supabase); si no, días desde que salió (mínimo 1)
+const psRest = p => p.occupied ? 0 : p.last_exit ? Math.max(1, days(p.last_exit, today())) : null;
+const psColor = p => { const r = psRest(p); return r==null ? "--line" : r === 0 ? "--milk" : r < PS_TARGET*0.6 ? "--s4" : r < PS_TARGET ? "--s2" : "--s0"; };
 const byNumTxt = (a, b) => (parseFloat(a)||0) - (parseFloat(b)||0) || String(a).localeCompare(String(b));
 
 function updPastosNet(){
@@ -1340,12 +1341,12 @@ function renderPastos(){
   const predios = [...new Set(act.map(p=>p.predio))].sort((a,b)=>a==="RECODO" ? -1 : b==="RECODO" ? 1 : a.localeCompare(b));
   const shown = act.filter(p=>!psPredio || p.predio===psPredio)
     .sort(psSort==="rest" ? (a,b)=>(psRest(b)??-1) - (psRest(a)??-1) : (a,b)=>a.predio.localeCompare(b.predio) || byNumTxt(a.number, b.number));
-  const ready = act.filter(p=>(psRest(p)??0) >= PS_TARGET).length, busy = act.filter(p=>psRest(p)!=null && psRest(p) <= 1).length;
+  const ready = act.filter(p=>(psRest(p)??0) >= PS_TARGET).length, busy = act.filter(p=>psRest(p) === 0).length;
   const ha = act.reduce((a,p)=>a + (+p.area_m2||0), 0)/10000;
   const lots = psLots.slice().sort((a,b)=>(pens.includes(b.grp) - pens.includes(a.grp)) || b.exit_date.localeCompare(a.exit_date));
   const tile = p => { const r = psRest(p);
     return `<button class="pstile" data-ps="${p.id}" style="--c:var(${psColor(p)})"><b>${esc(psName(p))}</b>
-      <span>${r==null ? "—" : r <= 1 ? "ocupado" : r + " d"}</span></button>`; };
+      <span>${r==null ? "—" : r === 0 ? "ocupado" : r + " d"}</span></button>`; };
   // la productividad está en Reportes → Pastos
   $("psBody").innerHTML = `
     ${psCanWork() ? `<div class="addbar">${psCanMove() ? `<button data-psnew="move">＋ Mover lote</button>` : ""}${psCanLabor() ? `<button data-psnew="labor">＋ Labor</button><button data-psnew="aforo">＋ Aforo</button><button data-psnew="rain">＋ Lluvia</button>` : ""}</div>` : ""}
@@ -1411,7 +1412,7 @@ async function loadPaddock(id){
   const avg = (arr, k) => arr.length ? Math.round(arr.reduce((a,c)=>a + c[k], 0)/arr.length) : "—";
   const ha = (+p.area_m2||0)/10000, milkYear = cyc.filter(c=>c.start >= y1).reduce((a,c)=>a + c.milk, 0);
   const aforos = [...(oc.data||[]).filter(r=>r.aforo>0).map(r=>({ d:r.entry_date, v:r.aforo })), ...works.filter(w=>w.activity==="AFORO" && w.value>0).map(w=>({ d:w.work_date, v:w.value }))].sort((a,b)=>b.d.localeCompare(a.d));
-  const rest = last ? days(last.end, t0) : null;
+  const rest = p.occupied ? 0 : last ? Math.max(1, days(last.end, t0)) : null;
   // historia: ciclos de pastoreo + labores (las del mismo día y labor se juntan), por año
   const ev = [
     ...cyc.map(c=>({ d:c.start, kind:"PASTOREO", html:`<b>${c.lots.map(esc).join(" + ")}</b> · ${c.occ} d${c.animals ? ` · ${c.animals} animales` : ""}${c.milk ? ` · ${Math.round(c.milk).toLocaleString("es-CO")} L` : ""}${c.aforo ? ` · aforo ${c.aforo}` : ""}${c.rest!=null ? `<span class="sub"> · descansó ${c.rest} d</span>` : ""}${c.end!==c.start ? `<span class="sub"> · hasta ${fmt(c.end)}</span>` : ""}${c.pids.filter(x=>label[x]).map(x=>` <span class="tag">${esc(label[x])}</span>`).join("")}` })),
@@ -1429,7 +1430,7 @@ async function loadPaddock(id){
       ${(olds||[]).length ? `<div class="calf-note">Incluye ${olds.map(o=>`${esc(o.predio.toLowerCase())} ${esc(o.number)}`).join(", ")} (unido desde ${fmt(olds[0].merged_on)})</div>` : ""}
       ${into ? `<div class="warn">Se unió a <button class="lnk" data-ps="${into.id}">${esc(into.predio)} ${esc(into.number)}</button> el ${fmt(p.merged_on)}</div>` : ""}
       <div class="rpk" style="margin-top:12px">
-        <div><b>${rest==null ? "—" : rest <= 1 ? "Ocupado" : rest + " d"}</b><span>${rest==null || rest <= 1 ? (last ? esc(last.lots.join(" + ")) : "sin pastoreos") : "de descanso (salió " + fmt(last.end) + ")"}</span></div>
+        <div><b>${rest==null ? "—" : rest === 0 ? "Ocupado" : rest + " d"}</b><span>${rest==null || rest === 0 ? (last ? esc(last.lots.join(" + ")) : "sin pastoreos") : "de descanso (salió " + fmt(last.end) + ")"}</span></div>
         <div><b>${avg(recent, "rot")}</b><span>días de rotación (prom. 12 m)</span></div>
         <div><b>${avg(cyc.filter(c=>c.start >= y1), "occ")}</b><span>días de ocupación (prom.)</span></div>
         <div><b>${aforos[0] ? aforos[0].v : "—"}</b><span>${aforos[0] ? "último aforo · " + fmt(aforos[0].d) : "sin aforo"}</span></div>
@@ -1464,7 +1465,7 @@ function psPadPicker(multi){
   const s = psSheet, pads = psList.filter(p=>p.active && !p.merged_into), predios = [...new Set(pads.map(p=>p.predio))].sort();
   return `<div class="chips sm ckpan" style="padding:0"><div class="chips sm">${predios.map(p=>`<button class="${s.predio===p?"on":""}" data-pssp="${esc(p)}">${esc(p)}</button>`).join("")}</div></div>
     <div class="psgrid">${pads.filter(p=>p.predio===s.predio).sort((a,b)=>byNumTxt(a.number, b.number)).map(p=>
-      `<button class="pstile ${s.pads.includes(p.id) ? "sel" : ""}" data-pspick="${p.id}" style="--c:var(${psColor(p)})"><b>${esc(p.number)}</b><span>${psRest(p)==null ? "" : psRest(p) <= 1 ? "ocup." : psRest(p) + " d"}</span></button>`).join("")}</div>
+      `<button class="pstile ${s.pads.includes(p.id) ? "sel" : ""}" data-pspick="${p.id}" style="--c:var(${psColor(p)})"><b>${esc(p.number)}</b><span>${psRest(p)==null ? "" : psRest(p) === 0 ? "ocup." : psRest(p) + " d"}</span></button>`).join("")}</div>
     <div class="sub" style="margin-top:4px">${s.pads.length ? "Escogidos: " + s.pads.map(id=>esc(psName(psList.find(p=>p.id===id)||{predio:"",number:id}))).join(", ") : multi ? "Toca uno o varios potreros" : "Toca el potrero"}</div>`;
 }
 function renderPsSheet(){
@@ -1681,7 +1682,7 @@ async function renderProd(box){
         : `<div class="empty">Ningún potrero de este predio lo pastorean lotes de leche</div>`}
       <div class="legend"><span><i style="background:var(--accent)"></i>L/ha</span><span><i style="background:var(--s3)"></i>menos del 70% del promedio</span></div></div>
     <div class="card"><b>🌱 Días de descanso hoy</b><div class="sub">Línea: ${PS_TARGET} d (listo para pastorear). Más de ${PS_OVER} d: el pasto se pasa.</div>
-      ${psBars(restRows, { val:s=>s.rest, color:s=>psColor(s.p), label:s=>s.rest <= 1 ? "ocupado" : s.rest + " d", refs:[{ v:PS_TARGET, t:PS_TARGET + " d" }, { v:PS_OVER, t:PS_OVER + " d" }], max:PS_OVER*2 })}
+      ${psBars(restRows, { val:s=>s.rest, color:s=>psColor(s.p), label:s=>s.rest === 0 ? "ocupado" : s.rest + " d", refs:[{ v:PS_TARGET, t:PS_TARGET + " d" }, { v:PS_OVER, t:PS_OVER + " d" }], max:PS_OVER*2 })}
       <div class="legend"><span><i style="background:var(--milk)"></i>ocupado</span><span><i style="background:var(--s4)"></i>&lt; ${Math.round(PS_TARGET*0.6)} d</span>
         <span><i style="background:var(--s2)"></i>&lt; ${PS_TARGET} d</span><span><i style="background:var(--s0)"></i>listo</span></div></div>
     <div class="card"><b>🛠️ Potreros para trabajar (${work.length})</b><div class="sub">Los que tienen más señales primero</div>
