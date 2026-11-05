@@ -967,15 +967,15 @@ function renderCow(d){
 
   ${kids.length ? `<div class="card"><b>Crías (${kids.length})</b><div class="list">${kids.map(k=>`<button class="chip" data-cow="${esc(k.id)}">${esc(k.id)} <span class="sub">${fmt(k.birth_date)}${k.active?"":" · "+esc(k.exit_type||"salió")}</span></button>`).join("")}</div></div>` : ""}
 
-  ${weights.length ? `<div class="card"><b>Peso</b>${weights.length >= 3 ? `<div id="weightChart"></div>` : ""}
+  ${weights.length ? `<div class="card"><b>Peso</b><div id="weightChart"></div>
     <div class="sub">Último: ${weights[weights.length-1].weight_kg} kg el ${fmt(weights[weights.length-1].event_date)}${weights[weights.length-1].body_condition?` · CC ${weights[weights.length-1].body_condition}`:""}</div>
-    ${weights.filter(e=>e.source==="app" || isMain()).slice(-12).reverse().map(e=>`<div class="sub"${swAttr(e)} style="padding:3px 0">${fmt(e.event_date)} · ${e.weight_kg} kg${e.source==="app" ? pendTag(e) : ""}</div>`).join("")}</div>` : ""}
+    <div id="weightInfo" class="sub" style="margin-top:4px">Toca la gráfica para ver el peso, la fecha y la edad</div></div>` : ""}
   ${(d.tx || []).length ? `<div class="card"><b>💉 Salud (${d.tx.length})</b><div class="sub">Tratamientos, vacunas y purgas</div>
     <table style="margin-top:6px;font-size:13px">${d.tx.map(t=>`<tr><td style="white-space:nowrap">${fmt(t.start_date)}</td><td><b>${esc(t.diagnosis || "")}</b>${t.outcome ? ` · ${esc(t.outcome)}` : ""}
       <div class="sub">${(t.treatment_items||[]).map(i=>`${esc(i.supply_code)} ${i.dose ?? ""} ${esc(i.unit||"")}`).join(" · ")}${t.notes ? ` · ${esc(t.notes)}` : ""}${t.prescribed_by ? ` · ${esc(t.prescribed_by)}` : ""}</div></td></tr>`).join("")}</table></div>` : ""}
   ${c.active && canDo("vacas_salida") ? `<div style="text-align:center;margin:4px 0 24px"><button class="btn ghost" data-add="exit" style="color:var(--s4);width:auto;padding:10px 16px">🚪 Registrar venta, descarte o muerte</button></div>` : ""}
   `;
-  lastCowData = d; milkPick = null; drawCowCharts();
+  lastCowData = d; milkPick = null; wPick = null; drawCowCharts();
   if (rgEditAfter){ const ev = d.events.find(v=>v.id===rgEditAfter); rgEditAfter = null; if (ev) setTimeout(()=>openReg(ev.event_type, ev), 60); }
   if (canSee("salud_ver")) cowWithdrawal(c.id);
 }
@@ -1002,7 +1002,7 @@ function lacHtml(s, open, kids, bulls){
   const cvRow = cv ? `<tr${swAttr(cv)}><td>${fmt(cv.event_date)}</td><td class="ev">Parto</td><td>${esc(cv.category||"")}${cv.bull?` · toro ${bullTxt(cv.bull,bulls)}`:""}
       ${kid ? ` · cría <button class="lnk" data-cow="${esc(kid.id)}">${esc(kid.id)}</button>` : ""}${cv.source==="app" ? calvingTxt(cv) + pendTag(cv) : ihDel(cv)}</td></tr>` : "";
   return `<details class="lac" ${open?"open":""}><summary><b>${title}</b><div class="sub">${sum}</div></summary>
-    <table>${rows}${cvRow}</table>${s.events.some(canDel) || canDel(cv) ? `<div class="sub" style="margin-top:4px">← Desliza un evento a la izquierda para borrarlo</div>` : ""}</details>`;
+    <table>${rows}${cvRow}</table></details>`;
 }
 
 // ── Mastitis: CMT por cuarto (AI AD / PI PD) ────────────────
@@ -3814,7 +3814,7 @@ async function loadMastWatch(){
 }
 
 // ── Gráficas (SVG propio) ───────────────────────────────────
-let lastCowData = null, milkPick = null;
+let lastCowData = null, milkPick = null, wPick = null;
 
 // Lactancias para la leche: de un parto al siguiente
 function milkLacs(d){
@@ -3858,7 +3858,18 @@ function drawCowCharts(){
     });
   }
   const w = d.events.filter(e=>e.event_type==="weight" && e.weight_kg);
-  if ($("weightChart")) lineChart($("weightChart"), w.map(e=>[e.event_date, +e.weight_kg]), { color:css("--accent"), unit:"kg" });
+  if ($("weightChart")) lineChart($("weightChart"), w.map(e=>[e.event_date, +e.weight_kg]), { color:css("--accent"), unit:"kg", sel:wPick,
+    // tocar: el pesaje más cercano → peso, fecha y meses de edad
+    onPick: date => {
+      const ms = new Date(date).getTime();
+      const i = w.reduce((b, e, k)=>Math.abs(new Date(e.event_date).getTime() - ms) < Math.abs(new Date(w[b].event_date).getTime() - ms) ? k : b, 0);
+      wPick = i; drawCowCharts();
+      const e = w[i], bd = d.cow?.birth_date, prev = w[i - 1];
+      const age = bd ? (days(bd, e.event_date)/30.44).toFixed(1).replace(".", ",") + " meses" : "";
+      const gdp = prev ? ((+e.weight_kg - +prev.weight_kg) / Math.max(1, days(prev.event_date, e.event_date)) * 1000) : null;
+      $("weightInfo").innerHTML = `<b style="color:var(--ink);font-size:16px">${e.weight_kg} kg</b> · ${fmt(e.event_date)}${age ? " · " + age : ""}`
+        + (gdp!=null ? ` · ${Math.round(gdp)} g/día desde el anterior` : "") + (e.body_condition ? ` · CC ${e.body_condition}` : "");
+    } });
 }
 window.addEventListener("resize", ()=>{ drawCowCharts(); if (lastChart) drawChart(lastChart); });
 
@@ -3889,6 +3900,8 @@ function lineChart(box, pts, o){
   pts.forEach((p,i)=>{ if (i && brk.some(b=>b>t[i-1] && b<=t[i])) flush(); seg.push(`${X(t[i])},${Y(v[i])}`); });
   flush();
   pts.forEach((p,i)=>{ g += `<circle cx="${X(t[i])}" cy="${Y(v[i])}" r="2.6" fill="${o.color}"/>`; });
+  if (o.sel!=null && pts[o.sel]) g += `<line x1="${X(t[o.sel])}" x2="${X(t[o.sel])}" y1="${T}" y2="${H-B}" stroke="${o.color}" stroke-opacity=".5"/>`
+    + `<circle cx="${X(t[o.sel])}" cy="${Y(v[o.sel])}" r="6" fill="none" stroke="${o.color}" stroke-width="2.5"/>`;
   if (step.length){ // concentrado: escalera (el valor sigue igual hasta el siguiente listado)
     let d = "";
     step.forEach((s,i)=>{
