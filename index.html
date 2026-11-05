@@ -1483,7 +1483,8 @@ function renderPsSheet(){
   const title = { labor:"Registrar labor", move:"Mover lote", aforo:"Aforo", rain:"Lluvia" }[s.kind];
   // todos los lotes: los del Reporte de ganadería, los de leche y los que ya han estado en un potrero
   const field = jget(`psField:${psFarm}`, []);
-  const lots = [...new Set([...field, ...s.pens, ...psLots.map(l=>l.grp)])].filter(Boolean)
+  // los lotes que solo están en la historia vieja (más de 90 días sin potrero) no salen para escoger
+  const lots = [...new Set([...field, ...s.pens, ...psLots.filter(l=>l.exit_date >= addDays(today(), -90)).map(l=>l.grp)])].filter(Boolean)
     .sort((a, b)=>(field.indexOf(a) < 0 ? 999 : field.indexOf(a)) - (field.indexOf(b) < 0 ? 999 : field.indexOf(b)) || byNumTxt(a, b));
   let body = `<label>Fecha</label><input type="date" id="psDate" value="${s.date}" max="${today()}">`;
   if (s.kind==="labor") body += `<label>Labor</label><div class="chips">${PS_ACTS.map(a=>`<button class="${s.act===a?"on":""}" data-psact="${a}">${a}</button>`).join("")}</div>
