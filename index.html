@@ -247,6 +247,8 @@ details.lac td{padding:6px 8px}
 .psfit{background:#fff;color:#1b2430;border:2px solid rgba(0,0,0,.25);border-radius:6px;padding:4px 8px;font-weight:700;font-size:13px;cursor:pointer}
 .toast{position:fixed;left:50%;bottom:calc(80px + env(safe-area-inset-bottom));transform:translateX(-50%);background:var(--ink);color:var(--card);
   padding:10px 16px;border-radius:20px;font-size:14px;font-weight:600;z-index:30;max-width:90vw;text-align:center}
+.ivtabs .seg label span{padding-left:4px;padding-right:4px;font-size:13px}
+.ivt td{white-space:normal}
 </style>
 </head>
 <body>
@@ -288,6 +290,7 @@ details.lac td{padding:6px 8px}
           <circle cx="14" cy="10.6" r="1.6" fill="#fff" fill-opacity=".55"/><circle cx="31" cy="10.6" r="1.6" fill="#fff" fill-opacity=".55"/>
           <circle cx="14" cy="23.6" r="1.6" fill="#fff" fill-opacity=".55"/><circle cx="31" cy="23.6" r="1.6" fill="#fff" fill-opacity=".55"/>
         </svg></span><b>Mastitis</b></a>
+        <a class="appicon hidden" href="#inventario" data-perm="inventario_ver"><span class="ic" style="--g1:#c3b5ff;--g2:#5b45c9">📦</span><b>Inventario</b><i class="badge hidden" id="badgeInv"></i></a>
         <a class="appicon hidden" href="#salud" data-perm="salud_ver salud_tratar"><span class="ic" style="--g1:#5fd0a5;--g2:#178a62">🩺</span><b>Salud</b><i class="badge hidden" id="badgeSalud"></i></a>
         <a class="appicon" href="#leche" data-perm="pesaje_registrar"><span class="ic" style="--g1:#7cc4ff;--g2:#2f6fd6"><svg viewBox="0 0 48 48" aria-hidden="true">
           <path d="M7 8h34a3 3 0 0 1 3 3v7c0 8-9 13-20 13S4 26 4 18v-7a3 3 0 0 1 3-3z" fill="#fff"/>
@@ -429,6 +432,13 @@ details.lac td{padding:6px 8px}
     </section>
 
     <!-- ═══ GENERADOR DE LISTAS ═══ -->
+    <section id="tabInv" class="hidden">
+      <header>
+        <div class="brand"><button class="back" data-home aria-label="Inicio">‹</button><div><h1>Inventario</h1><div class="sub">Existencias, pedidos, conteos y alertas</div></div></div>
+        <button class="link logout">Salir</button>
+      </header>
+      <div id="ivBody"><div class="empty">Cargando…</div></div>
+    </section>
     <section id="tabGen" class="hidden">
       <header>
         <div class="brand"><button class="back" data-home aria-label="Inicio">‹</button><div><h1>Generador de listas</h1><div class="sub">Escoge vacas y columnas, y exporta a texto</div></div></div>
@@ -618,7 +628,9 @@ const PERM_FALLBACK = { vacas_repro:"vacas_ver", calidad_ver:"reporte_editar",
   ronda_registrar:"diaria_registrar", ronda_ver:"diaria_registrar" };   // funciones nuevas: mientras no estén en el perfil
 // si el perfil no tiene la función, se usa la de la que depende (en cadena: generador → listas → reproducción…)
 const permOf = (k, n = 0) => perms[k] || (PERM_FALLBACK[k] && n < 5 ? permOf(PERM_FALLBACK[k], n + 1) : null);
-const can = k => permOf(k)
+const INV_PROFILES = ["Administrador", "Admin Principal", "Gerente", "Maria"];
+const ivCan = () => INV_PROFILES.includes(myProfile);
+const can = k => (k==="inventario_ver" && ivCan() ? "R" : null) || permOf(k)
   || (k==="registros_ver" && Object.entries(perms).some(([f, v])=>v==="R" && f!=="registros_todos") ? "V" : null) || "N";   // "R" | "V" | "N"
 const canSee = k => can(k) !== "N", canDo = k => can(k) === "R";
 const ADMIN_PROFILES = ["Administrador", "Admin Principal"];
@@ -689,6 +701,8 @@ function setTab(tab){
   $("tabListas").classList.toggle("hidden", tab!=="listas");
   if (tab==="listas") initListas();
   $("tabGen").classList.toggle("hidden", tab!=="generador");
+  $("tabInv").classList.toggle("hidden", tab!=="inventario");
+  if (tab==="inventario") initInv();
   if (tab==="generador") initGen();
   $("tabToros").classList.toggle("hidden", tab!=="toros");
   if (tab==="toros") initToros();
@@ -707,7 +721,7 @@ function setTab(tab){
 // pantallas y el permiso que las abre (si no lo tiene, vuelve al inicio)
 const TAB_PERM = { terneras:"terneras_historial terneras_vigilar terneras_registrar", traslados:"traslados", leche:"pesaje_registrar",
   diaria:"diaria_registrar diaria_totales diaria_resumen", reporte:"reporte_ver produccion_ver pastos_ver calidad_ver", registros:"registros_ver", chequeo:"chequeo",
-  mastitis:"mastitis_historial mastitis_vigilar", salud:"salud_ver salud_tratar", pastos:"pastos_ver pastos_registrar", pesot:"pesot_registrar", listas:"listas_ver", generador:"generador_ver", toros:"toros_ver toros_registrar", racion:"racion_ver racion_registrar", ronda:"ronda_registrar ronda_ver", rapido:"vacas_servicio vacas_celo vacas_secado salud_tratar traslados vacas_salida", vaca:"vacas_ver" };
+  mastitis:"mastitis_historial mastitis_vigilar", salud:"salud_ver salud_tratar", pastos:"pastos_ver pastos_registrar", pesot:"pesot_registrar", listas:"listas_ver", generador:"generador_ver", inventario:"inventario_ver", toros:"toros_ver toros_registrar", racion:"racion_ver racion_registrar", ronda:"ronda_registrar ronda_ver", rapido:"vacas_servicio vacas_celo vacas_secado salud_tratar traslados vacas_salida", vaca:"vacas_ver" };
 function route(){
   const h = decodeURIComponent(location.hash.slice(1));
   const tk = Object.keys(TAB_PERM).find(k=>h.startsWith(k));
@@ -725,6 +739,7 @@ function route(){
   if (h.startsWith("rapido")) { setTab("rapido"); return; }
   if (h.startsWith("listas")) { setTab("listas"); return; }
   if (h.startsWith("generador")) { setTab("generador"); return; }
+  if (h.startsWith("inventario")) { setTab("inventario"); return; }
   if (h.startsWith("toros")) { setTab("toros"); return; }
   if (h.startsWith("racion")) { setTab("racion"); return; }
   if (h.startsWith("ronda")) { setTab("ronda"); return; }
@@ -752,7 +767,7 @@ function renderHome(){
   applyHomeOrder();
   document.querySelectorAll("[data-perm]").forEach(el=>el.classList.toggle("hidden", !el.dataset.perm.split(" ").some(canSee)));
   $("homeDate").textContent = new Date().toLocaleDateString("es-CO", { weekday:"long", day:"numeric", month:"long" });
-  homeAbx();
+  homeAbx(); ivBadge();
 }
 // leche de antibiótico (Leche diaria): la de la tarde de ayer y la de la mañana de hoy va para las terneras
 async function homeAbx(){
@@ -1221,7 +1236,7 @@ $("hsBody").addEventListener("click", async e=>{
   const t = e.target;
   if (t.id==="hsNew"){ newHealthForm(); window.scrollTo({top:0}); return; }
   if (t.id==="hsCancel"){ hsForm = null; loadHealth(); return; }
-  if (t.id==="hsInv"){ loadInventory(); return; }
+  if (t.id==="hsInv"){ location.hash = "inventario"; return; }
   const out = t.closest("[data-hsout]");
   if (out){ const { error } = await sb.from("treatments_cow").update({ outcome:out.dataset.hsout, outcome_date:today() }).eq("id", +out.dataset.id);
     if (error) return toast("No se pudo guardar: " + error.message); toast("Resultado guardado ✓"); loadHealth(); return; }
@@ -4652,9 +4667,420 @@ document.addEventListener("click", e=>{
   if (r){ if (r.dataset.plrun==="descarte") return openExit(null, "descarte"); if (r.dataset.plrun==="secado") return openDry(); }
 });
 
+// ═══════════════════════ INVENTARIO ═══════════════════════════
+// La app es la principal: catálogo, presentaciones, pedidos (varias líneas), conteos/salidas y alertas por finca.
+// Existencias (vista supply_stock) = entradas + ajustes − tratamientos − labores − bultos de la Leche diaria.
+// Registran los perfiles INV_PROFILES; el resto con "ver inventario" solo consulta. Necesita señal.
+const IV_CATS = ["Antibiótico","Antiinflamatorio / analgésico","Hormona","Antiparasitario","Vacuna","Vitamina / mineral","Suero / fluidos",
+  "Anestésico / sedante","Digestivo / hepático","Tópico / cascos","Desinfectante / sellador","Reactivo / diagnóstico","Otro medicamento",
+  "Material veterinario","Concentrado","Sal mineralizada","Semen","Fertilizante","Semilla","Herbicida / plaguicida","Insecticida",
+  "Fungicida","Herbicida","Foliar","Otro"];
+const IV_UNITS = ["mL","L","g","kg","unidad","dosis","jeringa","bolo","pajilla","bulto","frasco"];
+const IV_DRUG = c => !["Material veterinario","Reactivo / diagnóstico","Desinfectante / sellador","Concentrado","Sal mineralizada","Semen",
+  "Fertilizante","Semilla","Herbicida / plaguicida","Insecticida","Fungicida","Herbicida","Foliar","Otro",""].includes(c || "");
+const IV_FEED = [["","No"],["concentrate_bags","Concentrado"],["kau_bags","KAU"],["silage_bags","Silo"]];
+const IV_KIND = { entrada:"📥 Entrada", ajuste:"🔢 Conteo", salida:"📤 Salida" };
+let ivState = { tab:"stock", farm:null, q:"", cat:"", low:false }, ivData = null, ivReady = false, ivFarms = [], ivOrder = null;
+const ivN = v => (+v || 0).toLocaleString("es-CO", { maximumFractionDigits:1 });
+const ivSup = code => (ivData?.supplies || []).find(x=>x.code===code);
+// presentaciones: las guardadas o, si no hay, las del texto del Excel ("Frasco 500 mL · Frasco 50 mL")
+function ivPres(s){
+  if (!s) return [];
+  if (Array.isArray(s.presentations) && s.presentations.length) return s.presentations.map(p=>({ name:p.name, size:+p.size || 1 }));
+  const u = String(s.unit || "").toLowerCase(), F = { ml:["ml",1], l:["ml",1000], g:["g",1], kg:["g",1000] };
+  const parts = String(s.pack_name || "").split("·").map(x=>x.trim()).filter(Boolean);
+  if (!parts.length) return [{ name: s.unit==="bulto" ? "Bulto" : s.unit ? s.unit : "Unidad", size:+s.pack_size || 1 }];
+  return parts.map((name, i)=>{
+    const m = /(\d+(?:[.,]\d+)?)\s*(ml|l|g|kg)\b/i.exec(name), x = /x\s*(\d+)/i.exec(name);
+    let size = null;
+    if (m){ const a = F[m[2].toLowerCase()], b = F[u]; if (a && b && a[0]===b[0]) size = +m[1].replace(",", ".") * a[1] / b[1]; }
+    if (size==null && x) size = +x[1];
+    if (size==null) size = i===0 ? (+s.pack_size || 1) : 1;
+    return { name, size };
+  });
+}
+// "1.500 mL · 3 Frasco 500 mL"
+function ivQty(s, q, br){
+  const u = s?.unit || "", p = ivPres(s)[0];
+  const packs = p && p.size > 1 ? (br ? `<div class="sub" style="font-weight:400">≈ ${ivN(q / p.size)} × ${esc(p.name)}</div>` : ` <span class="sub">≈ ${ivN(q / p.size)} × ${esc(p.name)}</span>`) : "";
+  return `${ivN(q)} ${esc(u)}${packs}`;
+}
+async function initInv(){
+  if (!ivReady){
+    ivReady = true;
+    const fs = await prodFarms();
+    ivFarms = fs.length ? fs : [{ id:1, herd:"RC" }, { id:7, herd:"ISLA" }];
+    ivState.farm = jget("ivLast", {}).farm || ivFarms[0].id;
+    ivWire();
+  }
+  await ivLoad(); renderInv();
+}
+async function ivLoad(){
+  if (!navigator.onLine){ ivData = { err:"El inventario necesita señal." }; return; }
+  $("ivBody").innerHTML = `<div class="card"><div class="empty">Cargando…</div></div>`;
+  const f = ivState.farm;
+  const [su, st, mv, al] = await Promise.all([
+    psAll(()=>sb.from("supplies").select("*").order("name")),
+    sb.from("supply_stock").select("*").eq("farm_id", f),
+    sb.from("supply_entries").select("id,entry_date,kind,supply_code,packs,qty,presentation,pack_size,supplier,invoice,notes,created_by,created_at")
+      .eq("farm_id", f).order("entry_date", { ascending:false }).order("id", { ascending:false }).limit(300),
+    sb.from("supply_alerts").select("supply_code,min_qty").eq("farm_id", f)]);
+  if (al.error || st.error){ ivData = { err:"Falta correr SQL/inventario.sql en Supabase." }; return; }
+  ivData = { supplies:su.data || [], stock:st.data || [], moves:mv.data || [], alerts:al.data || [] };
+}
+async function ivBadge(){
+  const b = $("badgeInv"); if (!b) return;
+  if (!canSee("inventario_ver") || !navigator.onLine) return b.classList.add("hidden");
+  const { count, error } = await sb.from("supply_stock").select("code", { count:"exact", head:true }).eq("low", true);
+  b.textContent = count || ""; b.classList.toggle("hidden", !!error || !count);
+}
+function renderInv(){
+  const s = ivState, d = ivData, reg = ivCan();
+  if (!d || d.err){ $("ivBody").innerHTML = `<div class="card"><div class="empty">${esc(d?.err || "Cargando…")}</div></div>`; return; }
+  const tabs = [["stock","Existencias"], ...(reg ? [["pedido","Pedido"],["conteo","Conteo"]] : []), ["prod","Productos"], ["alert","Alertas"]];
+  if (!tabs.some(t=>t[0]===s.tab)) s.tab = "stock";
+  const box = x => `<div class="sheet" style="padding:0;background:none;max-height:none;margin-bottom:10px;overflow:visible">${x}</div>`;
+  let h = ivFarms.length > 1 ? box(seg("ivF", ivFarms.map(f=>[String(f.id), farmLabel(f)]), String(s.farm))) : "";
+  h += box(`<div class="ivtabs">${seg("ivT", tabs, s.tab)}</div>`);
+  h += s.tab==="stock" ? ivStockHtml() : s.tab==="pedido" ? ivOrderHtml() : s.tab==="conteo" ? ivCountHtml() : s.tab==="prod" ? ivProdHtml() : ivAlertHtml();
+  $("ivBody").innerHTML = h;
+  if (s.tab==="pedido") ivOrderCalc();
+  if (s.tab==="conteo") ivCountCalc();
+}
+// ── Existencias ──
+function ivStockHtml(){
+  const s = ivState, d = ivData, q = s.q.trim().toLowerCase();
+  const rows = d.stock.filter(r=>r.active!==false || +r.stock).filter(r=>(!s.cat || (r.category || "Otro")===s.cat) && (!q || (r.name + " " + r.code).toLowerCase().includes(q)) && (!s.low || r.low));
+  const low = d.stock.filter(r=>r.low).sort((a, b)=>a.name.localeCompare(b.name));
+  const cats = [...new Set(d.stock.map(r=>r.category || "Otro"))].sort();
+  const by = {}; rows.forEach(r=>(by[r.category || "Otro"] ||= []).push(r));
+  return `${low.length ? `<div class="warn" style="margin-bottom:10px">⚠️ <b>${low.length} por debajo de la alerta</b>
+      ${low.map(r=>`<div style="margin-top:4px" data-ivopen="${esc(r.code)}"><b>${esc(r.name)}</b>: quedan ${ivQty(ivSup(r.code), r.stock)} · alerta ${ivN(r.alert_min)} ${esc(r.unit || "")}</div>`).join("")}</div>` : ""}
+    <div class="card">
+      <input id="ivQ" placeholder="🔍 buscar producto" value="${esc(s.q)}" autocomplete="off">
+      <div class="chips sm ckpan" style="padding:0;margin-top:8px"><div class="chips sm"><button class="${!s.cat && !s.low ? "on" : ""}" data-ivcat="">Todos</button><button class="${s.low ? "on" : ""}" data-ivlow="1">⚠️ Bajos</button>
+        ${cats.map(c=>`<button class="${s.cat===c ? "on" : ""}" data-ivcat="${esc(c)}">${esc(c)}</button>`).join("")}</div></div>
+      <div id="ivList">${Object.keys(by).sort().map(c=>`<div class="ckpen">${esc(c)}</div><table class="ivt" style="font-size:13px">
+        <tr><th>Producto</th><th style="text-align:right">Queda</th></tr>
+        ${by[c].sort((a, b)=>a.name.localeCompare(b.name)).map(r=>`<tr data-ivopen="${esc(r.code)}" style="cursor:pointer"><td><b>${esc(r.name)}</b>
+          <div class="sub">entró ${ivN(r.entered)}${+r.adjusted ? ` · ajustes ${+r.adjusted > 0 ? "+" : ""}${ivN(r.adjusted)}` : ""} · gastado ${ivN(r.used)}${r.alert_min!=null ? ` · alerta ${ivN(r.alert_min)}` : ""}${r.last_count ? ` · conteo ${fmt(r.last_count)}` : ""}</div></td>
+          <td style="text-align:right;${r.low || +r.stock < 0 ? `color:var(--s4);font-weight:800` : "font-weight:700"}">${ivQty(ivSup(r.code), r.stock, 1)}${r.low ? " ⚠️" : ""}</td></tr>`).join("")}</table>`).join("")
+        || `<div class="empty" style="margin-top:8px">${d.stock.length ? "Nada con ese filtro" : "Aún no hay movimientos en esta finca: registra un pedido o un conteo."}</div>`}</div>
+      <div class="sub" style="margin-top:8px"><button class="lnk" id="ivReload">actualizar</button></div></div>
+    <div class="card"><b>Últimos movimientos</b>${ivMovesHtml(d.moves.slice(0, 40))}</div>`;
+}
+function ivMovesHtml(list){
+  return `<table class="ivt" style="font-size:13px;margin-top:6px">${list.map(m=>{ const sp = ivSup(m.supply_code);
+    const del = ivCan() && (isMain() || m.created_by===me);
+    return `<tr${del ? ` data-swdel="supply_entries|${m.id}"` : ""}><td>${fmt(m.entry_date)}</td><td>${IV_KIND[m.kind || "entrada"] || m.kind}</td>
+      <td><b>${esc(sp?.name || m.supply_code)}</b><div class="sub">${m.packs ? `${ivN(m.packs)} × ${esc(m.presentation || "")} · ` : ""}${[m.supplier, m.invoice, m.notes].filter(Boolean).map(esc).join(" · ")}</div></td>
+      <td style="text-align:right;white-space:nowrap">${+m.qty > 0 && m.kind!=="entrada" ? "+" : ""}${ivN(m.qty)} ${esc(sp?.unit || "")}</td></tr>`; }).join("")
+    || `<tr><td><div class="empty">Sin movimientos</div></td></tr>`}</table>`;
+}
+// ── Pedido: varias líneas a la vez ──
+const ivNewLine = () => ({ code:"", pres:0, packs:"", cname:"", csize:"" });
+const ivOptions = () => `<datalist id="ivSupList">${(ivData?.supplies || []).filter(x=>x.active!==false)
+  .map(x=>`<option value="${esc(x.name)}">${esc(x.code)} · ${esc(x.category || "")}</option>`).join("")}</datalist>`;
+const ivByName = v => { const t = String(v || "").trim().toLowerCase(); const L = (ivData?.supplies || []).filter(x=>x.active!==false);
+  return L.find(x=>x.name.toLowerCase()===t) || L.find(x=>x.code.toLowerCase()===t) || null; };
+function ivOrderHtml(){
+  ivOrder ||= { date:today(), supplier:"", invoice:"", notes:"", lines:[ivNewLine()] };
+  const o = ivOrder;
+  return `<div class="card sheet hsform" style="max-height:none"><b>Pedido / entrada de insumos</b>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">
+      <div><label>Fecha</label><input id="ivODate" type="date" value="${o.date}" max="${today()}" style="min-width:0"></div>
+      <div><label>Proveedor</label><input id="ivOSup" value="${esc(o.supplier)}" list="ivSupps" style="min-width:0"></div></div>
+    <datalist id="ivSupps">${[...new Set((ivData.moves || []).map(m=>m.supplier).filter(Boolean))].map(x=>`<option value="${esc(x)}">`).join("")}</datalist>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">
+      <div><label>Factura</label><input id="ivOInv" value="${esc(o.invoice)}" style="min-width:0"></div>
+      <div><label>Nota</label><input id="ivONote" value="${esc(o.notes)}" style="min-width:0"></div></div>
+    ${ivOptions()}
+    <div id="ivLines">${o.lines.map((l, i)=>ivLineHtml(l, i)).join("")}</div>
+    <div class="addbar" style="margin-top:8px"><button id="ivAddLine">＋ Otro producto</button><button id="ivNewProd">＋ Producto nuevo</button></div>
+    <div class="sub" id="ivOTot" style="margin-top:8px"></div>
+    <div class="err" id="ivErr"></div>
+    <button class="btn" id="ivOSave" style="margin-top:12px">Guardar pedido</button></div>`;
+}
+function ivLineHtml(l, i){
+  const sp = ivSup(l.code), ps = ivPres(sp);
+  return `<div class="ivline" data-ivl="${i}" style="border-top:1px solid var(--line);margin-top:10px;padding-top:8px">
+    <div class="row" style="gap:6px"><input data-ivk="name" list="ivSupList" placeholder="Producto" value="${esc(sp?.name || l.typed || "")}" autocomplete="off" style="flex:1;min-width:0">
+      ${ivOrder.lines.length > 1 ? `<button class="lnk" data-ivdel="${i}" aria-label="Quitar">✕</button>` : ""}</div>
+    ${sp ? `<div style="display:grid;grid-template-columns:1.4fr 0.8fr;gap:6px;margin-top:6px">
+      <select data-ivk="pres" style="min-width:0">${ps.map((p, k)=>`<option value="${k}" ${+l.pres===k ? "selected" : ""}>${esc(p.name)}${p.size!==1 || sp.unit ? ` (${ivN(p.size)} ${esc(sp.unit || "")})` : ""}${k===0 ? " · usual" : ""}</option>`).join("")}
+        <option value="-1" ${+l.pres===-1 ? "selected" : ""}>Otra presentación…</option></select>
+      <input data-ivk="packs" type="number" inputmode="decimal" min="0" step="any" placeholder="Cantidad" value="${esc(l.packs)}" style="min-width:0"></div>
+      ${+l.pres===-1 ? `<div style="display:grid;grid-template-columns:1.4fr 0.8fr;gap:6px;margin-top:6px">
+        <input data-ivk="cname" placeholder="ej. Frasco 250 mL" value="${esc(l.cname)}" style="min-width:0">
+        <input data-ivk="csize" type="number" inputmode="decimal" min="0" step="any" placeholder="${esc(sp.unit || "unid.")} c/u" value="${esc(l.csize)}" style="min-width:0"></div>` : ""}
+      <div class="sub" data-ivsum="${i}"></div>` : l.typed ? `<div class="sub">No está en el catálogo: escoge de la lista o crea el producto nuevo.</div>` : ""}</div>`;
+}
+const ivLineSize = l => { const sp = ivSup(l.code); if (!sp) return 0; return +l.pres===-1 ? (+String(l.csize).replace(",", ".") || 0) : (ivPres(sp)[+l.pres || 0]?.size || 1); };
+function ivOrderCalc(){
+  if (!ivOrder) return; let n = 0;
+  ivOrder.lines.forEach((l, i)=>{ const el = document.querySelector(`[data-ivsum="${i}"]`); if (!el) return;
+    const sp = ivSup(l.code), q = (+String(l.packs).replace(",", ".") || 0) * ivLineSize(l), st = ivData.stock.find(r=>r.code===l.code);
+    if (q) n++;
+    el.innerHTML = `${q ? `= <b>${ivN(q)} ${esc(sp.unit || "")}</b> · ` : ""}hoy hay ${ivQty(sp, st ? st.stock : 0)}`; });
+  const t = $("ivOTot"); if (t) t.textContent = n ? `${n} producto${n > 1 ? "s" : ""} con cantidad` : "";
+}
+async function ivOrderSave(){
+  const o = ivOrder, err = m => ($("ivErr").textContent = m);
+  const lines = o.lines.filter(l=>l.code && +String(l.packs).replace(",", ".") > 0);
+  if (!lines.length) return err("Escoge al menos un producto con cantidad.");
+  if (lines.some(l=>+l.pres===-1 && !(ivLineSize(l) > 0 && l.cname.trim()))) return err("En «Otra presentación» escribe el nombre y cuánto trae.");
+  const rows = lines.map(l=>{ const sp = ivSup(l.code), size = ivLineSize(l), packs = +String(l.packs).replace(",", ".");
+    const pres = +l.pres===-1 ? l.cname.trim() : ivPres(sp)[+l.pres || 0].name;
+    return { entry_date:o.date, farm_id:ivState.farm, supply_code:l.code, kind:"entrada", packs, pack_size:size, qty:Math.round(packs*size*1000)/1000,
+      presentation:pres, supplier:o.supplier.trim() || null, invoice:o.invoice.trim() || null, notes:o.notes.trim() || null, source:"app" }; });
+  $("ivOSave").disabled = true;
+  const { error } = await sb.from("supply_entries").insert(rows);
+  $("ivOSave").disabled = false;
+  if (error) return err(/row-level|permission/i.test(error.message) ? "No tienes permiso para registrar en esta finca." : "No se pudo guardar: " + error.message);
+  // presentaciones nuevas quedan guardadas en el producto (no cambian la usual)
+  for (const l of lines.filter(l=>+l.pres===-1)){
+    const sp = ivSup(l.code), ps = ivPres(sp);
+    if (!ps.some(p=>p.name.toLowerCase()===l.cname.trim().toLowerCase()))
+      await sb.from("supplies").update({ presentations:[...ps, { name:l.cname.trim(), size:ivLineSize(l) }], updated_at:new Date().toISOString() }).eq("code", l.code);
+  }
+  toast(`Pedido guardado ✓ (${rows.length} producto${rows.length > 1 ? "s" : ""})`);
+  ivOrder = null; ivState.tab = "stock"; await ivLoad(); renderInv(); ivBadge();
+}
+// ── Conteo físico (ajusta al número contado) o salida manual ──
+let ivCnt = { mode:"conteo", code:"", unit:"pack", qty:"", date:null, note:"" };
+function ivCountHtml(){
+  const c = ivCnt, sp = ivSup(c.code), p = ivPres(sp)[0];
+  return `<div class="card sheet hsform" style="max-height:none"><b>${c.mode==="conteo" ? "Conteo físico" : "Salida manual"}</b>
+    ${seg("ivCM", [["conteo","🔢 Conteo"],["salida","📤 Salida"]], c.mode)}
+    <div class="sub" style="margin-top:6px">${c.mode==="conteo" ? "Escribe lo que hay en la bodega: el sistema ajusta la diferencia." : "Lo que sale y no queda registrado en tratamientos, labores ni Leche diaria (ej. lotes de terneras, se dañó, préstamo)."}</div>
+    ${ivOptions()}
+    <label>Producto</label><input id="ivCName" list="ivSupList" value="${esc(sp?.name || "")}" autocomplete="off">
+    ${sp ? `<label>${c.mode==="conteo" ? "Hay" : "Sale"}</label><div style="display:grid;grid-template-columns:0.8fr 1.4fr;gap:6px">
+      <input id="ivCQty" type="number" inputmode="decimal" min="0" step="any" value="${esc(c.qty)}" style="min-width:0">
+      <select id="ivCUnit" style="min-width:0">${p && p.size !== 1 ? `<option value="pack" ${c.unit==="pack" ? "selected" : ""}>${esc(p.name)} (${ivN(p.size)} ${esc(sp.unit || "")})</option>` : ""}
+        <option value="unit" ${c.unit==="unit" || !(p && p.size!==1) ? "selected" : ""}>${esc(sp.unit || "unidades")}</option></select></div>
+      <div class="sub" id="ivCHint"></div>` : ""}
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">
+      <div><label>Fecha</label><input id="ivCDate" type="date" value="${c.date || today()}" max="${today()}" style="min-width:0"></div>
+      <div><label>Nota</label><input id="ivCNote" value="${esc(c.note)}" placeholder="${c.mode==="salida" ? "ej. terneras rancho" : "opcional"}" style="min-width:0"></div></div>
+    <div class="err" id="ivErr"></div>
+    <button class="btn" id="ivCSave" style="margin-top:12px">${c.mode==="conteo" ? "Guardar conteo" : "Guardar salida"}</button></div>`;
+}
+const ivCntQty = () => { const sp = ivSup(ivCnt.code), p = ivPres(sp)[0], v = +String(ivCnt.qty).replace(",", ".");
+  if (!sp || !(v >= 0) || ivCnt.qty==="") return null; return ivCnt.unit==="pack" && p && p.size!==1 ? v * p.size : v; };
+function ivCountCalc(){
+  const h = $("ivCHint"); if (!h) return; const sp = ivSup(ivCnt.code), st = +(ivData.stock.find(r=>r.code===ivCnt.code)?.stock || 0), q = ivCntQty();
+  h.innerHTML = `En el sistema: ${ivQty(sp, st)}` + (q==null ? "" : ivCnt.mode==="conteo"
+    ? ` · ajuste <b>${q - st >= 0 ? "+" : ""}${ivN(q - st)} ${esc(sp.unit || "")}</b>` : ` · queda <b>${ivQty(sp, st - q)}</b>`);
+}
+async function ivCountSave(){
+  const err = m => ($("ivErr").textContent = m), sp = ivSup(ivCnt.code), q = ivCntQty();
+  if (!sp) return err("Escoge el producto."); if (q==null) return err("Escribe la cantidad.");
+  if (ivCnt.mode==="salida" && !(q > 0)) return err("La salida debe ser mayor que cero.");
+  const st = +(ivData.stock.find(r=>r.code===sp.code)?.stock || 0), d = ivCnt.mode==="conteo" ? q - st : -q;
+  if (ivCnt.mode==="conteo" && Math.abs(d) < 1e-9 && !confirm("Cuadra exacto con el sistema. ¿Guardar el conteo igual (queda la fecha del conteo)?")) return;
+  const date = $("ivCDate").value || today();
+  const { error } = await sb.from("supply_entries").insert({ entry_date:date, farm_id:ivState.farm, supply_code:sp.code, kind:ivCnt.mode==="conteo" ? "ajuste" : "salida",
+    qty:Math.round(d*1000)/1000, notes:(ivCnt.mode==="conteo" ? `Conteo: ${ivN(q)} ${sp.unit || ""}` : "") + (ivCnt.note.trim() ? (ivCnt.mode==="conteo" ? " · " : "") + ivCnt.note.trim() : "") || null, source:"app" });
+  if (error) return err(/row-level|permission/i.test(error.message) ? "No tienes permiso para registrar en esta finca." : "No se pudo guardar: " + error.message);
+  toast(ivCnt.mode==="conteo" ? "Conteo guardado ✓" : "Salida guardada ✓");
+  ivCnt = { mode:ivCnt.mode, code:"", unit:"pack", qty:"", date:null, note:"" }; await ivLoad(); renderInv(); ivBadge();
+}
+// ── Productos ──
+function ivProdHtml(){
+  const q = ivState.q.trim().toLowerCase(), al = Object.fromEntries(ivData.alerts.map(a=>[a.supply_code, a.min_qty]));
+  const list = ivData.supplies.filter(x=>(ivState.all || x.active!==false) && (!q || (x.name + " " + x.code + " " + (x.category || "")).toLowerCase().includes(q)));
+  return `<div class="card"><input id="ivQ" placeholder="🔍 buscar producto" value="${esc(ivState.q)}" autocomplete="off">
+    <div class="row" style="justify-content:space-between;margin-top:8px"><span class="sub">${list.length} productos</span>
+      <label class="sub" style="display:flex;align-items:center;gap:8px;margin:6px 0 0;font-weight:400;text-transform:none;letter-spacing:0"><input type="checkbox" id="ivAll" ${ivState.all ? "checked" : ""} style="width:auto;min-width:0;margin:0;flex:none"> ver inactivos</label></div>
+    ${ivCan() ? `<div class="addbar" style="margin-top:8px"><button id="ivNewProd">＋ Producto nuevo</button></div>` : ""}
+    <table class="ivt" style="font-size:13px;margin-top:8px">${list.map(x=>`<tr data-ivopen="${esc(x.code)}" style="cursor:pointer${x.active===false ? ";opacity:.5" : ""}"><td><b>${esc(x.name)}</b>
+      <div class="sub">${esc(x.code)} · ${esc(x.category || "sin categoría")} · ${ivPres(x).map(p=>esc(p.name)).join(" · ")}${al[x.code]!=null ? ` · ⚠️ alerta ${ivN(al[x.code])} ${esc(x.unit || "")}` : ""}${x.feed_source ? " · se gasta en Leche diaria" : ""}</div></td></tr>`).join("")}</table></div>`;
+}
+// ── Alertas ──
+function ivAlertHtml(){
+  const rows = ivData.alerts.map(a=>({ a, sp:ivSup(a.supply_code), st:ivData.stock.find(r=>r.code===a.supply_code) })).filter(x=>x.sp)
+    .sort((x, y)=>x.sp.name.localeCompare(y.sp.name));
+  return `<div class="card"><b>Alertas de ${esc(farmLabel(ivFarms.find(f=>f.id===ivState.farm) || {}))}</b>
+    <div class="sub">Avisa cuando la existencia queda por debajo del mínimo. Toca un producto para cambiarla.</div>
+    <table class="ivt" style="font-size:13px;margin-top:8px"><tr><th>Producto</th><th style="text-align:right">Mínimo</th><th style="text-align:right">Queda</th></tr>
+    ${rows.map(({ a, sp, st })=>`<tr data-ivopen="${esc(sp.code)}" style="cursor:pointer"><td><b>${esc(sp.name)}</b></td><td style="text-align:right">${ivQty(sp, a.min_qty, 1)}</td>
+      <td style="text-align:right;${st?.low ? `color:var(--s4);font-weight:800` : ""}">${ivN(st?.stock || 0)} ${esc(sp.unit || "")}${st?.low ? " ⚠️" : ""}</td></tr>`).join("")
+      || `<tr><td colspan="3"><div class="empty">Sin alertas</div></td></tr>`}</table>
+    ${ivCan() ? `<div class="addbar" style="margin-top:8px"><button id="ivAlertNew">＋ Alerta</button></div>` : ""}</div>`;
+}
+// ── Ficha de un producto: existencias, movimientos, alerta, editar ──
+function ivOpen(code){
+  const sp = ivSup(code); if (!sp) return;
+  const st = ivData.stock.find(r=>r.code===code), al = ivData.alerts.find(a=>a.supply_code===code), p = ivPres(sp)[0];
+  const bg = document.createElement("div"); bg.className = "sheet-bg";
+  bg.innerHTML = `<div class="sheet"><h3>${esc(sp.name)}</h3>
+    <div class="sub">${esc(sp.code)} · ${esc(sp.category || "")} · ${ivPres(sp).map((x, k)=>esc(x.name) + (k===0 ? " (usual)" : "")).join(" · ")}</div>
+    <div class="rpk" style="margin-top:10px"><div><b>${ivN(st?.stock || 0)}</b><span>${esc(sp.unit || "")} hoy</span></div>
+      ${p && p.size!==1 ? `<div><b>${ivN((st?.stock || 0) / p.size)}</b><span>${esc(p.name)}</span></div>` : ""}
+      <div><b>${al ? ivN(al.min_qty) : "—"}</b><span>alerta</span></div></div>
+    ${ivCan() ? `<label>Alerta: avisar cuando queden menos de</label>
+      <div style="display:grid;grid-template-columns:0.8fr 1.4fr;gap:6px"><input id="ivAQty" type="number" inputmode="decimal" min="0" step="any" value="${al ? (p && p.size!==1 ? +(al.min_qty / p.size).toFixed(2) : al.min_qty) : ""}" style="min-width:0">
+        <select id="ivAUnit" style="min-width:0">${p && p.size!==1 ? `<option value="pack" selected>${esc(p.name)} (${ivN(p.size)} ${esc(sp.unit || "")})</option>` : ""}<option value="unit">${esc(sp.unit || "unidades")}</option></select></div>
+      <div class="row" style="gap:8px;margin-top:8px"><button class="btn ghost" id="ivASave">Guardar alerta</button>${al ? `<button class="btn ghost" id="ivADel">Quitar alerta</button>` : ""}</div>` : ""}
+    <div style="margin-top:12px"><b>Movimientos en esta finca</b>${ivMovesHtml(ivData.moves.filter(m=>m.supply_code===code).slice(0, 30))}</div>
+    <div class="row" style="gap:8px;margin-top:12px"><button class="btn ghost" data-close>Cerrar</button>${ivCan() ? `<button class="btn" id="ivEdit">Editar producto</button>` : ""}</div></div>`;
+  document.body.appendChild(bg);
+  bg.addEventListener("click", async e=>{
+    if (e.target===bg || e.target.closest("[data-close]")) return bg.remove();
+    if (e.target.id==="ivEdit"){ bg.remove(); return ivProdForm(sp); }
+    if (e.target.id==="ivASave" || e.target.id==="ivADel"){
+      let error;
+      if (e.target.id==="ivADel") ({ error } = await sb.from("supply_alerts").delete().eq("farm_id", ivState.farm).eq("supply_code", code));
+      else { const v = +String($("ivAQty").value).replace(",", "."); if (!(v > 0)) return toast("Escribe el mínimo");
+        const min = $("ivAUnit").value==="pack" && p ? v * p.size : v;
+        ({ error } = await sb.from("supply_alerts").upsert({ farm_id:ivState.farm, supply_code:code, min_qty:min, updated_at:new Date().toISOString() })); }
+      if (error) return toast("No se pudo: " + error.message);
+      bg.remove(); toast("Alerta guardada ✓"); await ivLoad(); renderInv(); ivBadge();
+    }
+  });
+}
+// ── Crear / editar producto ──
+function ivProdForm(sp){
+  const isNew = !sp, x = sp || { code:"", name:"", category:"", unit:"mL", active:true, milk_withdrawal:null, meat_withdrawal:null, feed_source:null };
+  let pres = isNew ? [] : ivPres(x).map(p=>({ ...p }));
+  const bg = document.createElement("div"); bg.className = "sheet-bg";
+  bg.innerHTML = `<form class="sheet hsform" autocomplete="off"><h3>${isNew ? "Producto nuevo" : "Editar · " + esc(x.name)}</h3>
+    <label>Nombre comercial</label><input name="name" value="${esc(x.name)}" required maxlength="80">
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">
+      <div><label>Código</label><input name="code" value="${esc(x.code)}" ${isNew ? "" : "readonly"} maxlength="12" style="text-transform:uppercase;min-width:0${isNew ? "" : ";background:none"}"></div>
+      <div><label>Unidad de uso</label><select name="unit" style="min-width:0">${IV_UNITS.map(u=>`<option ${u===x.unit ? "selected" : ""}>${u}</option>`).join("")}</select></div></div>
+    <label>Categoría</label><select name="category"><option value="">—</option>${[...new Set([...IV_CATS, x.category].filter(Boolean))].map(c=>`<option ${c===x.category ? "selected" : ""}>${esc(c)}</option>`).join("")}</select>
+    <label>Presentaciones <span class="sub">(la marcada es la usual)</span></label><div id="ivPres"></div>
+    <div class="chips sm" id="ivPresQuick" style="margin-top:6px"></div>
+    <div style="display:grid;grid-template-columns:1.4fr 0.8fr auto;gap:6px;margin-top:6px">
+      <input id="ivPName" placeholder="ej. Caja x 10" style="min-width:0"><input id="ivPSize" type="number" inputmode="decimal" min="0" step="any" placeholder="trae" style="min-width:0">
+      <button type="button" class="btn ghost" id="ivPAdd" style="padding:6px 10px">＋</button></div>
+    <div id="ivDrug"><div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">
+      <div><label>Retiro leche (días)</label><input name="milk" type="number" min="0" value="${x.milk_withdrawal ?? ""}" style="min-width:0"></div>
+      <div><label>Retiro carne (días)</label><input name="meat" type="number" min="0" value="${x.meat_withdrawal ?? ""}" style="min-width:0"></div></div></div>
+    <div id="ivFeed"><label>Se gasta solo desde la Leche diaria (bultos)</label>${seg("feed", IV_FEED, x.feed_source || "")}
+      <div class="sub">Descuenta los bultos anotados cada día en la Leche diaria de la finca, desde el primer pedido o conteo.</div></div>
+    <label style="display:flex;align-items:center;gap:8px;margin:6px 0 0;font-weight:400;text-transform:none;letter-spacing:0"><input type="checkbox" name="active" ${x.active!==false ? "checked" : ""} style="width:auto;min-width:0;margin:0;flex:none"> Activo (sale en las listas)</label>
+    <div class="err" id="ivPErr"></div>
+    <div class="row" style="gap:8px;margin-top:12px"><button type="button" class="btn ghost" data-close>Cancelar</button><button class="btn">Guardar</button></div></form>`;
+  document.body.appendChild(bg);
+  const f = bg.querySelector("form");
+  const draw = ()=>{
+    const u = f.unit.value, cat = f.category.value;
+    $("ivPres").innerHTML = pres.map((p, k)=>`<div class="row" style="gap:6px;margin-top:4px"><label style="display:flex;align-items:center;gap:8px;margin:6px 0 0;font-weight:400;text-transform:none;letter-spacing:0;flex:1"><input type="radio" name="usual" value="${k}" ${k===0 ? "checked" : ""} style="width:auto;min-width:0;margin:0;flex:none"> ${esc(p.name)} <span class="sub">(${ivN(p.size)} ${esc(u)})</span></label>
+      <button type="button" class="lnk" data-pdel="${k}">✕</button></div>`).join("") || `<div class="sub">Sin presentaciones: agrega al menos una.</div>`;
+    const quick = u==="mL" ? [500, 250, 100, 50, 20, 10].map(n=>[`Frasco ${n} mL`, n]) : u==="L" ? [[`Galón`, 3.785], [`Garrafa 20 L`, 20], [`Litro`, 1]]
+      : u==="unidad" ? [["Unidad", 1], ["Bolsa x 10", 10], ["Caja x 10", 10], ["Caja x 50", 50], ["Caja x 100", 100]]
+      : u==="bulto" ? [["Bulto 40 kg", 1], ["Bulto 50 kg", 1]] : u==="kg" ? [["Bulto 40 kg", 40], ["Bulto 50 kg", 50], ["Kilo", 1]]
+      : u==="g" ? [["Sobre 25 g", 25], ["Bolsa 500 g", 500], ["Bolsa 1 kg", 1000]] : u==="dosis" ? [["Frasco 10 dosis", 10], ["Frasco 20 dosis", 20], ["Frasco 50 dosis", 50]]
+      : u==="jeringa" ? [["Jeringa", 1], ["Caja x 4 jeringas", 4], ["Caja x 10 jeringas", 10]] : [];
+    $("ivPresQuick").innerHTML = quick.filter(([n])=>!pres.some(p=>p.name===n)).map(([n, z])=>`<button type="button" data-pq="${esc(n)}|${z}">＋ ${esc(n)}</button>`).join("");
+    $("ivDrug").classList.toggle("hidden", !IV_DRUG(cat));
+    $("ivFeed").classList.toggle("hidden", !(cat==="Concentrado" || cat==="Sal mineralizada" || u==="bulto" || x.feed_source));
+  };
+  draw();
+  // código sugerido desde el nombre (solo producto nuevo)
+  f.name.addEventListener("input", ()=>{ if (!isNew || f.code.dataset.typed) return;
+    f.code.value = f.name.value.normalize("NFD").replace(/[^A-Za-z0-9]/g, "").toUpperCase().slice(0, 12); });
+  f.code.addEventListener("input", ()=>{ f.code.dataset.typed = "1"; });
+  f.addEventListener("change", e=>{
+    if (e.target.name==="unit" || e.target.name==="category") draw();
+    if (e.target.name==="usual"){ const k = +e.target.value; pres = [pres[k], ...pres.filter((_, i)=>i!==k)]; draw(); }
+  });
+  bg.addEventListener("click", e=>{
+    if (e.target===bg || e.target.closest("[data-close]")) return bg.remove();
+    const q = e.target.closest("[data-pq]"); if (q){ const [n, z] = q.dataset.pq.split("|"); pres.push({ name:n, size:+z }); return draw(); }
+    const d = e.target.closest("[data-pdel]"); if (d){ pres.splice(+d.dataset.pdel, 1); return draw(); }
+    if (e.target.id==="ivPAdd"){ const n = $("ivPName").value.trim(), z = +String($("ivPSize").value).replace(",", ".");
+      if (!n || !(z > 0)) return ($("ivPErr").textContent = "Escribe la presentación y cuánto trae (en la unidad de uso).");
+      pres.push({ name:n, size:z }); $("ivPName").value = ""; $("ivPSize").value = ""; $("ivPErr").textContent = ""; draw(); }
+  });
+  f.addEventListener("submit", async e=>{
+    e.preventDefault();
+    const err = m => ($("ivPErr").textContent = m);
+    const code = f.code.value.trim().toUpperCase().replace(/\s/g, ""), name = f.name.value.trim();
+    if (!code || !name) return err("Falta el nombre o el código.");
+    if (!pres.length) return err("Agrega al menos una presentación.");
+    if (isNew && ivSup(code)) return err(`El código ${code} ya existe (${ivSup(code).name}). Cambia el código.`);
+    if (isNew && ivData.supplies.some(s=>s.name.toLowerCase()===name.toLowerCase())) return err("Ya hay un producto con ese nombre.");
+    const cat = f.category.value || null, drug = IV_DRUG(cat);
+    const row = { name, category:cat, unit:f.unit.value, presentations:pres, pack_size:pres[0].size, pack_name:pres.map(p=>p.name).join(" · "),
+      milk_withdrawal: drug && f.milk.value!=="" ? +f.milk.value : (drug ? null : 0), meat_withdrawal: drug && f.meat.value!=="" ? +f.meat.value : (drug ? null : 0),
+      feed_source: $("ivFeed").classList.contains("hidden") ? null : (f.feed.value || null), active:f.active.checked, updated_at:new Date().toISOString() };
+    if (drug && row.milk_withdrawal==null && !confirm("No escribiste retiro de leche. ¿Guardar como 0 días (la leche va al tanque)?")) return;
+    row.milk_withdrawal ??= 0; row.meat_withdrawal ??= 0;
+    if (row.feed_source && ivData.supplies.some(s=>s.code!==code && s.active!==false && s.feed_source===row.feed_source)
+        && !confirm("Otro producto ya se gasta desde esa columna de la Leche diaria: se descontaría dos veces. ¿Guardar igual?")) return;
+    const { error } = isNew ? await sb.from("supplies").insert({ code, ...row, source:"app", created_by:me })
+                            : await sb.from("supplies").update(row).eq("code", code);
+    if (error) return err(/row-level|permission/i.test(error.message) ? "No tienes permiso para crear o cambiar productos." : "No se pudo guardar: " + error.message);
+    bg.remove(); toast(isNew ? "Producto creado ✓" : "Producto guardado ✓");
+    await ivLoad(); hsCatalog();
+    // si se creó desde un pedido, queda escogido en la línea vacía
+    if (isNew && ivOrder){ const l = ivOrder.lines.find(l=>!l.code) || (ivOrder.lines.push(ivNewLine()), ivOrder.lines[ivOrder.lines.length - 1]); l.code = code; l.pres = 0; l.typed = ""; }
+    renderInv();
+  });
+}
+async function ivDelMove(id){
+  const m = ivData?.moves.find(x=>x.id===id), sp = ivSup(m?.supply_code);
+  if (!confirm(`¿Borrar ${IV_KIND[m?.kind || "entrada"] || "el movimiento"} de ${sp?.name || m?.supply_code || ""} del ${fmt(m?.entry_date)}?`)) return;
+  const { data, error } = await sb.from("supply_entries").delete().eq("id", id).select("id");
+  if (error || !data?.length) return toast("No se pudo borrar" + (error ? ": " + error.message : " (sin permiso)"));
+  toast("Borrado"); document.querySelectorAll(".sheet-bg").forEach(b=>b.remove()); await ivLoad(); renderInv(); ivBadge();
+}
+function ivWire(){
+  const body = $("ivBody");
+  body.addEventListener("change", e=>{
+    const t = e.target;
+    if (t.name==="ivF"){ ivState.farm = +t.value; jset("ivLast", { farm:ivState.farm }); ivOrder = null; return ivLoad().then(renderInv); }
+    if (t.name==="ivT"){ ivState.tab = t.value; ivState.q = ""; return renderInv(); }
+    if (t.id==="ivAll"){ ivState.all = t.checked; return renderInv(); }
+    if (t.name==="ivCM"){ ivCnt.mode = t.value; return renderInv(); }
+    if (t.id==="ivCName"){ const sp = ivByName(t.value); ivCnt.code = sp?.code || ""; ivCnt.unit = "pack"; return renderInv(); }
+    if (t.id==="ivCUnit"){ ivCnt.unit = t.value; return ivCountCalc(); }
+    if (t.id==="ivODate") ivOrder.date = t.value;
+    if (t.id==="ivCDate") ivCnt.date = t.value;
+    const ln = t.closest("[data-ivl]");
+    if (ln && ivOrder){ const l = ivOrder.lines[+ln.dataset.ivl], k = t.dataset.ivk;
+      if (k==="name"){ const sp = ivByName(t.value); l.code = sp?.code || ""; l.typed = sp ? "" : t.value; l.pres = 0; return renderInv(); }
+      if (k==="pres"){ l.pres = +t.value; return renderInv(); } }
+  });
+  body.addEventListener("input", e=>{
+    const t = e.target;
+    if (t.id==="ivQ"){ ivState.q = t.value; const tmp = document.createElement("div"); tmp.innerHTML = ivState.tab==="prod" ? ivProdHtml() : ivStockHtml();
+      const a = tmp.querySelector(ivState.tab==="prod" ? "table" : "#ivList"), b = body.querySelector(ivState.tab==="prod" ? "table" : "#ivList"); if (a && b) b.innerHTML = a.innerHTML; return; }
+    if (t.id==="ivOSup") ivOrder.supplier = t.value;
+    if (t.id==="ivOInv") ivOrder.invoice = t.value;
+    if (t.id==="ivONote") ivOrder.notes = t.value;
+    if (t.id==="ivCQty"){ ivCnt.qty = t.value; return ivCountCalc(); }
+    if (t.id==="ivCNote") ivCnt.note = t.value;
+    const ln = t.closest("[data-ivl]");
+    if (ln && ivOrder){ const l = ivOrder.lines[+ln.dataset.ivl], k = t.dataset.ivk;
+      if (k==="packs" || k==="cname" || k==="csize"){ l[k] = t.value; ivOrderCalc(); }
+      if (k==="name"){ const sp = ivByName(t.value); if (sp && sp.code!==l.code){ l.code = sp.code; l.typed = ""; l.pres = 0; renderInv(); } } }
+  });
+  body.addEventListener("click", e=>{
+    const t = e.target;
+    const o = t.closest("[data-ivopen]"); if (o) return ivOpen(o.dataset.ivopen);
+    const c = t.closest("[data-ivcat]"); if (c){ ivState.cat = c.dataset.ivcat; ivState.low = false; return renderInv(); }
+    if (t.closest("[data-ivlow]")){ ivState.low = !ivState.low; ivState.cat = ""; return renderInv(); }
+    const dl = t.closest("[data-ivdel]"); if (dl){ ivOrder.lines.splice(+dl.dataset.ivdel, 1); return renderInv(); }
+    if (t.id==="ivAddLine"){ ivOrder.lines.push(ivNewLine()); renderInv(); const ins = body.querySelectorAll('[data-ivk="name"]'); ins[ins.length - 1]?.focus(); return; }
+    if (t.id==="ivNewProd") return ivProdForm(null);
+    if (t.id==="ivOSave") return ivOrderSave();
+    if (t.id==="ivCSave") return ivCountSave();
+    if (t.id==="ivReload") return ivLoad().then(renderInv);
+    if (t.id==="ivAlertNew"){ const name = prompt("¿Para qué producto? (escribe el nombre o el código)"); if (!name) return;
+      const sp = ivByName(name) || ivData.supplies.find(x=>x.name.toLowerCase().includes(name.trim().toLowerCase()));
+      return sp ? ivOpen(sp.code) : toast("No encontré ese producto"); }
+  });
+}
+
 // Pastos: borrar una labor o un ingreso de lote (registrado en Pastos) deslizando a la izquierda
 async function psSwDel(v){
   const [tbl, list] = v.split("|"), ids = list.split(",").map(Number);
+  if (tbl==="supply_entries") return ivDelMove(ids[0]);
   if (tbl==="cow_plans"){
     if (!confirm("¿Quitar este evento programado?")) return;
     const { data, error } = await sb.from("cow_plans").delete().in("id", ids).select("id");
