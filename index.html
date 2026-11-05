@@ -5056,14 +5056,14 @@ function ckCard(id, list){
   const big = (v, t, sub) => `<div><b>${v}</b><span>${t}${sub ? `<br>${sub}` : ""}</span></div>`;
   return `<div data-ck="${esc(id)}">
     <div style="display:flex;justify-content:space-between;align-items:center">
-      <div><span style="font-size:34px;font-weight:800">${esc(id)}</span> <span class="sub">${esc(c.pen||"")}</span>
-        <div>${statusPill(c.status)}</div></div>
+      <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap"><span style="font-size:34px;font-weight:800">${esc(id)}</span>
+        ${item || cat ? `<span class="ckcat" style="background:${css(CK_COLOR[item?.k.cat || cat]||"--muted")};font-size:22px;padding:4px 12px">${item ? (item.k.cat==="REPETIR" ? "REPETIR " + item.k.stage : item.k.cat) : cat}</span>` : ""}
+        <div><span class="sub">${esc(c.pen||"")}</span> ${statusPill(c.status)}</div></div>
       <button class="lnk" data-ckback>Otra vaca</button></div>
-    ${item ? `<div class="sub" style="margin:6px 0"><span class="ckcat" style="background:${css(CK_COLOR[item.k.cat]||"--muted")}">${item.k.cat==="REPETIR"?"REPETIR "+item.k.stage:item.k.cat}</span>${ckInfoTxt(item.k)}</div>`
+    ${item ? `<div class="sub" style="margin:6px 0">${ckInfoTxt(item.k)}</div>`
            : `<div class="warn">No le toca chequeo hoy. ¿Qué examen le hiciste?</div>`}
     <div class="ckbig">
-      ${big(c.ln ?? "—", "Lactancia", C ? "parto " + fmt(C) : "novilla")}
-      ${big(C ? days(C, D) : "—", "Días de parida")}
+      ${big(C ? days(C, D) : "—", "Días de parida", C ? "parto " + fmt(C) : "novilla")}
       ${big(sv ? days(sv.d, D) : "—", "Días de servida", sv ? `${svs.length} serv.${sv.b ? " · toro "+esc(sv.b) : ""}` : "sin servicio")}
       ${big(lastM ? (+lastM[1]).toFixed(1) : "—", "Última leche kg", lastM ? fmt(lastM[0]) : "")}
       ${big(p305 ? p305.kg305.toLocaleString("es-CO") : "—", "305 d proyectada kg", p305?.early ? "estimado (antes del pico)" : "")}
