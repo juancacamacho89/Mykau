@@ -5001,7 +5001,7 @@ function ckInfoTxt(k){
 }
 const ckModeBar = (doneN, total) => `<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
   <div class="chips sm ckpan" style="padding:0"><div class="chips sm" style="margin:0">
-    <button class="${ckMode==="pad"?"on":""}" data-ckmode="pad">🔢 Teclado</button><button class="${ckMode==="list"?"on":""}" data-ckmode="list">☰ Lista</button></div></div>
+    <button class="${ckMode==="pad"?"on":""}" data-ckmode="pad">🔍 Buscar</button><button class="${ckMode==="list"?"on":""}" data-ckmode="list">☰ Lista</button></div></div>
   <div class="sub" style="text-align:right"><b style="color:var(--ink)">${doneN}/${total}</b> registradas</div></div>`;
 function ckRender(){ return ckMode==="pad" ? ckRenderPad() : ckRenderList(); }
 
@@ -5025,21 +5025,22 @@ function ckFind(id){ return ckData.cows.find(x=>x.id===id); }
 function ckRenderPad(){
   const list = ckList(), doneN = list.filter(x=>ckRes[x.c.id]?.res).length;
   if (ckOpen){ $("ckBody").innerHTML = `<div class="card">${ckModeBar(doneN, list.length)}${ckCard(ckOpen, list)}</div>`; return; }
-  const q = ckPad.toUpperCase();
-  const inList = new Map(list.map(x=>[x.c.id, x.k]));
-  const sug = q ? ckData.cows.filter(c=>c.id.startsWith(q) || c.id.replace(/^0+/, "").startsWith(q))
-      .sort((a,b)=> (b.id===q) - (a.id===q) || (inList.has(b.id) - inList.has(a.id)) || byNum(a.id, b.id)).slice(0, 8) : [];
-  const key = (v, label, cls="") => `<button class="${cls}" data-key="${v}">${label ?? v}</button>`;
   $("ckBody").innerHTML = `<div class="card">${ckModeBar(doneN, list.length)}
-    <div class="ckdisp">${esc(q) || `<span class="sub">N° de vaca</span>`}</div>
-    ${ckAbc ? `<input id="ckAbcIn" placeholder="Escribe con letras (ej. 04B)" autocapitalize="characters" value="${esc(ckPad)}" style="margin:8px 0">` : ""}
-    <div class="ckpad" style="margin-top:10px">${[1,2,3,4,5,6,7,8,9].map(n=>key(n)).join("")}${key("ABC","ABC","sm")}${key(0)}${key("DEL","⌫","sm")}</div>
-    <div class="cksug">${sug.map(c=>{ const k = inList.get(c.id), r = ckRes[c.id];
-      return `<button data-pick="${esc(c.id)}"><b>${esc(c.id)}</b> ${k ? `<span class="ckcat" style="background:${css(CK_COLOR[k.cat]||"--muted")}">${k.cat==="REPETIR"?"REP":k.cat}</span>` : `<span class="sub">no le toca</span>`}${r?.res?" ✓":""}</button>`; }).join("")
-      || (q ? `<span class="sub">Ninguna vaca activa con ese número</span>` : `<span class="sub">${list.length - doneN} vacas pendientes en este chequeo</span>`)}</div>
+    <input id="ckQ" inputmode="numeric" autocomplete="off" autocapitalize="characters" placeholder="N° de vaca" value="${esc(ckPad)}" style="font-size:26px;font-weight:800">
+    <div class="sub" style="margin-top:4px">Escribe el número y toca la vaca (Enter abre la primera). Con letras: cambia el teclado del celular.</div>
+    <div class="cksug" id="ckSug">${ckSugHtml(list, doneN)}</div>
     <div class="mkbar" style="position:static"><div>${fmt($("ckDate").value || today())}</div><button class="btn" id="ckUp" style="width:auto">Subir resultados</button></div>
   </div>`;
-  if (ckAbc) $("ckAbcIn").focus();
+  const q = $("ckQ"); q.focus(); q.setSelectionRange(q.value.length, q.value.length);
+}
+// sugerencias del buscador: se redibujan solas (el campo no se toca y el teclado no se traba)
+function ckSugHtml(list, doneN){
+  const q = ckPad.toUpperCase(), inList = new Map(list.map(x=>[x.c.id, x.k]));
+  const sug = q ? ckData.cows.filter(c=>c.id.startsWith(q) || c.id.replace(/^0+/, "").startsWith(q))
+      .sort((a,b)=> (b.id===q) - (a.id===q) || (inList.has(b.id) - inList.has(a.id)) || byNum(a.id, b.id)).slice(0, 8) : [];
+  return sug.map(c=>{ const k = inList.get(c.id), r = ckRes[c.id];
+      return `<button data-pick="${esc(c.id)}"><b>${esc(c.id)}</b> ${k ? `<span class="ckcat" style="background:${css(CK_COLOR[k.cat]||"--muted")}">${k.cat==="REPETIR"?"REP":k.cat}</span>` : `<span class="sub">no le toca</span>`}${r?.res ? " ✓" : ""}</button>`; }).join("")
+    || (q ? `<span class="sub">Ninguna vaca activa con ese número</span>` : `<span class="sub">${list.length - doneN} vacas pendientes en este chequeo</span>`);
 }
 // ficha de la vaca: lo de la última lactancia en grande y los botones del chequeo
 function ckCard(id, list){
@@ -5074,6 +5075,13 @@ function ckCard(id, list){
       `<div class="ckpan"><div class="chips">${["EXREP","ECO1","ECO2","DPR","DP5","DPSEC"].map(x=>`<button data-setcat="${x}">${x}</button>`).join("")}</div></div>`}
   </div>`;
 }
+// lactancia actual (servicios, chequeos, pérdidas…) como en la hoja de vida, para verla al abrir la vaca en la lista
+function ckLacNow(c){
+  const evs = c.ev.filter(e=>e.t!=="weight").map(e=>({ event_date:e.d, event_type:e.t, result:e.r, category:e.c, bull:e.b }));
+  if (!evs.length) return `<div class="sub" style="margin:6px 0">Sin eventos reproductivos registrados</div>`;
+  const segs = lactations({ lactation_num:c.ln }, evs);
+  return `<div class="ckpan ckhist" style="margin-top:6px">${lacHtml(segs[segs.length - 1], true, [], {})}</div>`;
+}
 // "+ info": las lactancias con todo lo que se le ha hecho (mismo formato de la hoja de vida; últimos ~20 meses)
 function ckMoreInfo(c){
   const evs = c.ev.filter(e=>e.t!=="weight").map(e=>({ event_date:e.d, event_type:e.t, result:e.r, category:e.c, bull:e.b }));
@@ -5097,7 +5105,7 @@ function ckRenderList(){
     html += `<div class="ckrow ${r?.res?"done":""}" data-ck="${esc(c.id)}">
       <div class="top"><span class="id">${esc(c.id)}</span><div class="inf"><span class="ckcat" style="background:${col}">${k.cat==="REPETIR" ? "REPETIR "+k.stage : k.cat}</span>${ckInfoTxt(k)}</div>
       <div class="res">${r?.res ? esc(r.res) + (r.up?" ✓":"") : ""}</div></div>
-      ${ckOpen===c.id ? ckPanel(c, k, r||{}) : ""}</div>`;
+      ${ckOpen===c.id ? ckLacNow(c) + ckPanel(c, k, r||{}) : ""}</div>`;
   });
   const cats = ["EXREP","ECO1","ECO2","REPETIR","DPR","DP5","DPSEC"].filter(x=>counts[x]);
   $("ckBody").innerHTML = `<div class="card">${ckModeBar(doneN, list.length)}
@@ -5199,8 +5207,10 @@ $("ckBody").addEventListener("click", e=>{
   row.scrollIntoView({ block:"nearest" });
 });
 $("ckBody").addEventListener("change", e=>{ if (e.target.id==="ckPenSel"){ ckPenF = e.target.value; ckOpen = null; ckRender(); } });
+$("ckBody").addEventListener("keydown", e=>{ if (e.target.id==="ckQ" && e.key==="Enter"){ e.preventDefault(); const b = $("ckSug").querySelector("[data-pick]"); if (b){ ckOpen = b.dataset.pick; ckRender(); window.scrollTo({ top:0 }); } } });
 $("ckBody").addEventListener("input", e=>{
-  if (e.target.id==="ckAbcIn"){ ckPad = e.target.value.toUpperCase().replace(/\s/g, ""); const pos = e.target.selectionStart; ckRender(); const i = $("ckAbcIn"); i && i.setSelectionRange(pos, pos); return; }
+  if (e.target.id==="ckQ"){ ckPad = e.target.value.toUpperCase().replace(/\s/g, ""); const list = ckList();
+    $("ckSug").innerHTML = ckSugHtml(list, list.filter(x=>ckRes[x.c.id]?.res).length); return; }
   if (!e.target.matches("[data-cknote]") || !ckOpen) return;
   const r = ckRes[ckOpen] ||= {}; r.note = e.target.value; ckSave();
 });
