@@ -1281,6 +1281,11 @@ const PS_ICON = { PASTOREO:"🐄", FUMIGADA:"🧪", RIEGO:"💧", CORTE:"✂️"
   RENOVADA:"🌱", ROTOBO:"🚜", RASTRA:"🚜", ENCALADO:"⚪" };
 const PS_TARGET = 35;   // días de descanso para considerar un potrero "listo"
 const PS_SUPPLY = /fertiliz|herbicida|plaguicida|semilla|enmienda|otro$/i;   // insumos que se usan en potreros
+// quién registra en Pastos (por perfil): mover lote = Admin Principal y Admin finca;
+// labor, aforo y lluvia = además María
+const psAdminFinca = () => /^a(d)?min finca$/i.test(myProfile || "");   // "Amin finca" es el mismo perfil (mal escrito)
+const psCanMove = () => isMain() || psAdminFinca();
+const psCanWork = () => psCanMove() || myProfile==="Maria";
 let psFarm = null, psReady = false, psPredio = "", psSort = "num", psList = [], psLots = [], psSheet = null;
 const psName = p => `${p.predio==="RECODO" ? "" : p.predio.split(" ").map(w=>w[0]).join("") + " "}${p.number}`;
 const psHa = p => p.area_m2 ? (p.area_m2/10000).toLocaleString("es-CO", { maximumFractionDigits:2 }) + " ha" : "";
@@ -1341,7 +1346,7 @@ function renderPastos(){
       <span>${r==null ? "—" : r <= 1 ? "ocupado" : r + " d"}</span></button>`; };
   // la productividad está en Reportes → Pastos
   $("psBody").innerHTML = `
-    ${canDo("pastos_registrar") ? `<div class="addbar"><button data-psnew="move">＋ Mover lote</button><button data-psnew="labor">＋ Labor</button><button data-psnew="aforo">＋ Aforo</button><button data-psnew="rain">＋ Lluvia</button></div>` : ""}
+    ${psCanWork() ? `<div class="addbar">${psCanMove() ? `<button data-psnew="move">＋ Mover lote</button>` : ""}<button data-psnew="labor">＋ Labor</button><button data-psnew="aforo">＋ Aforo</button><button data-psnew="rain">＋ Lluvia</button></div>` : ""}
     <div class="rpk" style="margin-bottom:14px"><div><b>${act.length}</b><span>potreros · ${ha.toLocaleString("es-CO", { maximumFractionDigits:1 })} ha</span></div>
       <div><b>${busy}</b><span>ocupados hoy</span></div><div><b>${ready}</b><span>con ≥ ${PS_TARGET} d de descanso</span></div>
       <div><b>${psAvgRest(act)}</b><span>días de descanso promedio</span></div></div>
@@ -1429,7 +1434,7 @@ async function loadPaddock(id){
         <div><b>${cyc.filter(c=>c.start >= y1).length}</b><span>pastoreos en 12 meses</span></div>
         <div><b>${ha && milkYear ? Math.round(milkYear/ha).toLocaleString("es-CO") : "—"}</b><span>litros/ha en 12 meses</span></div>
       </div>
-      ${canDo("pastos_registrar") ? `<div class="addbar" style="margin-top:12px"><button data-psnew="move" data-pid="${p.id}">＋ Entra lote</button><button data-psnew="labor" data-pid="${p.id}">＋ Labor</button><button data-psnew="aforo" data-pid="${p.id}">＋ Aforo</button></div>` : ""}
+      ${psCanWork() ? `<div class="addbar" style="margin-top:12px">${psCanMove() ? `<button data-psnew="move" data-pid="${p.id}">＋ Entra lote</button>` : ""}<button data-psnew="labor" data-pid="${p.id}">＋ Labor</button><button data-psnew="aforo" data-pid="${p.id}">＋ Aforo</button></div>` : ""}
     </div>
     ${nd.data?.length ? (()=>{ const o = nd.data.map(x=>({ d:x.obs_date, v:+x.ndvi })), lv = o[o.length-1], c = psNdviCls(lv.v);
       return `<div class="card"><b>🛰️ Verdor (satélite)</b>
