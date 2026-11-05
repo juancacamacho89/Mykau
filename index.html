@@ -969,7 +969,7 @@ function renderCow(d){
 
   ${weights.length ? `<div class="card"><b>Peso</b><div id="weightChart"></div>
     <div class="sub">Último: ${weights[weights.length-1].weight_kg} kg el ${fmt(weights[weights.length-1].event_date)}${weights[weights.length-1].body_condition?` · CC ${weights[weights.length-1].body_condition}`:""}</div>
-    <div id="weightInfo" class="sub" style="margin-top:4px">Toca la gráfica para ver el peso, la fecha y la edad</div></div>` : ""}
+    </div>` : ""}
   ${(d.tx || []).length ? `<div class="card"><b>💉 Salud (${d.tx.length})</b><div class="sub">Tratamientos, vacunas y purgas</div>
     <table style="margin-top:6px;font-size:13px">${d.tx.map(t=>`<tr><td style="white-space:nowrap">${fmt(t.start_date)}</td><td><b>${esc(t.diagnosis || "")}</b>${t.outcome ? ` · ${esc(t.outcome)}` : ""}
       <div class="sub">${(t.treatment_items||[]).map(i=>`${esc(i.supply_code)} ${i.dose ?? ""} ${esc(i.unit||"")}`).join(" · ")}${t.notes ? ` · ${esc(t.notes)}` : ""}${t.prescribed_by ? ` · ${esc(t.prescribed_by)}` : ""}</div></td></tr>`).join("")}</table></div>` : ""}
@@ -3858,18 +3858,33 @@ function drawCowCharts(){
     });
   }
   const w = d.events.filter(e=>e.event_type==="weight" && e.weight_kg);
-  if ($("weightChart")) lineChart($("weightChart"), w.map(e=>[e.event_date, +e.weight_kg]), { color:css("--accent"), unit:"kg", sel:wPick,
-    // tocar: el pesaje más cercano → peso, fecha y meses de edad
-    onPick: date => {
-      const ms = new Date(date).getTime();
-      const i = w.reduce((b, e, k)=>Math.abs(new Date(e.event_date).getTime() - ms) < Math.abs(new Date(w[b].event_date).getTime() - ms) ? k : b, 0);
-      wPick = i; drawCowCharts();
-      const e = w[i], bd = d.cow?.birth_date, prev = w[i - 1];
-      const age = bd ? (days(bd, e.event_date)/30.44).toFixed(1).replace(".", ",") + " meses" : "";
-      const gdp = prev ? ((+e.weight_kg - +prev.weight_kg) / Math.max(1, days(prev.event_date, e.event_date)) * 1000) : null;
-      $("weightInfo").innerHTML = `<b style="color:var(--ink);font-size:16px">${e.weight_kg} kg</b> · ${fmt(e.event_date)}${age ? " · " + age : ""}`
-        + (gdp!=null ? ` · ${Math.round(gdp)} g/día desde el anterior` : "") + (e.body_condition ? ` · CC ${e.body_condition}` : "");
-    } });
+  if ($("weightChart")){
+    // como las gráficas de Reportes: tocar o arrastrar sobre la línea muestra fecha, peso y edad en un globo
+    const box = $("weightChart"), g = lineChart(box, w.map(e=>[e.event_date, +e.weight_kg]), { color:css("--accent"), unit:"kg" });
+    if (g){
+      box.classList.add("rpchart"); box.style.position = "relative";
+      const svg = g.svg; svg.style.touchAction = "pan-y";
+      svg.insertAdjacentHTML("beforeend", `<line class="wx" y1="${g.T}" y2="${g.H - g.B}" stroke="var(--muted)" style="display:none"/>
+        <circle class="wdot" r="5.5" fill="none" stroke="${css("--accent")}" stroke-width="2.5" style="display:none"/>`);
+      box.insertAdjacentHTML("beforeend", `<div class="rptip hidden"></div>`);
+      const tip = box.querySelector(".rptip"), ln = svg.querySelector(".wx"), dot = svg.querySelector(".wdot"), bd = d.cow?.birth_date;
+      const move = ev => {
+        const r = svg.getBoundingClientRect(), x = (ev.clientX - r.left)*g.W/r.width;
+        const i = g.t.reduce((b, ms, k)=>Math.abs(g.X(ms) - x) < Math.abs(g.X(g.t[b]) - x) ? k : b, 0), e = w[i], prev = w[i - 1];
+        const cx = g.X(g.t[i]), cy = g.Y(g.v[i]);
+        ln.setAttribute("x1", cx); ln.setAttribute("x2", cx); ln.style.display = "";
+        dot.setAttribute("cx", cx); dot.setAttribute("cy", cy); dot.style.display = "";
+        const age = bd ? (days(bd, e.event_date)/30.44).toFixed(1).replace(".", ",") + " meses" : "";
+        const gdp = prev ? Math.round((+e.weight_kg - +prev.weight_kg)/Math.max(1, days(prev.event_date, e.event_date))*1000) : null;
+        tip.innerHTML = `<b>${fmt(e.event_date)}</b><div>Peso: <b>${e.weight_kg} kg</b></div>${age ? `<div>Edad: <b>${age}</b></div>` : ""}`
+          + (gdp!=null ? `<div>${gdp} g/día</div>` : "");
+        tip.classList.remove("hidden");
+        const px = cx*r.width/g.W; tip.style.left = Math.min(Math.max(0, px - tip.offsetWidth/2), r.width - tip.offsetWidth) + "px";
+      };
+      svg.addEventListener("pointermove", move); svg.addEventListener("pointerdown", move);
+      svg.addEventListener("pointerleave", ()=>{ tip.classList.add("hidden"); ln.style.display = "none"; dot.style.display = "none"; });
+    }
+  }
 }
 window.addEventListener("resize", ()=>{ drawCowCharts(); if (lastChart) drawChart(lastChart); });
 
@@ -3900,8 +3915,7 @@ function lineChart(box, pts, o){
   pts.forEach((p,i)=>{ if (i && brk.some(b=>b>t[i-1] && b<=t[i])) flush(); seg.push(`${X(t[i])},${Y(v[i])}`); });
   flush();
   pts.forEach((p,i)=>{ g += `<circle cx="${X(t[i])}" cy="${Y(v[i])}" r="2.6" fill="${o.color}"/>`; });
-  if (o.sel!=null && pts[o.sel]) g += `<line x1="${X(t[o.sel])}" x2="${X(t[o.sel])}" y1="${T}" y2="${H-B}" stroke="${o.color}" stroke-opacity=".5"/>`
-    + `<circle cx="${X(t[o.sel])}" cy="${Y(v[o.sel])}" r="6" fill="none" stroke="${o.color}" stroke-width="2.5"/>`;
+
   if (step.length){ // concentrado: escalera (el valor sigue igual hasta el siguiente listado)
     let d = "";
     step.forEach((s,i)=>{
@@ -3915,11 +3929,13 @@ function lineChart(box, pts, o){
     g += `<text x="${X(ms)}" y="${H-6}" text-anchor="middle">${y}</text>`; }
   if (y0===y1 || pts.length<3) g += `<text x="${L}" y="${H-6}">${fmt(pts[0][0])}</text><text x="${W-R}" y="${H-6}" text-anchor="end">${fmt(pts[pts.length-1][0])}</text>`;
   box.innerHTML = `<svg viewBox="0 0 ${W} ${H}" width="100%" style="color:var(--ink);display:block">${g}</svg>`;
+  const out = { svg:box.firstChild, W, H, T, B, X, Y, t, v };
   if (o.onPick) box.firstChild.onclick = e=>{
     const r = e.currentTarget.getBoundingClientRect(), x = (e.clientX - r.left) * W / r.width;
     const ms = t0 + Math.min(1, Math.max(0, (x-L)/(W-L-R))) * (t1-t0);
     o.onPick(new Date(ms).toISOString().slice(0,10));
   };
+  return out;
 }
 
 // ── Registro de servicios y celos (quedan "pendientes" hasta que aparecen en Interherd) ──
