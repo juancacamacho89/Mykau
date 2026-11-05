@@ -3305,7 +3305,7 @@ function renderRonda(){
     <div class="card"><div class="row" style="align-items:center;gap:8px"><b style="flex:1">🌡️ Tanque de frío</b>
         <span class="sub">hora</span><input type="time" id="rnTTime" value="${c.ttime || ""}" style="width:auto;padding:6px"></div>
       <div style="display:grid;grid-template-columns:repeat(${rnTanks(c.farm).length}, 1fr);gap:8px;margin-top:6px">${rnTanks(c.farm).map(t=>{ const v = (c.tanks || {})[t];
-        return `<div><label>${esc(t)} (°C)</label><input type="number" inputmode="decimal" step="0.1" data-rntank="${esc(t)}" value="${v ?? ""}" style="min-width:0${rnHot(c, t) ? ";border-color:var(--s4)" : ""}"></div>`; }).join("")}</div>
+        return `<div><label>${esc(t)} (°C)</label><input type="text" inputmode="decimal" autocomplete="off" data-rntank="${esc(t)}" value="${v ?? ""}" placeholder="ej. 9,3" style="min-width:0${rnHot(c, t) ? ";border-color:var(--s4)" : ""}"></div>`; }).join("")}</div>
       <div class="sub" id="rnTankMsg" style="margin-top:4px">${rnTankMsg(c)}</div></div>
     <div class="sheet hsform" style="padding:0;background:none;max-height:none;max-width:none;border-radius:0;overflow:visible">
     ${c.rows.map((r, i)=>`<div class="card" data-rni="${i}">
@@ -3397,7 +3397,9 @@ function rnTotals(){
 }
 $("rnBody").addEventListener("input", e=>{
   const t = e.target, box = t.closest("[data-rni]");
-  if (t.dataset.rntank){ (rnCur.tanks ||= {})[t.dataset.rntank] = t.value === "" ? null : +t.value; rnSaveLocal();
+  if (t.dataset.rntank){   // acepta coma o punto (9,3 o 9.3)
+    const raw = t.value.replace(",", ".").replace(/[^0-9.\-]/g, ""), num = parseFloat(raw);
+    (rnCur.tanks ||= {})[t.dataset.rntank] = raw === "" || isNaN(num) ? null : num; rnSaveLocal();
     t.style.borderColor = rnHot(rnCur, t.dataset.rntank) ? "var(--s4)" : ""; $("rnTankMsg").innerHTML = rnTankMsg(rnCur); return; }
   if (t.id==="rnTTime"){ rnCur.ttime = t.value; rnSaveLocal(); $("rnTankMsg").innerHTML = rnTankMsg(rnCur); return; }
   if (!box || !t.dataset.rnk || /^paddock/.test(t.dataset.rnk)) return;
