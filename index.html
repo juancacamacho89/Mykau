@@ -3893,11 +3893,14 @@ function drawCowCharts(){
         hold = setTimeout(()=>{ hold = null; navigator.vibrate?.(30); delReg(e.id); }, 700); });
       ["pointerup", "pointercancel"].forEach(t=>svg.addEventListener(t, stop));
       svg.addEventListener("contextmenu", ev=>ev.preventDefault());
-      svg.addEventListener("pointerleave", ()=>{ stop(); tip.classList.add("hidden"); ln.style.display = "none"; dot.style.display = "none"; });
+      // al soltar, el globo se queda; se quita al tocar fuera de la gráfica
+      svg.addEventListener("pointerleave", stop);
     }
   }
 }
 window.addEventListener("resize", ()=>{ drawCowCharts(); if (lastChart) drawChart(lastChart); });
+document.addEventListener("pointerdown", e=>{ const b = $("weightChart"); if (!b || b.contains(e.target)) return;
+  b.querySelector(".rptip")?.classList.add("hidden"); b.querySelectorAll(".wx,.wdot").forEach(x=>x.style.display = "none"); });
 
 function lineChart(box, pts, o){
   if (!pts.length) return;
