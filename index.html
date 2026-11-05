@@ -1386,7 +1386,8 @@ function psCycles(occ){
   out.forEach((c, i)=>{
     c.occ = days(c.start, c.end) + 1;
     c.lots = [...new Set(c.rows.map(r=>r.grp))];
-    c.animals = Math.max(0, ...c.rows.map(r=>r.animals||0)) || null;
+    const perDay = {}; c.rows.forEach(r=>{ const k = r.entry_date; (perDay[k] ||= {})[r.grp] = Math.max(perDay[k][r.grp] || 0, +r.animals || 0); });
+    c.animals = Math.max(0, ...Object.values(perDay).map(g=>Object.values(g).reduce((a, b)=>a + b, 0))) || null;
     c.milk = c.rows.reduce((a,r)=>a + (+r.milk_l||0), 0);
     c.aforo = c.rows.find(r=>r.aforo)?.aforo || null;
     c.pids = [...new Set(c.rows.map(r=>r.paddock_id))];
@@ -1402,10 +1403,11 @@ async function loadPaddock(id){
   const { data:olds } = await sb.from("paddocks").select("id,predio,number,merged_on").eq("merged_into", id);
   const into = p.merged_into ? (await sb.from("paddocks").select("id,predio,number").eq("id", p.merged_into).maybeSingle()).data : null;
   const ids = [id, ...(olds||[]).map(o=>o.id)], label = Object.fromEntries((olds||[]).map(o=>[o.id, `antes ${o.predio.toLowerCase()} ${o.number}`]));
-  const [oc, nd, wk] = await Promise.all([
+  const [oc, nd, wk, gz] = await Promise.all([
     sb.from("paddock_occupancy").select("paddock_id,grp,entry_date,exit_date,current,animals,aforo,milk_l,source").in("paddock_id", ids).order("entry_date").limit(5000),
     sb.from("paddock_ndvi").select("obs_date,ndvi").eq("paddock_id", id).eq("haze", false).gte("obs_date", addDays(today(), -400)).order("obs_date"),
     sb.from("paddock_works").select("id,paddock_id,work_date,activity,product,supply_code,qty,value,notes,source,created_by").in("paddock_id", ids).order("work_date", { ascending:false }).limit(3000),
+    sb.from("grazing").select("id,grp,entry_date,source,created_by").in("paddock_id", ids).eq("source", "app").gte("entry_date", addDays(today(), -400)),
   ]);
   const cyc = psCycles(oc.data || []), works = wk.data || [], t0 = today(), y1 = addDays(t0, -365);
   const last = cyc[cyc.length-1], recent = cyc.filter(c=>c.start >= y1 && c.rot);
@@ -1419,11 +1421,12 @@ async function loadPaddock(id){
   const nowLots = Object.values(nowBy), nowHeads = nowLots.reduce((a, r)=>a + (+r.animals || 0), 0);
   // historia: ciclos de pastoreo + labores (las del mismo día y labor se juntan), por año
   const ev = [
-    ...cyc.map(c=>({ d:c.start, kind:"PASTOREO", html:`<b>${c.lots.map(esc).join(" + ")}</b> · ${c.occ} d${c.animals ? ` · ${c.animals} animales` : ""}${c.milk ? ` · ${Math.round(c.milk).toLocaleString("es-CO")} L` : ""}${c.aforo ? ` · aforo ${c.aforo}` : ""}${c.rest!=null ? `<span class="sub"> · descansó ${c.rest} d</span>` : ""}${c.end!==c.start ? `<span class="sub"> · hasta ${fmt(c.end)}</span>` : ""}${c.pids.filter(x=>label[x]).map(x=>` <span class="tag">${esc(label[x])}</span>`).join("")}` })),
+    ...cyc.map(c=>({ d:c.start, kind:"PASTOREO", sw: (()=>{ const g = (gz.data || []).filter(x=>x.entry_date >= c.start && x.entry_date <= c.end);
+        return g.length && (isMain() || g.every(x=>x.created_by===me)) ? "grazing|" + g.map(x=>x.id).join(",") : ""; })(), html:`<b>${c.lots.map(esc).join(" + ")}</b> · ${c.occ} d${c.animals ? ` · ${c.animals} animales` : ""}${c.milk ? ` · ${Math.round(c.milk).toLocaleString("es-CO")} L` : ""}${c.aforo ? ` · aforo ${c.aforo}` : ""}${c.rest!=null ? `<span class="sub"> · descansó ${c.rest} d</span>` : ""}${c.end!==c.start ? `<span class="sub"> · hasta ${fmt(c.end)}</span>` : ""}${c.pids.filter(x=>label[x]).map(x=>` <span class="tag">${esc(label[x])}</span>`).join("")}` })),
     ...Object.values(works.reduce((g, w)=>{ const k = w.work_date + "|" + w.activity; (g[k] = g[k] || []).push(w); return g; }, {})).map(ws=>{
       const w = ws[0], prods = [...new Set(ws.map(x=>x.product).filter(Boolean))], val = ws.find(x=>x.value!=null)?.value;
       const mine = ws.every(x=>x.source==="app" && (x.created_by===me || isAdmin));
-      return { d:w.work_date, kind:w.activity, html:`<b>${esc(w.activity)}</b>${prods.length ? " · " + esc(prods.join(", ")) : ""}${val!=null ? ` · ${val}${w.activity==="AFORO" ? " kg/m²" : ""}` : ""}${ws.some(x=>x.qty) ? `<span class="sub"> · ${ws.filter(x=>x.qty).map(x=>`${(+x.qty).toLocaleString("es-CO", { maximumFractionDigits:1 })} ${esc(x.supply_code)}`).join(", ")}</span>` : ""}${[...new Set(ws.map(x=>x.notes).filter(Boolean))].map(n=>` <span class="tag">${esc(n)}</span>`).join("")}${ws.some(x=>label[x.paddock_id]) ? ` <span class="tag">${esc(label[ws[0].paddock_id] || "")}</span>` : ""}${mine ? ` <button class="del" data-psdel="${ws.map(x=>x.id).join(",")}">borrar</button>` : ""}` };
+      return { d:w.work_date, kind:w.activity, sw: isMain() || mine ? "paddock_works|" + ws.map(x=>x.id).join(",") : "", html:`<b>${esc(w.activity)}</b>${prods.length ? " · " + esc(prods.join(", ")) : ""}${val!=null ? ` · ${val}${w.activity==="AFORO" ? " kg/m²" : ""}` : ""}${ws.some(x=>x.qty) ? `<span class="sub"> · ${ws.filter(x=>x.qty).map(x=>`${(+x.qty).toLocaleString("es-CO", { maximumFractionDigits:1 })} ${esc(x.supply_code)}`).join(", ")}</span>` : ""}${[...new Set(ws.map(x=>x.notes).filter(Boolean))].map(n=>` <span class="tag">${esc(n)}</span>`).join("")}${ws.some(x=>label[x.paddock_id]) ? ` <span class="tag">${esc(label[ws[0].paddock_id] || "")}</span>` : ""}` };
     }),
   ].sort((a,b)=>b.d.localeCompare(a.d));
   const years = [...new Set(ev.map(e=>e.d.slice(0,4)))];
@@ -1453,7 +1456,7 @@ async function loadPaddock(id){
         <div class="sub" style="margin-top:4px">NDVI de Sentinel-2 (10 m): 0,3–0,5 recién pastoreado · 0,75 o más, pasto listo. Sin las fechas nubladas.</div></div>`; })() : ""}
     <div class="card"><b>Historia</b>
       ${years.map((y, i)=>`<details class="lac" ${i===0 ? "open" : ""}><summary><b>${y}</b> · ${ev.filter(e=>e.d.startsWith(y) && e.kind==="PASTOREO").length} pastoreos · ${ev.filter(e=>e.d.startsWith(y) && e.kind!=="PASTOREO").length} labores</summary>
-        <table>${ev.filter(e=>e.d.startsWith(y)).map(e=>`<tr><td>${fmt(e.d)}</td><td>${PS_ICON[e.kind] || "🔧"}</td><td>${e.html}</td></tr>`).join("")}</table></details>`).join("")
+        <table>${ev.filter(e=>e.d.startsWith(y)).map(e=>`<tr${e.sw ? ` data-swdel="${e.sw}"` : ""}><td>${fmt(e.d)}</td><td>${PS_ICON[e.kind] || "🔧"}</td><td>${e.html}</td></tr>`).join("")}</table></details>`).join("")
         || `<div class="empty">Sin registros</div>`}</div>`;
   if (nd.data?.length && $("psNdviChart")) psNdviChart($("psNdviChart"), nd.data.map(x=>({ d:x.obs_date, v:+x.ndvi })), oc.data || []);
 }
@@ -4387,6 +4390,28 @@ async function openCalving(ev){
   });
 }
 
+// Pastos: borrar una labor o un ingreso de lote (registrado en Pastos) deslizando a la izquierda
+async function psSwDel(v){
+  const [tbl, list] = v.split("|"), ids = list.split(",").map(Number);
+  if (tbl==="paddock_works"){
+    if (!confirm("¿Borrar esta labor? Los insumos vuelven al inventario.")) return;
+    const { error } = await sb.from("paddock_works").delete().in("id", ids);
+    if (error) return toast("No se pudo borrar: " + error.message);
+    toast("Labor borrada"); return route();
+  }
+  if (tbl==="grazing"){
+    const { data:gs } = await sb.from("grazing").select("id,farm_id,grp,entry_date").in("id", ids);
+    if (!confirm(`¿Borrar ${gs?.length===1 ? "el ingreso" : "los ingresos"} de ${[...new Set((gs || []).map(g=>g.grp))].join(" + ")} a este potrero?\n`
+      + "Solo se borra lo registrado en Pastos (Mover lote); lo del Reporte de ganadería y la Leche diaria se corrige allá.")) return;
+    const { error } = await sb.from("grazing").delete().in("id", ids);
+    if (error) return toast("No se pudo borrar: " + error.message);
+    // el lote vuelve al potrero donde estaba antes (se reabre el ingreso anterior que se cerró al moverlo)
+    for (const g of gs || []){
+      await sb.from("grazing").update({ exit_date:null }).eq("farm_id", g.farm_id).eq("grp", g.grp).eq("exit_date", addDays(g.entry_date, -1));
+    }
+    toast("Ingreso borrado"); psData = {}; return route();
+  }
+}
 // deslizar para borrar (dedo o mouse)
 let swCur = null;
 document.addEventListener("pointerdown", e=>{
@@ -4404,7 +4429,7 @@ document.addEventListener("pointermove", e=>{
 const swEnd = async ()=>{
   if (!swCur) return; const { r, dx, on } = swCur; swCur = null;
   r.classList.remove("swiping"); r.style.transform = "";
-  if (on && dx < -80){ await delReg(+r.dataset.swdel); }
+  if (on && dx < -80){ const v = r.dataset.swdel; if (v.includes("|")) await psSwDel(v); else await delReg(+v); }
   r.classList.remove("swred");
 };
 document.addEventListener("pointerup", swEnd); document.addEventListener("pointercancel", swEnd);
