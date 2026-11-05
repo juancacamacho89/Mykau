@@ -3881,8 +3881,19 @@ function drawCowCharts(){
         tip.classList.remove("hidden");
         const px = cx*r.width/g.W; tip.style.left = Math.min(Math.max(0, px - tip.offsetWidth/2), r.width - tip.offsetWidth) + "px";
       };
-      svg.addEventListener("pointermove", move); svg.addEventListener("pointerdown", move);
-      svg.addEventListener("pointerleave", ()=>{ tip.classList.add("hidden"); ln.style.display = "none"; dot.style.display = "none"; });
+      // mantener presionado sobre un punto (≈0,7 s) → borrar ese peso (quien puede borrarlo)
+      let hold = null, cur = null;
+      const near = ev => { const r = svg.getBoundingClientRect(), x = (ev.clientX - r.left)*g.W/r.width;
+        return g.t.reduce((b, ms, k)=>Math.abs(g.X(ms) - x) < Math.abs(g.X(g.t[b]) - x) ? k : b, 0); };
+      const stop = () => { clearTimeout(hold); hold = null; };
+      svg.addEventListener("pointermove", ev=>{ move(ev); if (hold && cur && Math.hypot(ev.clientX - cur.x, ev.clientY - cur.y) > 10) stop(); });
+      svg.addEventListener("pointerdown", ev=>{ move(ev); stop(); const e = w[near(ev)];
+        if (!canDel(e)) return;
+        cur = { x:ev.clientX, y:ev.clientY };
+        hold = setTimeout(()=>{ hold = null; navigator.vibrate?.(30); delReg(e.id); }, 700); });
+      ["pointerup", "pointercancel"].forEach(t=>svg.addEventListener(t, stop));
+      svg.addEventListener("contextmenu", ev=>ev.preventDefault());
+      svg.addEventListener("pointerleave", ()=>{ stop(); tip.classList.add("hidden"); ln.style.display = "none"; dot.style.display = "none"; });
     }
   }
 }
