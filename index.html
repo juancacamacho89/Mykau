@@ -993,11 +993,11 @@ function lacHtml(s, open, kids, bulls){
       det = `${/^(ECO|DP)/.test(e.category||"") ? `<b>${esc(e.category)}</b> ` : ""}${esc(e.result||"")}${e.days_value?` · ${e.days_value} d`:""}`;
     else det = esc([e.result, e.category].filter(Boolean).join(" · "));
     if (e.comments) det += ` <span class="sub">${esc(e.comments)}</span>`;
-    if (e.source==="app") det += pendTag(e);
+    if (e.source==="app") det += pendTag(e); else det += ihDel(e);
     return `<tr><td>${fmt(e.event_date)}</td><td class="ev">${EV[e.event_type]||esc(e.event_type)}</td><td>${det}</td></tr>`;
   }).join("");
   const cvRow = cv ? `<tr><td>${fmt(cv.event_date)}</td><td class="ev">Parto</td><td>${esc(cv.category||"")}${cv.bull?` · toro ${bullTxt(cv.bull,bulls)}`:""}
-      ${kid ? ` · cría <button class="lnk" data-cow="${esc(kid.id)}">${esc(kid.id)}</button>` : ""}${cv.source==="app" ? calvingTxt(cv) + pendTag(cv) : ""}</td></tr>` : "";
+      ${kid ? ` · cría <button class="lnk" data-cow="${esc(kid.id)}">${esc(kid.id)}</button>` : ""}${cv.source==="app" ? calvingTxt(cv) + pendTag(cv) : ihDel(cv)}</td></tr>` : "";
   return `<details class="lac" ${open?"open":""}><summary><b>${title}</b><div class="sub">${sum}</div></summary>
     <table>${rows}${cvRow}</table></details>`;
 }
@@ -4050,6 +4050,8 @@ const svTank = (pen, tanks) => (tanks||[]).find(t=>t.code===String(pen||"").toUp
 const pendTag = e => (e.sync_status && e.sync_status!=="pending" ? ` <span class="tag" style="background:var(--s0);color:#fff">✓ en Interherd</span>` : ` <span class="tag">⏳ falta en Interherd</span>`)
   + `${(e.sync_status==="pending" || !e.sync_status) && (e.created_by===me || isAdmin) || isMain() ? `${["calving","service","heat","dry_off","exit","weight"].includes(e.event_type)
   ? ` <button class="del" data-edit="${e.id}" style="color:var(--accent)">editar</button>` : ""} <button class="del" data-del="${e.id}">borrar</button>` : ""}`;
+// registros que llegaron de Interherd: solo el administrador principal los puede borrar (quedan en la papelera)
+const ihDel = e => isMain() && e.id ? ` <button class="del" data-del="${e.id}">borrar</button>` : "";
 // columnas que se pueden corregir en un registro pendiente
 const EDITABLE = ["event_date","result","bull","operator","category","comments","details"];
 const onlyEditable = row => Object.fromEntries(Object.entries(row).filter(([k])=>EDITABLE.includes(k)));
