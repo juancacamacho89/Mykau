@@ -3043,7 +3043,7 @@ async function rcLoad(){
     psAll(()=>sb.from("cow_milk").select("cow_id,test_date,total_kg,adjusted_kg,cows!inner(farm_id)").eq("cows.farm_id", farm).gte("test_date", since).not("total_kg", "is", null).order("test_date")),
     psAll(()=>sb.from("cow_concentrate").select("cow_id,rec_date,kg_day,source,cows!inner(farm_id)").eq("cows.farm_id", farm).gte("rec_date", addDays(today(), -180)).order("rec_date")),
     psAll(()=>sb.from("cow_events").select("cow_id,event_date,event_type,cows!inner(farm_id)").eq("cows.farm_id", farm).in("event_type", ["service","calving"]).gte("event_date", addDays(today(), -420)).order("event_date")),
-    sb.from("daily_milk").select("pen,rec_date,total_l").eq("farm_id", farm).gte("rec_date", since),
+    sb.from("daily_milk").select("pen,rec_date,total_l,concentrate_bags").eq("farm_id", farm).gte("rec_date", since),
   ]);
   if (c.error || m.error){ $("rcBody").innerHTML = `<div class="card"><div class="empty">No se pudo cargar: ${esc((c.error || m.error).message)}</div></div>`; rcData = null; return; }
   rcData = { farm, at:Date.now(), cows:c.data, milk:m.data.map(x=>[x.cow_id, x.test_date, +x.total_kg, x.adjusted_kg!=null ? +x.adjusted_kg : null]),
@@ -3062,23 +3062,35 @@ function rcCompute(){
   Object.keys(ih).forEach(id=>{ if (!conc[id]) conc[id] = ih[id]; });
   d.ev.forEach(([id, dt, t])=>(ev[id] ||= []).push({ d:dt, t }));
   return d.cows.filter(c=>pens.includes(c.pen) && /(^|\/)Lac/.test(c.status || "")).map(c=>{
-    const w = milk[c.id] || [], last = w[w.length-1];
+    const C = c.last_calving, w = (milk[c.id] || []).filter(x=>!C || x.d >= C), last = w[w.length-1];   // solo esta lactancia
     const win = last ? w.filter(x=>x.d >= addDays(last.d, -30)).slice(-4) : [];
     const litros = last ? last.l : null, prevs = win.slice(0, -1).slice(-3).map(x=>x.l);
     const prom = prevs.length ? prevs.reduce((a,b)=>a + b, 0)/prevs.length : null;
     const caida = prom > 0 && litros!=null ? (prom - litros)/prom*100 : null;
-    const ref = last?.d || today(), C = c.last_calving;
+    const ref = last?.d || today();
     const dim = C && ref >= C ? days(C, ref) : null;
     // secado = concepción (último servicio después del parto) + 283 − 60, si está preñada
     const preg = /(^|\/)PR(\/|$)/.test(c.status || ""), sv = (ev[c.id] || []).filter(x=>x.t==="service" && (!C || x.d > C)).pop();
     const dry = preg && sv ? addDays(sv.d, LS_GEST - LS_DRY) : null, dps = dry ? days(ref, dry) : null;
     const first = +c.lactation_num === 1, prev = conc[c.id] ? conc[c.id].kg : null;
     const base = rcTabla(litros, first);
-    const r = litros==null ? { rac:prev ?? 0, tipo:"SIN", motivo:"Sin pesaje en 75 días: se deja la previa" } : rcReglas(base, litros, prev, dim, dps, caida);
+    const r = litros==null
+      ? (dim!=null && dim < 100 ? { rac:8, tipo:"SIN", motivo:"Recién parida, sin pesaje todavía: 8 kg (DIM <100)" }
+                                : { rac:prev ?? 0, tipo:"SIN", motivo:"Sin pesaje en 75 días: se deja la previa" })
+      : rcReglas(base, litros, prev, dim, dps, caida);
     const fin = rcState.edit[c.id] ?? r.rac;
     return { c, litros, adj:last?.adj, fecha:last?.d, prom, caida, dim, dps, dry, first, prev, prevFrom:conc[c.id], base, ...r, fin, manual: rcState.edit[c.id]!=null,
       cambio: prev==null || rcPar(prev)!==fin };
   });
+}
+// bultos que pide la ración guardada (la vigente de cada vaca en ordeño) vs los anotados en la Leche diaria
+function rcBagsCmp(pen, xs){
+  const kg = xs.reduce((a, x)=>a + (x.prev ?? 0), 0), need = Math.round(kg/40*2)/2;
+  const dm = (rcData.tank || []).filter(t=>t.pen===pen && t.concentrate_bags!=null).sort((a, b)=>a.rec_date < b.rec_date ? -1 : 1).pop();
+  if (!dm) return `<br>ración guardada: <b>${need} bultos</b>/día (${kg} kg) · Leche diaria: sin bultos anotados`;
+  const got = +dm.concentrate_bags, d = got - need, ok = Math.abs(d) <= 0.5;
+  return `<br>ración guardada: <b>${need} bultos</b>/día (${kg} kg) · Leche diaria ${fmt(dm.rec_date)}: <b>${got} bultos</b>
+    <span style="color:var(${ok ? "--s0" : "--s3"});font-weight:700">${ok ? "✓ cuadra" : (d > 0 ? "+" : "") + d + " bultos"}</span>`;
 }
 function rcTankInfo(pen, date){
   const t = rcData.tank.find(x=>x.pen===pen && x.rec_date===date), s = rcData.milk.filter(x=>x[1]===date && rcData.cows.find(c=>c.id===x[0])?.pen===pen).reduce((a,x)=>a + x[2], 0);
@@ -3099,7 +3111,8 @@ function renderRacion(){
     const xs = all.filter(x=>x.c.pen===p), lastW = xs.map(x=>x.fecha).filter(Boolean).sort().pop(), ti = lastW ? rcTankInfo(p, lastW) : null;
     return `<div><b>${esc(LS_PEN_NAME[p] || p)}</b><span>${xs.length} vacas · ${sum(xs)} kg · ${bultos(sum(xs))} bultos · ${xs.filter(x=>x.cambio).length} cambios<br>
       pesaje ${lastW ? fmt(lastW) : "—"}${ti ? ` · ajuste ×${ti.f.toFixed(3)} (${Math.round(ti.tank).toLocaleString("es-CO")} L tanque / ${Math.round(ti.sum).toLocaleString("es-CO")} pesados)`
-        : lastW && xs.some(x=>x.fecha===lastW && x.adj) ? " · ya ajustada (Excel)" : lastW ? " · sin total del tanque ese día: sin ajustar" : ""}</span></div>`; }).join("");
+        : lastW && xs.some(x=>x.fecha===lastW && x.adj) ? " · ya ajustada (Excel)" : lastW ? " · sin total del tanque ese día: sin ajustar" : ""}
+      ${rcBagsCmp(p, xs)}</span></div>`; }).join("");
   const sel = v => `<select data-rck style="width:auto;padding:4px 6px;font-size:15px">${[0,2,4,6,8,10,12].map(k=>`<option ${k===v ? "selected" : ""}>${k}</option>`).join("")}</select>`;
   $("rcBody").innerHTML = `<div class="card">${chips(farms.map(f=>[String(f.id), esc(farmLabel(f))]), String(s.farm), "data-rcf")}
       ${chips([["", "Todos los lotes"], ...pens.map(p=>[p, esc(p)])], s.pen, "data-rcp")}
