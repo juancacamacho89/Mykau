@@ -196,7 +196,7 @@ details.lac td{padding:6px 8px}
 .zoom img{max-width:100%;max-height:100%}
 
 /* Registro de servicios y celos */
-.addbar{display:flex;gap:8px;margin:2px 0 6px}
+.addbar{display:flex;flex-wrap:wrap;gap:8px;margin:2px 0 6px}
 .addbar button{flex:1;border:1px dashed var(--accent);background:var(--soft);color:var(--accent);border-radius:10px;padding:10px;font-weight:700;cursor:pointer;font-size:15px}
 .sheet-bg{position:fixed;inset:0;background:rgba(0,0,0,.45);display:flex;align-items:flex-end;justify-content:center;z-index:20}
 .sheet{background:var(--card);width:100%;max-width:560px;border-radius:18px 18px 0 0;padding:16px 16px calc(16px + env(safe-area-inset-bottom));
@@ -1310,12 +1310,14 @@ async function initPastos(){
 // lista de potreros de la finca + dónde está cada lote (se guarda para ver sin señal)
 async function psLoadData(){
   if (navigator.onLine){
-    const [st, lt] = await Promise.all([
+    const [st, lt, fl] = await Promise.all([
       sb.from("paddock_status").select("*").eq("farm_id", psFarm),
       sb.from("lot_location").select("*").eq("farm_id", psFarm),
+      sb.from("field_lots").select("name,sort,active").eq("farm_id", psFarm).order("sort"),
     ]);
     if (st.error) return st.error;
     jset(`psList:${psFarm}`, st.data || []); jset(`psLots:${psFarm}`, lt.data || []);
+    if (!fl.error) jset(`psField:${psFarm}`, (fl.data || []).filter(x=>x.active!==false).map(x=>x.name));
   }
   psList = jget(`psList:${psFarm}`, []); psLots = jget(`psLots:${psFarm}`, []);
 }
@@ -1339,7 +1341,7 @@ function renderPastos(){
       <span>${r==null ? "—" : r <= 1 ? "ocupado" : r + " d"}</span></button>`; };
   // la productividad está en Reportes → Pastos
   $("psBody").innerHTML = `
-    ${canDo("pastos_registrar") ? `<div class="addbar"><button data-psnew="labor">＋ Labor</button><button data-psnew="aforo">＋ Aforo</button><button data-psnew="rain">＋ Lluvia</button></div>` : ""}
+    ${canDo("pastos_registrar") ? `<div class="addbar"><button data-psnew="move">＋ Mover lote</button><button data-psnew="labor">＋ Labor</button><button data-psnew="aforo">＋ Aforo</button><button data-psnew="rain">＋ Lluvia</button></div>` : ""}
     <div class="rpk" style="margin-bottom:14px"><div><b>${act.length}</b><span>potreros · ${ha.toLocaleString("es-CO", { maximumFractionDigits:1 })} ha</span></div>
       <div><b>${busy}</b><span>ocupados hoy</span></div><div><b>${ready}</b><span>con ≥ ${PS_TARGET} d de descanso</span></div>
       <div><b>${psAvgRest(act)}</b><span>días de descanso promedio</span></div></div>
@@ -1427,7 +1429,7 @@ async function loadPaddock(id){
         <div><b>${cyc.filter(c=>c.start >= y1).length}</b><span>pastoreos en 12 meses</span></div>
         <div><b>${ha && milkYear ? Math.round(milkYear/ha).toLocaleString("es-CO") : "—"}</b><span>litros/ha en 12 meses</span></div>
       </div>
-      ${canDo("pastos_registrar") ? `<div class="addbar" style="margin-top:12px"><button data-psnew="labor" data-pid="${p.id}">＋ Labor</button><button data-psnew="aforo" data-pid="${p.id}">＋ Aforo</button></div>` : ""}
+      ${canDo("pastos_registrar") ? `<div class="addbar" style="margin-top:12px"><button data-psnew="move" data-pid="${p.id}">＋ Entra lote</button><button data-psnew="labor" data-pid="${p.id}">＋ Labor</button><button data-psnew="aforo" data-pid="${p.id}">＋ Aforo</button></div>` : ""}
     </div>
     ${nd.data?.length ? (()=>{ const o = nd.data.map(x=>({ d:x.obs_date, v:+x.ndvi })), lv = o[o.length-1], c = psNdviCls(lv.v);
       return `<div class="card"><b>🛰️ Verdor (satélite)</b>
@@ -1463,7 +1465,10 @@ function renderPsSheet(){
   const sup = jget("hsCat", { supplies:[] }).supplies.filter(x=>PS_SUPPLY.test(x.category||""));
   const opt = (v, t, sel) => `<option value="${esc(v)}" ${sel?"selected":""}>${esc(t)}</option>`;
   const title = { labor:"Registrar labor", move:"Mover lote", aforo:"Aforo", rain:"Lluvia" }[s.kind];
-  const lots = [...new Set(psLots.map(l=>l.grp))].filter(g=>!s.pens.includes(g)).sort();
+  // todos los lotes: los del Reporte de ganadería, los de leche y los que ya han estado en un potrero
+  const field = jget(`psField:${psFarm}`, []);
+  const lots = [...new Set([...field, ...s.pens, ...psLots.map(l=>l.grp)])].filter(Boolean)
+    .sort((a, b)=>(field.indexOf(a) < 0 ? 999 : field.indexOf(a)) - (field.indexOf(b) < 0 ? 999 : field.indexOf(b)) || byNumTxt(a, b));
   let body = `<label>Fecha</label><input type="date" id="psDate" value="${s.date}" max="${today()}">`;
   if (s.kind==="labor") body += `<label>Labor</label><div class="chips">${PS_ACTS.map(a=>`<button class="${s.act===a?"on":""}" data-psact="${a}">${a}</button>`).join("")}</div>
     <label>Potreros</label>${psPadPicker(true)}
@@ -1477,7 +1482,7 @@ function renderPsSheet(){
     <input id="psGrp" value="${esc(lots.includes(s.grp) ? "" : s.grp)}" autocapitalize="characters" placeholder="Otro lote" style="margin-top:6px">
     <label>Potrero al que entra</label>${psPadPicker(false)}
     <div class="grid4"><div><span># animales</span><input id="psAnim" inputmode="numeric" value="${esc(s.animals)}"></div><div><span>Aforo (kg/m²)</span><input id="psAfo" inputmode="decimal" value="${esc(s.aforo)}"></div></div>
-    <div class="sub" style="margin-top:6px">Sale solo del potrero donde estaba. Los lotes de leche se mueven desde Leche diaria.</div>`;
+    <div class="sub" style="margin-top:6px">El lote sale solo del potrero donde estaba y queda en este hasta que otro registro (Pastos, Reporte de ganadería o Leche diaria) lo mueva.</div>`;
   if (s.kind==="aforo") body += `<label>Potrero</label>${psPadPicker(false)}<label>Aforo (kg de forraje verde por m²)</label><input id="psVal" inputmode="decimal" value="${esc(s.value)}">`;
   if (s.kind==="rain") body += `<label>Lluvia (mm)</label><input id="psMm" inputmode="decimal" value="${esc(s.mm)}">`;
   body += s.kind!=="rain" ? `<label>Nota (opcional)</label><input id="psNote" value="${esc(s.note)}">` : "";
