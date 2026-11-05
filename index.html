@@ -1412,7 +1412,11 @@ async function loadPaddock(id){
   const avg = (arr, k) => arr.length ? Math.round(arr.reduce((a,c)=>a + c[k], 0)/arr.length) : "—";
   const ha = (+p.area_m2||0)/10000, milkYear = cyc.filter(c=>c.start >= y1).reduce((a,c)=>a + c.milk, 0);
   const aforos = [...(oc.data||[]).filter(r=>r.aforo>0).map(r=>({ d:r.entry_date, v:r.aforo })), ...works.filter(w=>w.activity==="AFORO" && w.value>0).map(w=>({ d:w.work_date, v:w.value }))].sort((a,b)=>b.d.localeCompare(a.d));
-  const rest = p.occupied ? 0 : last ? Math.max(1, days(last.end, t0)) : null;
+  const rest = (oc.data || []).some(r=>r.current) ? 0 : last ? Math.max(1, days(last.end, t0)) : null;   // ocupado hoy según Supabase
+  // animales que hay HOY: suma de todos los lotes que están en el potrero (el último registro de cada lote)
+  const nowBy = {};
+  (oc.data || []).filter(r=>r.current).forEach(r=>{ const x = nowBy[r.grp]; if (!x || r.entry_date > x.entry_date || (r.entry_date===x.entry_date && (+r.animals||0) > (+x.animals||0))) nowBy[r.grp] = r; });
+  const nowLots = Object.values(nowBy), nowHeads = nowLots.reduce((a, r)=>a + (+r.animals || 0), 0);
   // historia: ciclos de pastoreo + labores (las del mismo día y labor se juntan), por año
   const ev = [
     ...cyc.map(c=>({ d:c.start, kind:"PASTOREO", html:`<b>${c.lots.map(esc).join(" + ")}</b> · ${c.occ} d${c.animals ? ` · ${c.animals} animales` : ""}${c.milk ? ` · ${Math.round(c.milk).toLocaleString("es-CO")} L` : ""}${c.aforo ? ` · aforo ${c.aforo}` : ""}${c.rest!=null ? `<span class="sub"> · descansó ${c.rest} d</span>` : ""}${c.end!==c.start ? `<span class="sub"> · hasta ${fmt(c.end)}</span>` : ""}${c.pids.filter(x=>label[x]).map(x=>` <span class="tag">${esc(label[x])}</span>`).join("")}` })),
@@ -1431,6 +1435,7 @@ async function loadPaddock(id){
       ${into ? `<div class="warn">Se unió a <button class="lnk" data-ps="${into.id}">${esc(into.predio)} ${esc(into.number)}</button> el ${fmt(p.merged_on)}</div>` : ""}
       <div class="rpk" style="margin-top:12px">
         <div><b>${rest==null ? "—" : rest === 0 ? "Ocupado" : rest + " d"}</b><span>${rest==null || rest === 0 ? (last ? esc(last.lots.join(" + ")) : "sin pastoreos") : "de descanso (salió " + fmt(last.end) + ")"}</span></div>
+        ${rest === 0 && nowLots.length ? `<div><b>${nowHeads || "—"}</b><span>animales hoy${nowLots.length > 1 ? " (" + nowLots.map(r=>esc(r.grp) + (r.animals ? " " + r.animals : "")).join(" + ") + ")" : ""}</span></div>` : ""}
         <div><b>${avg(recent, "rot")}</b><span>días de rotación (prom. 12 m)</span></div>
         <div><b>${avg(cyc.filter(c=>c.start >= y1), "occ")}</b><span>días de ocupación (prom.)</span></div>
         <div><b>${aforos[0] ? aforos[0].v : "—"}</b><span>${aforos[0] ? "último aforo · " + fmt(aforos[0].d) : "sin aforo"}</span></div>
