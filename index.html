@@ -3525,12 +3525,12 @@ async function lsCheckPdf(mode){
       }));
       if (i + PER*3 >= sh.rows.length){
         doc.setTextColor(31, 56, 100); doc.setFont("helvetica", "bold"); doc.setFontSize(16);
-        doc.text(`${sh.nC} Chequeo · ${sh.nL} Lacto`, 210 - M, M + 11 + per*RH + 10, { align:"right" });
+        // fincas sin lactotropina (p. ej. clientes): solo el total del chequeo
+        doc.text((lsData?.lacto || []).length ? `${sh.nC} Chequeo · ${sh.nL} Lacto` : `${sh.nC} Chequeo`, 210 - M, M + 11 + per*RH + 10, { align:"right" });
       }
     }
   });
-  if (!(lsData?.lacto || []).length){ doc.setPage(1); doc.setTextColor(120); doc.setFont("helvetica", "normal"); doc.setFontSize(7);
-    doc.text("Sin listado de lactotropina en Mykau (corre IMPORTAR_LACTOTROPINA.bat).", M, 297 - 4); }
+  // sin listado de lacto no se avisa nada: el PDF sale solo con las vacas del chequeo
   const name = `Chequeo ${s.ckDate}${s.pen ? " " + (LS_PEN_NAME[s.pen] || s.pen) : ""}.pdf`;
   const file = new File([doc.output("blob")], name, { type:"application/pdf" });
   // enviar: el menú del celular (Gmail, correo, WhatsApp…) con el PDF adjunto
