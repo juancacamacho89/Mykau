@@ -983,6 +983,7 @@ function renderCow(d){
     ${!canSee("vacas_repro") ? "" : segs.length ? segs.slice().reverse().map((s,i)=>lacHtml(s, i===0, kids, bulls)).join("") : `<div class="empty">Sin eventos desde 2020</div>`}
   </div>` : ""}
 
+  <div id="cowPlans"></div>
   ${canSee("mastitis_historial") ? mastHtml(d.mast||[], c.id) : ""}
 
   ${kids.length ? `<div class="card"><b>Crías (${kids.length})</b><div class="list">${kids.map(k=>`<button class="chip" data-cow="${esc(k.id)}">${esc(k.id)} <span class="sub">${fmt(k.birth_date)}${k.active?"":" · "+esc(k.exit_type||"salió")}</span></button>`).join("")}</div></div>` : ""}
@@ -996,6 +997,7 @@ function renderCow(d){
   ${c.active && canDo("vacas_salida") ? `<div style="text-align:center;margin:4px 0 24px"><button class="btn ghost" data-add="exit" style="color:var(--s4);width:auto;padding:10px 16px">🚪 Registrar venta, descarte o muerte</button></div>` : ""}
   `;
   lastCowData = d; milkPick = null; wPick = null; drawCowCharts();
+  cowPlans(d);
   if (rgEditAfter){ const ev = d.events.find(v=>v.id===rgEditAfter); rgEditAfter = null; if (ev) setTimeout(()=>openReg(ev.event_type, ev), 60); }
   if (canSee("salud_ver")) cowWithdrawal(c.id);
 }
@@ -4271,7 +4273,7 @@ async function openDry(ev){
     bg.remove(); toast(`Secado ${ev ? "corregido" : "guardado"} ✓`); loadCow(c.id); loadPending();
   });
 }
-async function openExit(ev){
+async function openExit(ev, preType){
   const d = lastCowData, c = d.cow, x = ev?.details || {};
   const reasons = (ev?.result || "").split("/").filter(Boolean);
   const { data:dx } = await sb.from("cows").select("exit_destination").not("exit_destination", "is", null).gte("exit_date", addDays(today(), -730)).limit(1000);
@@ -4281,7 +4283,7 @@ async function openExit(ev){
     <h3>${ev ? "Editar salida" : "Salida"} · ${esc(c.id)}</h3>
     <div class="warn">La vaca sale del hato al guardar. Si fue un error, se puede editar o borrar mientras esté pendiente.</div>
     <label>Fecha</label><input type="date" name="date" value="${ev?.event_date || today()}" max="${today()}" required>
-    <label>Tipo</label>${seg("type", EXIT_TYPES, ev?.category || "venta")}
+    <label>Tipo</label>${seg("type", EXIT_TYPES, ev?.category || preType || "venta")}
     <label>Motivo (uno o varios)</label><div class="chips">${EXIT_REASONS.map(r=>`<button type="button" class="${reasons.includes(r)?"on":""}" data-xr="${r}">${r}</button>`).join("")}</div>
     <label>Comprador o destino (opcional)</label><input name="dest" list="xDests" value="${esc(x.destination||"")}"><datalist id="xDests">${dests.map(v=>`<option value="${esc(v)}">`).join("")}</datalist>
     <div class="grid4" style="grid-template-columns:1fr 1fr"><div><span>Valor $ (opcional)</span><input name="value" inputmode="numeric" value="${x.value??""}"></div>
@@ -4586,9 +4588,79 @@ async function openCalving(ev){
   });
 }
 
+// ── Eventos programados (hoja de vida): descarte al final de la lactancia, EXREP, secado anticipado… ──
+// Quedan pendientes hasta que se registra el evento (salida, secado, examen reproductivo) y ahí se dan por hechos.
+const PL_TYPES = [["descarte","🚪 Descarte al final de la lactancia"],["exrep","🔬 EXREP"],["secado","🌙 Secar antes (baja producción)"],["otro","📌 Otro"]];
+const PL_DONE_EV = { descarte:["exit"], secado:["dry_off"], exrep:["repro_exam","ultrasound","preg_check"] };
+const plCan = () => isAdmin || canDo("chequeo") || canDo("vacas_secado");
+// ¿ya se hizo? el evento que corresponde, registrado desde que se programó
+const plDoneBy = (pl, evs) => pl.status==="done" ? { event_date:pl.done_date } : (PL_DONE_EV[pl.plan_type] || []).length
+  ? (evs || []).filter(e=>PL_DONE_EV[pl.plan_type].includes(e.event_type) && e.event_date >= pl.created_at.slice(0, 10)).pop() : null;
+async function cowPlans(d){
+  const box = $("cowPlans"); if (!box) return;
+  const c = d.cow, { data, error } = await sb.from("cow_plans").select("*").eq("cow_id", c.id).neq("status", "cancelled").order("due_date");
+  if (error){ box.innerHTML = plCan() ? `<div class="card"><b>📅 Programado</b><div class="sub">Corre SQL/eventos_programados.sql para poder programar eventos.</div></div>` : ""; return; }
+  if (lastCowData?.cow?.id !== c.id) return;
+  const rows = (data || []).map(pl=>({ pl, done: plDoneBy(pl, d.events) }));
+  const pend = rows.filter(x=>!x.done), done = rows.filter(x=>x.done).slice(-3);
+  if (!rows.length && !(plCan() && c.active)) { box.innerHTML = ""; return; }
+  const name = t => (PL_TYPES.find(x=>x[0]===t) || [t, t])[1];
+  const line = ({ pl, done }) => { const late = !done && pl.due_date < today(), soon = !done && !late && days(today(), pl.due_date) <= 7;
+    const act = done ? "" : pl.plan_type==="descarte" && canDo("vacas_salida") ? `<button class="lnk" data-plrun="descarte">Ejecutar: registrar salida</button>`
+      : pl.plan_type==="secado" && canDo("vacas_secado") ? `<button class="lnk" data-plrun="secado">Ejecutar: registrar secado</button>`
+      : pl.plan_type==="exrep" ? `<span class="sub">sale en la lista del Chequeo reproductivo</span>` : "";
+    return `<div data-swdel="cow_plans|${pl.id}" style="padding:6px 0;border-bottom:1px solid var(--line)">
+      <b>${name(pl.plan_type)}</b> · ${done ? `<span class="ok">✓ hecho ${fmt(done.event_date)}</span>` : `<span style="${late ? "color:var(--s4);font-weight:700" : soon ? "color:var(--s2);font-weight:700" : ""}">${late ? "vencido " : ""}${fmt(pl.due_date)}</span>`}
+      ${pl.note ? `<div class="sub">${esc(pl.note)}</div>` : ""}${act ? `<div>${act}</div>` : ""}</div>`; };
+  box.innerHTML = `<div class="card"><b>📅 Programado</b>
+    ${pend.map(line).join("") || `<div class="sub" style="margin-top:4px">Nada programado</div>`}
+    ${done.length ? `<details style="margin-top:6px"><summary class="sub">Hechos (${done.length})</summary>${done.map(line).join("")}</details>` : ""}
+    ${plCan() && c.active ? `<div class="addbar" style="margin-top:8px"><button data-plnew>＋ Programar</button></div>` : ""}</div>`;
+}
+function plOpen(){
+  const d = lastCowData, c = d.cow;
+  // fecha sugerida: secado esperado (si está preñada) para el descarte; 7 días para lo demás
+  const sv = d.events.filter(e=>e.event_type==="service" && (!c.last_calving || e.event_date > c.last_calving)).pop();
+  const dryAt = /(^|\/)PR(\/|$)/.test(c.status || "") && sv ? addDays(sv.event_date, LS_GEST - LS_DRY) : null;
+  const sug = t => t==="descarte" ? (dryAt && dryAt > today() ? dryAt : addDays(today(), 30)) : addDays(today(), 7);
+  const bg = document.createElement("div"); bg.className = "sheet-bg";
+  bg.innerHTML = `<form class="sheet" autocomplete="off">
+    <h3>Programar · vaca ${esc(c.id)}</h3>
+    <label>Qué</label>${seg("pltype", PL_TYPES, "descarte")}
+    <label>Fecha</label><input type="date" name="date" value="${sug("descarte")}" min="${today()}" required>
+    <div class="sub" id="plHint">${dryAt ? `Secado esperado: ${fmt(dryAt)}` : ""}</div>
+    <label>Motivo / nota (opcional)</label><input name="note" maxlength="200" placeholder="ej. baja producción, mastitis crónica">
+    <div class="err" id="regErr"></div>
+    <div class="btns"><button type="button" class="btn ghost" data-close>Cancelar</button><button class="btn">Guardar</button></div>
+  </form>`;
+  document.body.appendChild(bg);
+  const f = bg.querySelector("form");
+  bg.addEventListener("click", e=>{ if (e.target===bg || e.target.closest("[data-close]")) bg.remove(); });
+  f.addEventListener("change", e=>{ if (e.target.name==="pltype"){ f.date.value = sug(e.target.value);
+    if (e.target.value==="secado" && !f.note.value) f.note.value = "Baja producción"; } });
+  f.addEventListener("submit", async e=>{
+    e.preventDefault();
+    const row = { cow_id:c.id, farm_id:c.farm_id, plan_type:f.pltype.value, due_date:f.date.value, note:f.note.value.trim() || null };
+    const { error } = await sb.from("cow_plans").insert(row);
+    if (error) return ($("regErr").textContent = /row-level|permission/i.test(error.message) ? "No tienes permiso para programar en esta finca." : "No se pudo guardar: " + error.message);
+    bg.remove(); toast("Programado ✓"); cowPlans(lastCowData);
+  });
+}
+document.addEventListener("click", e=>{
+  if (e.target.closest("[data-plnew]")) return plOpen();
+  const r = e.target.closest("[data-plrun]");
+  if (r){ if (r.dataset.plrun==="descarte") return openExit(null, "descarte"); if (r.dataset.plrun==="secado") return openDry(); }
+});
+
 // Pastos: borrar una labor o un ingreso de lote (registrado en Pastos) deslizando a la izquierda
 async function psSwDel(v){
   const [tbl, list] = v.split("|"), ids = list.split(",").map(Number);
+  if (tbl==="cow_plans"){
+    if (!confirm("¿Quitar este evento programado?")) return;
+    const { data, error } = await sb.from("cow_plans").delete().in("id", ids).select("id");
+    if (error || !data?.length) return toast("No se pudo quitar" + (error ? ": " + error.message : " (sin permiso)"));
+    toast("Quitado"); return lastCowData && cowPlans(lastCowData);
+  }
   if (tbl==="paddock_works"){
     if (!confirm("¿Borrar esta labor? Los insumos vuelven al inventario.")) return;
     const { error } = await sb.from("paddock_works").delete().in("id", ids);
@@ -5298,7 +5370,10 @@ async function ckDownload(){
       data.forEach(m=>{ if (ids.has(m.cow_id) && (!lc[m.cow_id] || m.test_date >= lc[m.cow_id])) (milk[m.cow_id] ||= []).push([m.test_date, +m.total_kg]); });
       if (data.length < 1000) break;
     }
-    const pack = { at:Date.now(), cows: cows.map(c=>[c.id, c.pen, c.status, c.birth_date, c.last_calving, c.lactation_num, c.sex]), ev, milk };
+    // EXREP programados en la hoja de vida (si ya corrieron SQL/eventos_programados.sql)
+    const pl = await sb.from("cow_plans").select("cow_id,due_date,note,created_at").eq("farm_id", farm).eq("plan_type", "exrep").eq("status", "pending");
+    const plans = (pl.data || []).filter(x=>ids.has(x.cow_id)).map(x=>[x.cow_id, x.due_date, x.note, x.created_at.slice(0, 10)]);
+    const pack = { at:Date.now(), cows: cows.map(c=>[c.id, c.pen, c.status, c.birth_date, c.last_calving, c.lactation_num, c.sex]), ev, milk, plans };
     jset(`ckData:${farm}`, pack); jset("ckLast", { farm });
     toast(`Lista descargada: ${cows.length} vacas`);
   }catch(err){ toast("No se pudo descargar: " + (err.message||err)); }
@@ -5311,7 +5386,7 @@ function ckLoadData(farm){
   const cows = p.cows.map(([id,pen,status,bd,lc,ln,sex])=>({ id, pen, status, bd, lc, ln, sex,
     milk:(p.milk?.[id]||[]).slice().sort((a,b)=>a[0].localeCompare(b[0])) }));
   cows.forEach(c=>{ c.ev = (evBy[c.id]||[]).filter(e=>!c.bd || e.d >= c.bd).sort((a,b)=>a.d.localeCompare(b.d)); });
-  return { at:p.at, cows };
+  return { at:p.at, cows, plans:p.plans || [] };
 }
 
 function ckShow(){
@@ -5327,6 +5402,13 @@ function ckShow(){
 function ckList(){
   const D = $("ckDate").value || today();
   const list = ckData.cows.map(c=>({ c, k:ckClassify(c, c.ev, D) })).filter(x=>x.k);
+  // EXREP programados para esa fecha o antes (si no se le ha hecho examen desde que se programó)
+  (ckData.plans || []).forEach(([id, due, note, from])=>{
+    if (due > D || list.some(x=>x.c.id===id)) return;
+    const c = ckData.cows.find(x=>x.id===id); if (!c) return;
+    if (c.ev.some(e=>["repro_exam","ultrasound","preg_check"].includes(e.t) && e.d >= from)) return;
+    list.push({ c, k:{ cat:"EXREP", prog:true, why:"Programado " + fmt(due) + (note ? " · " + note : "") } });
+  });
   // vacas agregadas a mano que no salían en la lista
   Object.entries(ckRes).forEach(([id, r])=>{ if (!list.some(x=>x.c.id===id)){ const c = ckData.cows.find(x=>x.id===id) || { id, pen:"—", ev:[] }; list.push({ c, k:{ cat:r.cat, extra:true } }); } });
   return list.sort((a,b)=> byNum(a.c.pen||"~", b.c.pen||"~") || byNum(a.c.id, b.c.id));
