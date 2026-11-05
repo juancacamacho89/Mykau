@@ -212,6 +212,9 @@ details.lac td{padding:6px 8px}
 .btn.ghost{background:var(--bg);color:var(--ink);border:1px solid var(--line)}
 .warn{background:#e3b32233;border:1px solid var(--s2);border-radius:10px;padding:8px 10px;font-size:14px;margin-top:6px}
 .tag{display:inline-block;background:var(--s2);color:#1b2430;border-radius:8px;padding:0 6px;font-size:11px;font-weight:700;margin-left:4px;white-space:nowrap}
+[data-swdel]{touch-action:pan-y;transition:transform .15s;user-select:none}
+[data-swdel].swiping{transition:none}
+[data-swdel].swred{background:color-mix(in srgb, var(--s4) 35%, transparent)}
 .del{background:none;border:0;color:var(--s4);font-weight:700;cursor:pointer;padding:0 4px;font-size:13px;text-decoration:underline}
 /* Pastos */
 .psgrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(64px,1fr));gap:6px;margin-top:6px}
@@ -966,7 +969,7 @@ function renderCow(d){
 
   ${weights.length ? `<div class="card"><b>Peso</b>${weights.length >= 3 ? `<div id="weightChart"></div>` : ""}
     <div class="sub">Último: ${weights[weights.length-1].weight_kg} kg el ${fmt(weights[weights.length-1].event_date)}${weights[weights.length-1].body_condition?` · CC ${weights[weights.length-1].body_condition}`:""}</div>
-    ${weights.filter(e=>e.source==="app").map(e=>`<div class="sub">${fmt(e.event_date)} · ${e.weight_kg} kg${pendTag(e)}</div>`).join("")}</div>` : ""}
+    ${weights.filter(e=>e.source==="app" || isMain()).slice(-12).reverse().map(e=>`<div class="sub"${swAttr(e)} style="padding:3px 0">${fmt(e.event_date)} · ${e.weight_kg} kg${e.source==="app" ? pendTag(e) : ""}</div>`).join("")}</div>` : ""}
   ${(d.tx || []).length ? `<div class="card"><b>💉 Salud (${d.tx.length})</b><div class="sub">Tratamientos, vacunas y purgas</div>
     <table style="margin-top:6px;font-size:13px">${d.tx.map(t=>`<tr><td style="white-space:nowrap">${fmt(t.start_date)}</td><td><b>${esc(t.diagnosis || "")}</b>${t.outcome ? ` · ${esc(t.outcome)}` : ""}
       <div class="sub">${(t.treatment_items||[]).map(i=>`${esc(i.supply_code)} ${i.dose ?? ""} ${esc(i.unit||"")}`).join(" · ")}${t.notes ? ` · ${esc(t.notes)}` : ""}${t.prescribed_by ? ` · ${esc(t.prescribed_by)}` : ""}</div></td></tr>`).join("")}</table></div>` : ""}
@@ -994,12 +997,12 @@ function lacHtml(s, open, kids, bulls){
     else det = esc([e.result, e.category].filter(Boolean).join(" · "));
     if (e.comments) det += ` <span class="sub">${esc(e.comments)}</span>`;
     if (e.source==="app") det += pendTag(e); else det += ihDel(e);
-    return `<tr><td>${fmt(e.event_date)}</td><td class="ev">${EV[e.event_type]||esc(e.event_type)}</td><td>${det}</td></tr>`;
+    return `<tr${swAttr(e)}><td>${fmt(e.event_date)}</td><td class="ev">${EV[e.event_type]||esc(e.event_type)}</td><td>${det}</td></tr>`;
   }).join("");
-  const cvRow = cv ? `<tr><td>${fmt(cv.event_date)}</td><td class="ev">Parto</td><td>${esc(cv.category||"")}${cv.bull?` · toro ${bullTxt(cv.bull,bulls)}`:""}
+  const cvRow = cv ? `<tr${swAttr(cv)}><td>${fmt(cv.event_date)}</td><td class="ev">Parto</td><td>${esc(cv.category||"")}${cv.bull?` · toro ${bullTxt(cv.bull,bulls)}`:""}
       ${kid ? ` · cría <button class="lnk" data-cow="${esc(kid.id)}">${esc(kid.id)}</button>` : ""}${cv.source==="app" ? calvingTxt(cv) + pendTag(cv) : ihDel(cv)}</td></tr>` : "";
   return `<details class="lac" ${open?"open":""}><summary><b>${title}</b><div class="sub">${sum}</div></summary>
-    <table>${rows}${cvRow}</table></details>`;
+    <table>${rows}${cvRow}</table>${s.events.some(canDel) || canDel(cv) ? `<div class="sub" style="margin-top:4px">← Desliza un evento a la izquierda para borrarlo</div>` : ""}</details>`;
 }
 
 // ── Mastitis: CMT por cuarto (AI AD / PI PD) ────────────────
@@ -3949,7 +3952,7 @@ const appOutTxt = e => e.event_type==="dry_off" ? `Secado el ${fmt(e.event_date)
   : `${{venta:"Venta",descarte:"Descarte",muerte:"Muerte"}[e.category] || "Salida"} el ${fmt(e.event_date)}${e.result ? " · " + esc(e.result) : ""}${e.details?.destination ? " · " + esc(e.details.destination) : ""}${e.details?.value ? " · $" + (+e.details.value).toLocaleString("es-CO") : ""}${e.details?.weight ? " · " + e.details.weight + " kg" : ""}`;
 // en la hoja de vida: secados y salidas registrados en la app que siguen pendientes (con editar / borrar)
 const appOutBox = events => { const xs = events.filter(e=>e.source==="app" && ["dry_off","exit"].includes(e.event_type));
-  return xs.length ? `<div class="calf-note" style="margin-top:8px">${xs.map(e=>`${e.event_type==="exit" ? "🚪" : "🌙"} ${appOutTxt(e)}${pendTag(e)}`).join("<br>")}</div>` : ""; };
+  return xs.length ? `<div class="calf-note" style="margin-top:8px">${xs.map(e=>`<div${swAttr(e)}>${e.event_type==="exit" ? "🚪" : "🌙"} ${appOutTxt(e)}${pendTag(e)}</div>`).join("")}</div>` : ""; };
 async function openDry(ev){
   const d = lastCowData, c = d.cow;
   const { data:fl } = await sb.from("farm_lists").select("value").eq("farm_id", c.farm_id).eq("kind", "group").order("sort");
@@ -4049,9 +4052,12 @@ async function openExit(ev){
 const svTank = (pen, tanks) => (tanks||[]).find(t=>t.code===String(pen||"").toUpperCase().replace(/\s/g, ""))?.code || "PRINCIPAL";
 const pendTag = e => (e.sync_status && e.sync_status!=="pending" ? ` <span class="tag" style="background:var(--s0);color:#fff">✓ en Interherd</span>` : ` <span class="tag">⏳ falta en Interherd</span>`)
   + `${(e.sync_status==="pending" || !e.sync_status) && (e.created_by===me || isAdmin) || isMain() ? `${["calving","service","heat","dry_off","exit","weight"].includes(e.event_type)
-  ? ` <button class="del" data-edit="${e.id}" style="color:var(--accent)">editar</button>` : ""} <button class="del" data-del="${e.id}">borrar</button>` : ""}`;
+  ? ` <button class="del" data-edit="${e.id}" style="color:var(--accent)">editar</button>` : ""}` : ""}`;
 // registros que llegaron de Interherd: solo el administrador principal los puede borrar (quedan en la papelera)
-const ihDel = e => isMain() && e.id ? ` <button class="del" data-del="${e.id}">borrar</button>` : "";
+const ihDel = e => "";
+// ¿se puede borrar? (deslizando a la izquierda): lo propio pendiente, o todo para el administrador principal
+const canDel = e => !!e?.id && (isMain() || (e.source==="app" && (!e.sync_status || e.sync_status==="pending") && (e.created_by===me || isAdmin)));
+const swAttr = e => canDel(e) ? ` data-swdel="${e.id}"` : "";
 // columnas que se pueden corregir en un registro pendiente
 const EDITABLE = ["event_date","result","bull","operator","category","comments","details"];
 const onlyEditable = row => Object.fromEntries(Object.entries(row).filter(([k])=>EDITABLE.includes(k)));
@@ -4314,11 +4320,35 @@ async function openCalving(ev){
   });
 }
 
+// deslizar para borrar (dedo o mouse)
+let swCur = null;
+document.addEventListener("pointerdown", e=>{
+  const r = e.target.closest("[data-swdel]"); if (!r || e.target.closest("button,a,input,select")) return;
+  swCur = { r, x:e.clientX, y:e.clientY, dx:0, on:false };
+});
+document.addEventListener("pointermove", e=>{
+  if (!swCur) return;
+  const dx = e.clientX - swCur.x, dy = e.clientY - swCur.y;
+  if (!swCur.on){ if (Math.abs(dy) > 12 && Math.abs(dy) > Math.abs(dx)) { swCur = null; return; } if (dx > -12) return; swCur.on = true; swCur.r.classList.add("swiping"); }
+  swCur.dx = Math.max(-140, Math.min(0, dx));
+  swCur.r.style.transform = `translateX(${swCur.dx}px)`;
+  swCur.r.classList.toggle("swred", swCur.dx < -80);
+});
+const swEnd = async ()=>{
+  if (!swCur) return; const { r, dx, on } = swCur; swCur = null;
+  r.classList.remove("swiping"); r.style.transform = "";
+  if (on && dx < -80){ await delReg(+r.dataset.swdel); }
+  r.classList.remove("swred");
+};
+document.addEventListener("pointerup", swEnd); document.addEventListener("pointercancel", swEnd);
 async function delReg(id){
-  const { data:it } = await sb.from("cow_events").select("sync_status").eq("id", id).maybeSingle();
+  const { data:it } = await sb.from("cow_events").select("cow_id,event_type,event_date,sync_status").eq("id", id).maybeSingle();
+  const what = it ? `${EV[it.event_type] || it.event_type} del ${fmt(it.event_date)} (vaca ${it.cow_id})` : "este registro";
   if (!confirm(it && it.sync_status && it.sync_status!=="pending"
-      ? "¿Borrar este registro? Ya estaba en Interherd: bórralo también allá. (Queda en la papelera de Mykau.)"
-      : "¿Borrar este registro? (aún no estaba en Interherd)")) return;
+      ? `¿Borrar ${what}?
+Ya estaba en Interherd: bórralo también allá. Queda en la papelera de Mykau.`
+      : `¿Borrar ${what}?
+Aún no estaba en Interherd.`)) return;
   const { data, error } = await sb.from("cow_events").delete().eq("id", id).select("id");
   if (error || !data?.length) { alert("No se pudo borrar" + (error ? ": "+error.message : " (sin permiso)")); return; }
   toast("Registro borrado"); if (currentCow) loadCow(currentCow); loadPending();

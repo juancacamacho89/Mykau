@@ -1,6 +1,6 @@
 // Guarda la "cáscara" de la app para que abra rápido.
 // Los datos de Supabase nunca se guardan aquí: siempre se piden en vivo.
-const CACHE = "mykau-v68";
+const CACHE = "mykau-v69";
 const SHELL = ["./", "index.html", "config.js", "manifest.webmanifest", "icon-180.png", "icon-192.png", "logo.png",
   "https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/dist/umd/supabase.js"];
 
@@ -17,7 +17,8 @@ self.addEventListener("fetch", e => {
   if (e.request.method !== "GET" || url.hostname.endsWith("supabase.co") || url.hostname.endsWith("arcgisonline.com")) return;
   // Primero la red (para recibir actualizaciones); si no hay señal, la copia guardada
   e.respondWith(
-    fetch(e.request)
+    // no-cache: pregunta siempre al servidor si hay versión nueva (sin quedarse con la copia vieja del navegador)
+    fetch(e.request, url.origin === location.origin ? { cache: "no-cache" } : {})
       .then(r => { const copy = r.clone(); caches.open(CACHE).then(c => c.put(e.request, copy)); return r; })
       .catch(() => caches.match(e.request))
   );
