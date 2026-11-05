@@ -3084,6 +3084,8 @@ function rcCompute(){
   });
 }
 // bultos que pide la ración guardada (la vigente de cada vaca en ordeño) vs los anotados en la Leche diaria
+// solo lo ven el administrador principal y María (perfil "Maria")
+const rcBagsSee = () => isMain() || myProfile==="Maria";
 function rcBagsCmp(pen, xs){
   const kg = xs.reduce((a, x)=>a + (x.prev ?? 0), 0), need = Math.round(kg/40*2)/2;
   const dm = (rcData.tank || []).filter(t=>t.pen===pen && t.concentrate_bags!=null).sort((a, b)=>a.rec_date < b.rec_date ? -1 : 1).pop();
@@ -3112,7 +3114,7 @@ function renderRacion(){
     return `<div><b>${esc(LS_PEN_NAME[p] || p)}</b><span>${xs.length} vacas · ${sum(xs)} kg · ${bultos(sum(xs))} bultos · ${xs.filter(x=>x.cambio).length} cambios<br>
       pesaje ${lastW ? fmt(lastW) : "—"}${ti ? ` · ajuste ×${ti.f.toFixed(3)} (${Math.round(ti.tank).toLocaleString("es-CO")} L tanque / ${Math.round(ti.sum).toLocaleString("es-CO")} pesados)`
         : lastW && xs.some(x=>x.fecha===lastW && x.adj) ? " · ya ajustada (Excel)" : lastW ? " · sin total del tanque ese día: sin ajustar" : ""}
-      ${rcBagsCmp(p, xs)}</span></div>`; }).join("");
+      ${rcBagsSee() ? rcBagsCmp(p, xs) : ""}</span></div>`; }).join("");
   const sel = v => `<select data-rck style="width:auto;padding:4px 6px;font-size:15px">${[0,2,4,6,8,10,12].map(k=>`<option ${k===v ? "selected" : ""}>${k}</option>`).join("")}</select>`;
   $("rcBody").innerHTML = `<div class="card">${chips(farms.map(f=>[String(f.id), esc(farmLabel(f))]), String(s.farm), "data-rcf")}
       ${chips([["", "Todos los lotes"], ...pens.map(p=>[p, esc(p)])], s.pen, "data-rcp")}
