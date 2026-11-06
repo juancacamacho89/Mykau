@@ -1921,13 +1921,17 @@ async function renderMap(box){
 // ═══════════════════════ REGISTROS (todo lo que se registra en la app y quién) ═══════════════
 // Vacas (servicios, celos, partos, chequeos, traslados) y pesajes van a Interherd: pendientes hasta que
 // el importador los encuentra. Leche diaria, salud y pastos solo viven en la app.
-const RG_KINDS = [["","Todo"],["vacas","Vacas"],["pesaje","Pesaje"],["diaria","Leche diaria"],["salud","Salud"],["pastos","Pastos"]];
+// categorías (y adentro, los tipos como subcategoría)
+const RG_CATS = [["","Todo"],["repro","🐄 Reproducción"],["prod","🥛 Producción"],["pastos","🌾 Pastos"],["otros","🩺 Salud y otros"]];
+const RG_REPRO_EV = ["service","heat","calving","abortion","embryo_loss","repro_exam","ultrasound","preg_check","dry_off"];
+const rgCat = r => r.kind==="vacas" ? (RG_REPRO_EV.includes(r.etype) ? "repro" : r.etype==="weight" ? "prod" : "otros")
+  : ({ pesaje:"prod", diaria:"prod", ronda:"prod", racion:"prod", semen:"repro", plan:"repro", pastos:"pastos" })[r.kind] || "otros";
 const RG_HERD_FARM = { RC:1, ISLA:7 };
 let rgReady = false, rgNames = null, rgState = null;
 async function initRegistros(){
   if (!rgReady){
     rgReady = true;
-    rgState = { farm:"", kind:"", status: canSee("registros_todos") ? "pend" : "all", user:"", from:addDays(today(), -30), to:today() };
+    rgState = { farm:"", cat:"", status:"all", user:"", from:addDays(today(), -30), to:today() };
     $("rgFilters").addEventListener("change", e=>{
       const t = e.target;
       if (t.name==="rgSt") rgState.status = t.value;
@@ -1937,7 +1941,7 @@ async function initRegistros(){
       if (t.id==="rgTo") rgState.to = t.value || rgState.to;
       renderRgFilters(); loadRegistros();
     });
-    $("rgFilters").addEventListener("click", e=>{ const b = e.target.closest("[data-rgk]"); if (b){ rgState.kind = b.dataset.rgk; renderRgFilters(); loadRegistros(); } });
+    $("rgFilters").addEventListener("click", e=>{ const b = e.target.closest("[data-rgk]"); if (b){ rgState.cat = b.dataset.rgk; rgPick = { title:"", who:"" }; renderRgFilters(); if (rgLast) rgDraw(); } });
     $("rgBody").addEventListener("click", async e=>{
       const t = e.target, dl = t.closest("[data-rgdel]"), ed = t.closest("[data-rged]"), dm = t.closest("[data-rgdm]");
       if (dl){
@@ -1964,9 +1968,9 @@ async function initRegistros(){
 }
 function renderRgFilters(){
   const s = rgState, users = Object.entries(rgNames || {}).sort((a,b)=>a[1].localeCompare(b[1]));
-  $("rgFilters").innerHTML = `${seg("rgSt", [["pend","Pendientes de Interherd"],["all","Todo lo registrado"]], s.status)}
+  $("rgFilters").innerHTML = `${seg("rgSt", [["all","Todo lo registrado"],["pend","Pendientes de Interherd"]], s.status)}
     <div style="margin-top:8px">${seg("rgFa", [["","Ambas fincas"],["1","El Recodo"],["7","La Isla"]], s.farm)}</div>
-    ${s.status==="all" ? `<div class="chips sm ckpan" style="padding:0;margin-top:6px"><div class="chips sm">${RG_KINDS.map(([k,t])=>`<button class="${s.kind===k?"on":""}" data-rgk="${k}">${t}</button>`).join("")}</div></div>
+    ${s.status==="all" ? `<div class="chips sm ckpan" style="padding:0;margin-top:6px"><div class="chips sm">${RG_CATS.map(([k,t])=>`<button class="${s.cat===k?"on":""}" data-rgk="${k}">${t}</button>`).join("")}</div></div>
       <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:6px">
         <div><div class="sub">Registrado desde</div><input type="date" id="rgFrom" value="${s.from}" max="${today()}" style="min-width:0"></div>
         <div><div class="sub">Hasta</div><input type="date" id="rgTo" value="${s.to}" max="${today()}" style="min-width:0"></div></div>` : ""}
@@ -1990,11 +1994,12 @@ const RG_DEL_MSG = { cow_events:"¿Borrar este registro de la vaca? Si ya estaba
   grazing:"¿Borrar este movimiento de lote?", rainfall:"¿Borrar este registro de lluvia?" };
 let rgEditAfter = null;   // al abrir la hoja de vida desde Registros, abre de una vez el formulario para editar
 const rgWho = id => id ? (rgNames?.[id] || "Usuario " + String(id).slice(0, 4)) : "—";
-const rgTime = t => t ? new Date(t).toLocaleString("es-CO", { day:"2-digit", month:"2-digit", hour:"2-digit", minute:"2-digit" }) : "";
+const rgTime = t => !t ? "" : String(t).length===10 ? fmt(t)   // solo fecha (lluvia, ración): sin hora
+  : new Date(t).toLocaleString("es-CO", { day:"2-digit", month:"2-digit", hour:"2-digit", minute:"2-digit" });
 async function loadRegistros(){
   $("rgBody").innerHTML = `<div class="card"><div class="empty">Cargando…</div></div>`;
   if (!navigator.onLine){ $("rgBody").innerHTML = `<div class="card"><div class="empty">Los registros necesitan señal.</div></div>`; return; }
-  const s = rgState, pend = s.status==="pend", want = k => pend ? ["vacas","pesaje"].includes(k) : !s.kind || s.kind===k;
+  const s = rgState, pend = s.status==="pend", want = k => pend ? ["vacas","pesaje"].includes(k) : true;   // la categoría se filtra al dibujar
   const t1 = addDays(s.to, 1), rows = [], notes = [];
   const all = canSee("registros_todos"), who = all ? s.user : me;   // sin "ver todos": solo lo que registró esta persona
   const add = r => { if ((!s.farm || +s.farm===r.farm) && (!who || who===r.who)) rows.push(r); };
@@ -2042,7 +2047,7 @@ async function loadRegistros(){
     const { data } = await sb.from("treatments_cow").select("id,farm_id,cow_id,start_date,diagnosis,prescribed_by,created_by,created_at,treatment_items(supply_code,dose,unit)")
       .gte("created_at", s.from).lt("created_at", t1).limit(2000);
     (data||[]).forEach(t=>add({ kind:"salud", icon:"🩺", when:t.created_at, date:t.start_date, farm:t.farm_id, who:t.created_by, cow:t.cow_id, id:t.id,
-      title:"Tratamiento · " + (t.diagnosis||""), detail:(t.treatment_items||[]).map(i=>`${i.supply_code} ${i.dose??""} ${i.unit||""}`).join(", ") + (t.prescribed_by ? " · formuló " + t.prescribed_by : ""), status:"app" }));
+      title:"Tratamiento", detail:(t.diagnosis ? t.diagnosis + " · " : "") + (t.treatment_items||[]).map(i=>`${i.supply_code} ${i.dose??""} ${i.unit||""}`).join(", ") + (t.prescribed_by ? " · formuló " + t.prescribed_by : ""), status:"app" }));
   })());
   if (want("pastos")) jobs.push((async()=>{
     const [w, g, r] = await Promise.all([
@@ -2056,17 +2061,49 @@ async function loadRegistros(){
     Object.values(wk).forEach(x=>add({ kind:"pastos", icon:"🌾", when:x.created_at, date:x.work_date, farm:x.farm_id, who:x.created_by, tbl:"paddock_works", id:x.ids.join(","),
       title:x.activity, detail:[[...new Set(x.pads)].join(", "), x.product, x.value!=null ? x.value : ""].filter(Boolean).join(" · "), status:"app" }));
     (g.data||[]).forEach(x=>add({ kind:"pastos", icon:"🌾", when:x.created_at, date:x.entry_date, farm:x.farm_id, who:x.created_by, tbl:"grazing", id:String(x.id),
-      title:"Movió lote " + x.grp, detail:pn(x.paddocks) + (x.animals ? ` · ${x.animals} animales` : ""), status:"app" }));
+      title:"Movió lote", detail:x.grp + " → " + pn(x.paddocks) + (x.animals ? ` · ${x.animals} animales` : ""), status:"app" }));
     (r.data||[]).forEach(x=>add({ kind:"pastos", icon:"🌧️", when:x.rain_date, date:x.rain_date, farm:x.farm_id, who:x.created_by, tbl:"rainfall", id:String(x.id), title:"Lluvia", detail:x.mm + " mm", status:"app" }));
   })());
+  if (want("otros")) jobs.push((async()=>{
+    const since = s.from, q = (t, sel) => sb.from(t).select(sel).gte("created_at", since).lt("created_at", t1).limit(2000);
+    const [lr, sm, pl, se, us, cc] = await Promise.all([
+      q("lot_report", "farm_id,report_date,grp,created_by,created_at"),
+      q("semen_moves", "id,move_date,kind,bull_code,straws,from_tank,to_tank,notes,created_by,created_at").neq("kind", "servicio"),
+      q("cow_plans", "id,cow_id,farm_id,plan_type,due_date,note,status,created_by,created_at"),
+      q("supply_entries", "id,entry_date,farm_id,kind,supply_code,qty,notes,created_by,created_at,supplies(name,unit)").eq("source", "app"),
+      q("ultrasound_exams", "id,farm_id,exam_date,score,animal_id,created_by,created_at,animals(calf_id)").eq("source", "app"),
+      sb.from("cow_concentrate").select("rec_date,cows!inner(farm_id)").eq("source", "app").gte("rec_date", since).lte("rec_date", s.to).limit(5000),
+    ]);
+    // reporte de ganadería: una ronda (finca, día, persona) = un registro
+    const rd = {}; (lr.data || []).forEach(x=>{ const k = x.farm_id + "|" + x.report_date + "|" + x.created_by; (rd[k] ||= { ...x, grps:[] }).grps.push(x.grp); });
+    Object.values(rd).forEach(x=>add({ kind:"ronda", icon:"📝", when:x.created_at, date:x.report_date, farm:x.farm_id, who:x.created_by,
+      title:"Reporte de ganadería", detail:`${x.grps.length} lote${x.grps.length===1 ? "" : "s"}: ${x.grps.join(", ")}`, status:"app" }));
+    const SK = { entrada:"Entrada de semen", traslado:"Traslado de semen", ajuste:"Ajuste de semen" };
+    (sm.data || []).forEach(x=>add({ kind:"semen", icon:"🧪", when:x.created_at, date:x.move_date, farm:null, who:x.created_by,
+      title:SK[x.kind] || "Semen", detail:`Toro ${x.bull_code} · ${x.straws} pajillas${x.from_tank ? " · " + x.from_tank : ""}${x.to_tank ? " → " + x.to_tank : ""}`, status:"app" }));
+    (pl.data || []).forEach(x=>add({ kind:"plan", icon:"📅", when:x.created_at, date:x.due_date, farm:x.farm_id, who:x.created_by, cow:x.cow_id,
+      title:"Programado · " + (PL_NAMES[x.plan_type] || x.plan_type).replace(/^\S+\s/, ""), detail:[x.note, x.status==="done" ? "hecho" : ""].filter(Boolean).join(" · "), status:"app" }));
+    const IK = { entrada:"Inventario · entrada", ajuste:"Inventario · conteo", salida:"Inventario · salida", traslado:"Inventario · traslado" };
+    const ivg = {}; (se.data || []).forEach(x=>{ if (x.kind==="traslado" && +x.qty > 0) return;   // el traslado se muestra una vez (la salida)
+      const k = x.created_at.slice(0, 16) + "|" + x.farm_id + "|" + x.kind; (ivg[k] ||= { ...x, items:[] }).items.push(`${x.supplies?.name || x.supply_code} ${Math.abs(+x.qty).toLocaleString("es-CO")} ${x.supplies?.unit || ""}`.trim()); });
+    Object.values(ivg).forEach(x=>add({ kind:"inv", icon:"📦", when:x.created_at, date:x.entry_date, farm:x.farm_id, who:x.created_by,
+      title:IK[x.kind] || "Inventario", detail:x.items.join(", ") + (x.kind==="traslado" && x.notes ? " · " + x.notes : ""), status:"app" }));
+    (us.data || []).forEach(x=>add({ kind:"terneras", icon:"🫁", when:x.created_at, date:x.exam_date, farm:x.farm_id, who:x.created_by, cow:x.animals?.calf_id,
+      title:"Ecografía de ternera", detail:`Score ${x.score ?? "—"}`, status:"app" }));
+    const rc = {}; (cc.data || []).forEach(x=>{ const k = x.rec_date + "|" + x.cows.farm_id; rc[k] = (rc[k] || 0) + 1; });
+    Object.entries(rc).forEach(([k, n])=>{ const [d, f] = k.split("|");
+      add({ kind:"racion", icon:"🌾", when:d, date:d, farm:+f, who:null, title:"Ración de concentrado", detail:`${n} vacas`, status:"app" }); });
+  })());
   await Promise.all(jobs);
+  rows.forEach(r=>{ r.cat = rgCat(r); });
   rows.sort((a,b)=>String(b.when).localeCompare(String(a.when)));
   rgLast = { rows, notes, pend }; rgPick = { title:"", who:"" }; rgDraw();
 }
 // lista de Registros con los filtros de los chips: tocar "Servicio: 14" deja solo los servicios; tocar de nuevo lo quita
 let rgLast = null, rgPick = { title:"", who:"" };
 function rgDraw(){
-  const { rows:all, notes, pend } = rgLast, s = rgState;
+  const { rows:all0, notes, pend } = rgLast, s = rgState;
+  const all = pend || !s.cat ? all0 : all0.filter(r=>r.cat===s.cat);
   const rows = all.filter(r=>(!rgPick.title || r.title===rgPick.title) && (!rgPick.who || rgWho(r.who)===rgPick.who));
   const pendRows = rows.filter(r=>r.status==="pendiente");
   const byType = (pend ? all : all.filter(r=>!rgPick.who || rgWho(r.who)===rgPick.who)).reduce((g,r)=>{ g[r.title] = (g[r.title]||0) + 1; return g; }, {});
@@ -2079,7 +2116,7 @@ function rgDraw(){
       <div><b>${pendRows.length}</b><span>pendientes de Interherd</span></div>
       <div><b>${Object.keys(byWho).length}</b><span>personas</span></div>
       <div><b>${rows.filter(r=>r.status==="en Interherd").length}</b><span>ya en Interherd</span></div></div>
-    ${Object.keys(byType).length ? `<div class="card"><b>${pend ? "⏳ Falta pasar a Interherd" : "Por tipo"}</b> <span class="sub">· toca para filtrar</span>
+    ${Object.keys(byType).length ? `<div class="card"><b>${pend ? "⏳ Falta pasar a Interherd" : s.cat ? (RG_CATS.find(c=>c[0]===s.cat)[1] + " · subcategorías") : "Por tipo"}</b> <span class="sub">· toca para filtrar</span>
       <div class="list">${Object.entries(byType).sort((a,b)=>b[1]-a[1]).map(([t,n])=>`<button class="chip ${rgPick.title===t ? "on" : ""}" data-rgt="${esc(t)}">${esc(t)}: <b>${n}</b></button>`).join("")}</div></div>` : ""}
     ${!canSee("registros_todos") ? "" : `<div class="card"><b>👤 Quién registró</b><div class="list">${Object.entries(byWho).sort((a,b)=>b[1]-a[1]).map(([t,n])=>`<button class="chip ${rgPick.who===t ? "on" : ""}" data-rgw="${esc(t)}">${esc(t)}: <b>${n}</b></button>`).join("") || `<span class="sub">—</span>`}</div></div>`}
     <div class="card"><b>Registros</b>${rgPick.title || rgPick.who ? ` <span class="sub">· ${[rgPick.title, rgPick.who].filter(Boolean).map(esc).join(" · ")} (${rows.length}) · <button class="lnk" data-rgclear="1">quitar filtro</button></span>` : ""}
