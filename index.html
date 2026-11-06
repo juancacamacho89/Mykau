@@ -301,7 +301,7 @@ details.lac td{padding:6px 8px}
         </svg></span><b>Pesaje de leche</b><i class="badge hidden" id="badgeLeche"></i></a>
         <a class="appicon hidden" href="#pesot" data-perm="pesot_registrar"><span class="ic" style="--g1:#f6c48a;--g2:#c47a2c">⚖️</span><b>Pesaje terneras</b><i class="badge hidden" id="badgeTn"></i></a>
         <a class="appicon" href="#diaria" data-perm="diaria_registrar diaria_totales diaria_resumen"><span class="ic" style="--g1:#ffd36b;--g2:#e08a00">🥛</span><b>Leche diaria</b><i class="badge hidden" id="badgeDiaria"></i></a>
-        <a class="appicon hidden" href="#chequeo" data-perm="chequeo"><span class="ic" style="--g1:#6fd3f2;--g2:#1b7fa8"><svg viewBox="0 0 48 48" aria-hidden="true">
+        <a class="appicon hidden" href="#chequeo" data-perm="chequeo chequeo_tratamientos"><span class="ic" style="--g1:#6fd3f2;--g2:#1b7fa8"><svg viewBox="0 0 48 48" aria-hidden="true">
           <path d="M7 13C2 13 2 5 7 3" fill="none" stroke="#fff" stroke-width="2.6" stroke-linecap="round"/>
           <rect x="5" y="9" width="39" height="9" rx="4.5" fill="#fff"/><rect x="16" y="15.5" width="22" height="3.5" rx="1.5" fill="#bdebd9"/>
           <path d="M15 25q12 4 24 0" fill="none" stroke="#fff" stroke-width="3" stroke-linecap="round"/>
@@ -645,7 +645,7 @@ const PERM_FALLBACK = { vacas_repro:"vacas_ver", calidad_ver:"reporte_editar",
   pastos_ver:"reporte_editar", pastos_registrar:"reporte_editar", produccion_ver:"reporte_editar", registros_todos:"reporte_editar", pesot_registrar:"vacas_parto",
   vacas_secado:"vacas_parto", vacas_salida:"vacas_parto", terneras_registrar:"reporte_editar", listas_ver:"vacas_repro", generador_ver:"listas_ver",
   toros_ver:"reporte_editar", toros_registrar:"reporte_editar", racion_ver:"reporte_editar", racion_registrar:"reporte_editar",
-  ronda_registrar:"diaria_registrar", ronda_ver:"diaria_registrar" };   // funciones nuevas: mientras no estén en el perfil
+  ronda_registrar:"diaria_registrar", ronda_ver:"diaria_registrar", chequeo_tratamientos:"chequeo" };   // funciones nuevas: mientras no estén en el perfil
 // si el perfil no tiene la función, se usa la de la que depende (en cadena: generador → listas → reproducción…)
 const permOf = (k, n = 0) => perms[k] || (PERM_FALLBACK[k] && n < 5 ? permOf(PERM_FALLBACK[k], n + 1) : null);
 const INV_PROFILES = ["Administrador", "Admin Principal", "Gerente", "Maria"];
@@ -743,7 +743,7 @@ function setTab(tab){
 }
 // pantallas y el permiso que las abre (si no lo tiene, vuelve al inicio)
 const TAB_PERM = { terneras:"terneras_historial terneras_vigilar terneras_registrar", traslados:"traslados", leche:"pesaje_registrar",
-  diaria:"diaria_registrar diaria_totales diaria_resumen", reporte:"reporte_ver produccion_ver pastos_ver calidad_ver", registros:"registros_ver", chequeo:"chequeo",
+  diaria:"diaria_registrar diaria_totales diaria_resumen", reporte:"reporte_ver produccion_ver pastos_ver calidad_ver", registros:"registros_ver", chequeo:"chequeo chequeo_tratamientos",
   mastitis:"mastitis_historial mastitis_vigilar", salud:"salud_ver salud_tratar", pastos:"pastos_ver pastos_registrar", pesot:"pesot_registrar", listas:"listas_ver", generador:"generador_ver", inventario:"inventario_ver", finanzas:"finanzas_ver", toros:"toros_ver toros_registrar", racion:"racion_ver racion_registrar", ronda:"ronda_registrar ronda_ver", rapido:"vacas_servicio vacas_celo vacas_secado salud_tratar traslados vacas_salida", vaca:"vacas_ver" };
 function route(){
   const h = decodeURIComponent(location.hash.slice(1));
@@ -1182,9 +1182,10 @@ async function loadHealth(){
   jget("hsOutbox", []).filter(o=>o.farm_id===hsFarm).forEach(o=>list.unshift({ ...o, pending:true,
     treatment_items:o.items.map(i=>({ ...i, end_date:addDays(o.start_date, Math.max(1, i.days||1) - 1),
       milk_until:(()=>{ const w = hsSupply(i.supply_code)?.milk_withdrawal; return w ? addDays(addDays(o.start_date, Math.max(1, i.days||1) - 1), w) : null; })() })) }));
+  list = list.filter(t=>!ckIsCheckTx(t));   // los del chequeo (antibiótico, vitaminas, PGF2, Ovsynch) se ven en Chequeo
   const endOf = t => t.treatment_items.map(i=>i.end_date).sort().pop() || t.start_date;
   const milkOf = t => t.treatment_items.map(i=>i.milk_until).filter(Boolean).sort().pop();
-  const active = list.filter(t=>endOf(t) >= t0);
+  const active = list.filter(t=>endOf(t) >= t0 && t.start_date <= t0);   // los programados (Ovsynch) salen el día que tocan
   const withdraw = list.filter(t=>milkOf(t) && milkOf(t) >= t0).sort((a,b)=>milkOf(a).localeCompare(milkOf(b)));
   const done = list.filter(t=>endOf(t) < t0 && endOf(t) >= addDays(t0, -7));
   const b = $("badgeSalud"); if (b){ b.textContent = active.length || ""; b.classList.toggle("hidden", !active.length); }
@@ -4874,8 +4875,8 @@ async function openCalving(ev){
 // ── Eventos programados (hoja de vida): descarte al final de la lactancia, EXREP, secado anticipado… ──
 // Quedan pendientes hasta que se registra el evento (salida, secado, examen reproductivo) y ahí se dan por hechos.
 const PL_TYPES = [["descarte","🚪 Descarte"],["secado","🌙 Secar"]];
-const PL_NAMES = { descarte:"🚪 Descarte", secado:"🌙 Secar", exrep:"🔬 EXREP", otro:"📌 Otro" };   // los viejos se siguen mostrando
-const PL_DONE_EV = { descarte:["exit"], secado:["dry_off"], exrep:["repro_exam","ultrasound","preg_check"] };
+const PL_NAMES = { descarte:"🚪 Descarte", secado:"🌙 Secar", exrep:"🔬 EXREP", otro:"📌 Otro", inseminar:"💉 Inseminar" };   // los viejos se siguen mostrando
+const PL_DONE_EV = { descarte:["exit"], secado:["dry_off"], exrep:["repro_exam","ultrasound","preg_check"], inseminar:["service"] };
 const plCan = () => isAdmin || canDo("chequeo") || canDo("vacas_secado");
 // ¿ya se hizo? el evento que corresponde, registrado desde que se programó
 const plDoneBy = (pl, evs) => pl.status==="done" ? { event_date:pl.done_date } : (PL_DONE_EV[pl.plan_type] || []).length
@@ -6091,6 +6092,8 @@ function initCheck(){
     $("ckFarm").addEventListener("change", ckShow); $("ckDate").addEventListener("change", ckShow);
     $("ckLoad").addEventListener("click", ckDownload);
   }
+  $("ckLoad").classList.toggle("hidden", !canDo("chequeo")); $("ckDate").classList.toggle("hidden", !canDo("chequeo"));
+  if (navigator.onLine) hsCatalog().then(()=>{ if (ckOpen) ckRender(); });   // insumos para los tratamientos del chequeo
   ckShow();
 }
 const ckFarmSel = () => +document.querySelector('input[name="ckF"]:checked').value;
@@ -6147,7 +6150,8 @@ function ckLoadData(farm){
 function ckShow(){
   const farm = ckFarmSel(), D = $("ckDate").value || today();
   ckData = ckLoadData(farm);
-  if (!ckData){ $("ckInfo").textContent = "Descarga la lista con señal antes de ir al corral."; $("ckBody").innerHTML = ""; return; }
+  if (!ckData){ $("ckInfo").textContent = canDo("chequeo") ? "Descarga la lista con señal antes de ir al corral." : "";
+    ckRes = {}; if (!canDo("chequeo") || ckMode==="tx") return ckRender(); $("ckBody").innerHTML = ""; return; }
   const age = Math.round((Date.now() - ckData.at)/36e5);
   $("ckInfo").innerHTML = `Lista descargada ${age < 1 ? "hace menos de 1 hora" : age < 48 ? `hace ${age} h` : `hace ${Math.round(age/24)} días`}${age > 72 ? ` · <span class="late">descárgala de nuevo</span>` : ""}`;
   ckRes = jget(ckKey(farm, D), {});
@@ -6183,9 +6187,49 @@ function ckInfoTxt(k){
 }
 const ckModeBar = (doneN, total) => `<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
   <div class="chips sm ckpan" style="padding:0"><div class="chips sm" style="margin:0">
-    <button class="${ckMode==="pad"?"on":""}" data-ckmode="pad">🔍 Buscar</button><button class="${ckMode==="list"?"on":""}" data-ckmode="list">☰ Lista</button></div></div>
+    ${canDo("chequeo") ? `<button class="${ckMode==="pad"?"on":""}" data-ckmode="pad">🔍 Buscar</button><button class="${ckMode==="list"?"on":""}" data-ckmode="list">☰ Lista</button>` : ""}
+    ${canSee("chequeo_tratamientos") ? `<button class="${ckMode==="tx"?"on":""}" data-ckmode="tx">💉 Tratamientos</button>` : ""}</div></div>
   <div class="sub" style="text-align:right"><b style="color:var(--ink)">${doneN}/${total}</b> registradas</div></div>`;
-function ckRender(){ return ckMode==="pad" ? ckRenderPad() : ckRenderList(); }
+function ckRender(){
+  if (!canDo("chequeo")) ckMode = "tx";   // perfiles que solo ven los tratamientos
+  if (ckMode==="tx") return ckRenderTx();
+  return ckMode==="pad" ? ckRenderPad() : ckRenderList();
+}
+// ── Tratamientos del chequeo: lo que hay que aplicar (antibiótico, vitaminas, PGF2, Ovsynch día a día) e inseminar ──
+const ckIsCheckTx = t => /^(Chequeo|Ovsynch)/.test(t.protocol || "");
+let ckTxData = null;
+async function ckRenderTx(){
+  const farm = ckFarmSel(), t0 = today();
+  const head = `<div class="card">${ckModeBar(Object.values(ckRes || {}).filter(r=>r.res).length, ckData ? ckList().length : 0)}<div id="ckTxBox"><div class="empty">Cargando…</div></div></div>`;
+  $("ckBody").innerHTML = head;
+  if (!navigator.onLine){ $("ckTxBox").innerHTML = `<div class="empty">Los tratamientos necesitan señal.</div>`; return; }
+  const [tx, pl, cw] = await Promise.all([
+    sb.from("treatments_cow").select("id,cow_id,start_date,diagnosis,protocol,notes,treatment_items(supply_code,dose,unit,route)")
+      .eq("farm_id", farm).or("protocol.like.Chequeo*,protocol.eq.Ovsynch").gte("start_date", addDays(t0, -14)).lte("start_date", addDays(t0, 21)).order("start_date"),
+    sb.from("cow_plans").select("cow_id,due_date,note,status").eq("farm_id", farm).eq("plan_type", "inseminar").eq("status", "pending")
+      .gte("due_date", addDays(t0, -14)).lte("due_date", addDays(t0, 21)),
+    sb.from("cows").select("id,pen").eq("farm_id", farm).eq("active", true)]);
+  if (tx.error){ $("ckTxBox").innerHTML = `<div class="empty">${esc(tx.error.message)}</div>`; return; }
+  const pen = Object.fromEntries((cw.data || []).map(c=>[c.id, c.pen])), sup = c => hsSupply(c)?.name || c;
+  const rows = [...(tx.data || []).map(t=>({ d:t.start_date, cow:t.cow_id, what: t.protocol==="Ovsynch" ? (t.notes || "Ovsynch").replace(/ \(inicio.*\)$/, "") : t.protocol.replace(/^Chequeo · /, ""),
+      items:(t.treatment_items || []).map(i=>`${sup(i.supply_code)} ${i.dose ?? ""} ${i.unit || ""}`.trim()).join(" + "), ovs:t.protocol==="Ovsynch" })),
+    ...(pl.data || []).map(p=>({ d:p.due_date, cow:p.cow_id, what:"Inseminar", items:p.note || "Ovsynch", ia:true }))]
+    .sort((a, b)=>a.d.localeCompare(b.d) || byNum(pen[a.cow] || "", pen[b.cow] || "") || byNum(a.cow, b.cow));
+  const label = d => d===t0 ? "Hoy" : d===addDays(t0, 1) ? "Mañana" : d===addDays(t0, -1) ? "Ayer"
+    : new Date(d + "T12:00").toLocaleDateString("es-CO", { weekday:"long", day:"numeric", month:"short" });
+  const day = d => `<div class="ckpen" style="${d===t0 ? "color:var(--accent)" : ""}">${label(d)} <span class="sub">· ${fmt(d)} (${rows.filter(r=>r.d===d).length})</span></div>
+    <table class="ivt" style="font-size:14px">${rows.filter(r=>r.d===d).map(r=>`<tr><td style="width:64px"><b>${esc(r.cow)}</b><div class="sub">${esc(pen[r.cow] || "")}</div></td>
+      <td>${r.ia ? "💉 <b>Inseminar</b>" : r.ovs ? `<b>${esc(r.what)}</b>` : `<b>${esc(r.what)}</b>`}<div class="sub">${esc(r.items)}</div></td></tr>`).join("")}</table>`;
+  const days = [...new Set(rows.map(r=>r.d))], next = days.filter(d=>d >= t0), past = days.filter(d=>d < t0).reverse();
+  // totales de lo que hay que tener a mano hoy
+  const today0 = rows.filter(r=>r.d===t0 && !r.ia), need = {};
+  (tx.data || []).filter(t=>t.start_date===t0).forEach(t=>(t.treatment_items || []).forEach(i=>{ const k = sup(i.supply_code) + "|" + (i.unit || ""); need[k] = (need[k] || 0) + (+i.dose || 0); }));
+  $("ckTxBox").innerHTML = `<div class="sub" style="margin-bottom:6px">Antibiótico, vitaminas y PGF2 del chequeo, y el Ovsynch día a día. Se descuentan del inventario el día que tocan.</div>
+    ${Object.keys(need).length ? `<div class="hscard"><b>Para hoy hay que tener:</b> ${Object.entries(need).map(([k, v])=>{ const [n, u] = k.split("|"); return `${esc(n)} <b>${v.toLocaleString("es-CO")} ${esc(u)}</b>`; }).join(" · ")}
+      <div class="sub">${today0.length} aplicaciones · ${rows.filter(r=>r.d===t0 && r.ia).length} para inseminar</div></div>` : ""}
+    ${next.map(day).join("") || `<div class="empty">Nada programado para hoy ni los próximos días</div>`}
+    ${past.length ? `<details class="ckmore"><summary class="lnk">Días anteriores (${past.length})</summary>${past.map(day).join("")}</details>` : ""}`;
+}
 
 // Proyección de leche como la de Interherd (calibrada con su listado de marzo 2026: ~2 % de diferencia):
 //   acumulado = controles de esta lactancia unidos en línea recta (del parto al 1er control, plano)
@@ -6252,9 +6296,9 @@ function ckCard(id, list){
       ${big(p305?.lact ? p305.lact.toLocaleString("es-CO") : "—", "Lactancia total kg", p305?.lact ? `secado ~${fmt(preg)} · ${p305.dryDel} d` : "sin fecha de secado (no preñada)")}
     </div>
     ${hist.length ? `<div class="sub" style="margin-top:6px">Últimos: ${hist.map(e=>`${fmt(e.d)} ${esc(EV[e.t]||e.t)} ${esc(noSex(e.r)||"")}`).join(" · ")}</div>` : ""}
-    ${ckMoreInfo(c)}
     ${cat ? ckPanel(c, { cat }, r) :
       `<div class="ckpan"><div class="chips">${["EXREP","ECO1","ECO2","DPR","DP5","DPSEC"].map(x=>`<button data-setcat="${x}">${x}</button>`).join("")}</div></div>`}
+    ${ckMoreInfo(c)}
   </div>`;
 }
 // lactancia actual (servicios, chequeos, pérdidas…) como en la hoja de vida, para verla al abrir la vaca en la lista
@@ -6262,7 +6306,7 @@ function ckLacNow(c){
   const evs = c.ev.filter(e=>e.t!=="weight").map(e=>({ event_date:e.d, event_type:e.t, result:e.r, category:e.c, bull:e.b }));
   if (!evs.length) return `<div class="sub" style="margin:6px 0">Sin eventos reproductivos registrados</div>`;
   const segs = lactations({ lactation_num:c.ln }, evs);
-  return `<div class="ckpan ckhist" style="margin-top:6px">${lacHtml(segs[segs.length - 1], true, [], {})}</div>`;
+  return `<details class="ckmore"><summary class="lnk">📋 Historia reproductiva de la lactancia</summary><div class="ckpan ckhist" style="margin-top:6px">${lacHtml(segs[segs.length - 1], true, [], {})}</div></details>`;
 }
 // "+ info": las lactancias con todo lo que se le ha hecho (mismo formato de la hoja de vida; últimos ~20 meses)
 function ckMoreInfo(c){
@@ -6287,7 +6331,7 @@ function ckRenderList(){
     html += `<div class="ckrow ${r?.res?"done":""}" data-ck="${esc(c.id)}">
       <div class="top"><span class="id">${esc(c.id)}</span><div class="inf"><span class="ckcat" style="background:${col}">${k.cat==="REPETIR" ? "REPETIR "+k.stage : k.cat}</span>${ckInfoTxt(k)}</div>
       <div class="res">${r?.res ? esc(r.res) + (r.up?" ✓":"") : ""}</div></div>
-      ${ckOpen===c.id ? ckLacNow(c) + ckPanel(c, k, r||{}) : ""}</div>`;
+      ${ckOpen===c.id ? ckPanel(c, k, r||{}) + ckLacNow(c) : ""}</div>`;
   });
   const cats = ["EXREP","ECO1","ECO2","REPETIR","DPR","DP5","DPSEC"].filter(x=>counts[x]);
   $("ckBody").innerHTML = `<div class="card">${ckModeBar(doneN, list.length)}
@@ -6323,11 +6367,54 @@ function ckPanel(c, k, r){
     ${neg ? `<div class="sub">¿Qué hacer? (puedes marcar varios)</div><div class="chips">${CK_RES.NEG.map(v=>chip(v, (r.fol||[]).includes(v), "data-fol")).join("")}</div>` : ""}
     <div class="sub">Tratamiento</div>
     <div class="chips sm">${(ckLists.extra || CK_EXTRA).map(v=>chip(v, (r.extras||[]).includes(v), "data-ext")).join("")}</div>
+    ${(r.extras||[]).map(v=>ckTxHtml(v, r)).join("")}
+    ${ckOvs(r) ? ckOvsHtml(r, $("ckDate").value || today()) : ""}
     <input data-cknote placeholder="Comentario" value="${esc(r.note||"")}">
     ${r.up ? "" : `<button class="btn" data-cksave style="margin-top:10px" ${ready ? "" : "disabled"}>${r.res ? "Guardar cambios" : "Guardar"}</button>`}
     ${r.up ? `<div class="sub" style="margin-top:4px">✓ Ya subido. Para borrarlo: abre la hoja de vida de la vaca y toca "borrar" en el registro pendiente.</div>`
            : r.res || r.cat ? `<button class="del" data-ckclear style="margin-top:8px;font-size:14px">🗑 Borrar resultado</button>` : ""}
   </div>`;
+}
+// insumo de cada tratamiento del chequeo (queda en Salud y descuenta del inventario de la finca)
+const CK_TX = { "Antibiótico":{ cats:["Antibiótico"] }, "Vitaminas":{ cats:["Vitamina / mineral","Vitamina / suplemento"] },
+  "PGF2":{ codes:["PROSTAL","CLOPROST"], dose:2, unit:"mL", doses:true } };
+const ckTxKey = v => Object.keys(CK_TX).find(k=>k.toLowerCase()===String(v).toLowerCase().replace(/s$/, "") || k.toLowerCase()===String(v).toLowerCase());
+function ckTxOpts(v){
+  const d = CK_TX[ckTxKey(v)]; if (!d) return [];
+  const all = jget("hsCat", { supplies:[] }).supplies.filter(m=>m.active!==false);
+  return d.codes ? all.filter(m=>d.codes.includes(m.code)) : all.filter(m=>d.cats.includes(m.category));
+}
+function ckTxHtml(v, r){
+  const k = ckTxKey(v), d = CK_TX[k]; if (!d) return "";
+  const t = (r.tx || {})[k] || {}, ops = ckTxOpts(v), sup = ops.find(m=>m.code===t.code);
+  return `<div class="row" style="gap:6px;margin-top:6px;align-items:center"><span class="sub" style="flex:0 0 74px">${esc(v)}</span>
+    <select data-cktx="${esc(k)}" data-k="code" style="flex:1;min-width:0;padding:8px"><option value="">— producto —</option>${ops.map(m=>`<option value="${esc(m.code)}" ${m.code===t.code ? "selected" : ""}>${esc(m.name)}</option>`).join("")}</select>
+    ${d.doses ? `<select data-cktx="${esc(k)}" data-k="n" style="width:auto;padding:8px">${[1, 2].map(n=>`<option value="${n}" ${(t.n || 1)==n ? "selected" : ""}>${n} dosis (${n*d.dose} ${d.unit})</option>`).join("")}</select>`
+      : `<input data-cktx="${esc(k)}" data-k="dose" inputmode="decimal" placeholder="dosis" value="${esc(t.dose ?? "")}" style="flex:0 0 64px;padding:8px"><span class="sub">${esc(sup?.unit || "")}</span>`}</div>`;
+}
+// los tratamientos del chequeo como filas para Salud
+function ckTxItems(r){
+  return (r.extras || []).map(v=>{ const k = ckTxKey(v), d = CK_TX[k], t = (r.tx || {})[k];
+    if (!d || !t?.code) return null;
+    const sup = jget("hsCat", { supplies:[] }).supplies.find(m=>m.code===t.code);
+    const dose = d.doses ? d.dose * (+t.n || 1) : +String(t.dose || "").replace(",", ".");
+    return dose > 0 ? { k, code:t.code, dose, unit: d.unit || sup?.unit || "", route: k==="PGF2" ? "IM" : "IM" } : null; }).filter(Boolean);
+}
+// OVSYNCH (Juan): día 0 Gestar 3 mL · día 7 PGF 3 mL · día 8 PGF 3 mL · día 9 Gestar 3 mL · día 10 inseminar.
+// Se programa al subir el chequeo: cada dosis es un tratamiento con su fecha (el inventario la descuenta ese día)
+// y la inseminación queda como evento programado. Si se insemina antes, Supabase borra las dosis que faltan (SQL/ovsynch.sql).
+const OVS_STEPS = [{ d:0, k:"GnRH" }, { d:7, k:"PGF" }, { d:8, k:"PGF" }, { d:9, k:"GnRH" }];
+const OVS_DOSE = 3, OVS_IA = 10, OVS_GNRH = ["GESTAR"], OVS_PGF = ["PROSTAL","CLOPROST"];
+const ckOvs = r => (r.sel || []).includes("OVSYN") || (r.fol || []).includes("OVSYNCH");
+function ckOvsHtml(r, D){
+  const all = jget("hsCat", { supplies:[] }).supplies.filter(m=>m.active!==false);
+  const opt = (codes, cur) => all.filter(m=>codes.includes(m.code)).map(m=>`<option value="${esc(m.code)}" ${m.code===cur ? "selected" : ""}>${esc(m.name)}</option>`).join("");
+  const o = r.ovs || {}, g = o.gnrh || OVS_GNRH[0], f = o.pgf || OVS_PGF[0];
+  return `<div class="hscard" style="margin-top:8px"><b>💉 Ovsynch programado</b>
+    <div class="row" style="gap:6px;margin-top:6px;align-items:center"><span class="sub" style="flex:0 0 60px">GnRH</span><select data-ckovs="gnrh" style="flex:1;min-width:0;padding:8px">${opt(OVS_GNRH, g)}</select></div>
+    <div class="row" style="gap:6px;margin-top:6px;align-items:center"><span class="sub" style="flex:0 0 60px">PGF</span><select data-ckovs="pgf" style="flex:1;min-width:0;padding:8px">${opt(OVS_PGF, f)}</select></div>
+    <div class="sub" style="margin-top:6px">${OVS_STEPS.map(x=>`Día ${x.d} (${fmt(addDays(D, x.d))}): ${x.k==="GnRH" ? "GnRH" : "PGF"} ${OVS_DOSE} mL`).join(" · ")} · <b>Día ${OVS_IA} (${fmt(addDays(D, OVS_IA))}): inseminar</b></div>
+    <div class="sub">Cada dosis se descuenta del inventario el día que toca. Si se insemina antes, las que faltan se cancelan solas.</div></div>`;
 }
 let ckLists = {};
 async function ckLoadLists(){
@@ -6388,11 +6475,22 @@ $("ckBody").addEventListener("click", e=>{
   ckOpen = ckOpen===id ? null : id; ckRender();
   row.scrollIntoView({ block:"nearest" });
 });
-$("ckBody").addEventListener("change", e=>{ if (e.target.id==="ckPenSel"){ ckPenF = e.target.value; ckOpen = null; ckRender(); } });
+$("ckBody").addEventListener("change", e=>{ if (e.target.id==="ckPenSel"){ ckPenF = e.target.value; ckOpen = null; ckRender(); return; }
+  const ov = e.target.closest("[data-ckovs]");
+  if (ov){ const id = ov.closest("[data-ck]")?.dataset.ck || ckOpen; const r = id && (ckRes[id] ||= {});
+    if (r && !r.up){ (r.ovs ||= {})[ov.dataset.ckovs] = ov.value; ckSave(); } return; }
+  const tx = e.target.closest("[data-cktx]"); if (!tx) return;
+  const id = tx.closest("[data-ck]")?.dataset.ck || ckOpen; if (!id) return;
+  const r = ckRes[id] ||= {}; if (r.up) return;
+  const k = tx.dataset.cktx; (r.tx ||= {})[k] = { ...(r.tx[k] || {}), [tx.dataset.k]: tx.value }; ckSave();
+  if (tx.dataset.k==="code") ckRender(); });
 $("ckBody").addEventListener("keydown", e=>{ if (e.target.id==="ckQ" && e.key==="Enter"){ e.preventDefault(); const b = $("ckSug").querySelector("[data-pick]"); if (b){ ckOpen = b.dataset.pick; ckRender(); window.scrollTo({ top:0 }); } } });
 $("ckBody").addEventListener("input", e=>{
   if (e.target.id==="ckQ"){ ckPad = e.target.value.toUpperCase().replace(/\s/g, ""); const list = ckList();
     $("ckSug").innerHTML = ckSugHtml(list, list.filter(x=>ckRes[x.c.id]?.res).length); return; }
+  const tx = e.target.closest("input[data-cktx]");
+  if (tx){ const id = tx.closest("[data-ck]")?.dataset.ck || ckOpen; const r = id && (ckRes[id] ||= {});
+    if (r && !r.up){ const k = tx.dataset.cktx; (r.tx ||= {})[k] = { ...(r.tx[k] || {}), dose: tx.value }; ckSave(); } return; }
   if (!e.target.matches("[data-cknote]") || !ckOpen) return;
   const r = ckRes[ckOpen] ||= {}; r.note = e.target.value; ckSave();
 });
@@ -6437,6 +6535,27 @@ async function flushCheck(){
     if (!rows.length) continue;
     const { error } = await sb.from("cow_events").insert(rows);
     if (error){ left.push(key); console.warn("chequeo", error.message); continue; }
+    for (const [id, r] of todo){
+      const its = ckTxItems(r); if (!its.length) continue;
+      const farm = +key.slice(3).split("|")[0] || ckFarmSel();
+      const { data:t, error:e2 } = await sb.from("treatments_cow").insert({ client_id:crypto.randomUUID ? crypto.randomUUID() : String(Date.now()) + Math.random(),
+        farm_id:farm, cow_id:id, start_date:D, diagnosis:"Chequeo " + (r.cat || ""), protocol:"Chequeo · " + its.map(i=>i.k).join(" + "),
+        prescribed_by: isAdmin ? "Juan (veterinario)" : "Chequeo", notes:r.note || null }).select("id");
+      if (e2 || !t?.length){ toast("Los resultados subieron, pero un tratamiento no quedó en Salud: " + (e2?.message || "")); continue; }
+      await sb.from("treatment_items").insert(its.map(i=>({ treatment_id:t[0].id, supply_code:i.code, dose:i.dose, unit:i.unit, route:i.route, every_hours:24, days:1 })));
+    }
+    for (const [id, r] of todo){
+      if (!ckOvs(r)) continue;
+      const farm = +key.slice(3).split("|")[0] || ckFarmSel(), uid = () => crypto.randomUUID ? crypto.randomUUID() : String(Date.now()) + Math.random();
+      const code = st => st.k==="GnRH" ? (r.ovs?.gnrh || OVS_GNRH[0]) : (r.ovs?.pgf || OVS_PGF[0]);
+      const tx = OVS_STEPS.map(st=>({ client_id:uid(), farm_id:farm, cow_id:id, start_date:addDays(D, st.d), diagnosis:"Ovsynch", protocol:"Ovsynch",
+        prescribed_by: isAdmin ? "Juan (veterinario)" : "Chequeo", notes:`Día ${st.d} del Ovsynch (inicio ${fmt(D)})` }));
+      const { data:t, error:e3 } = await sb.from("treatments_cow").insert(tx).select("id,start_date");
+      if (e3 || !t?.length){ toast("Los resultados subieron, pero el Ovsynch no se programó: " + (e3?.message || "")); continue; }
+      await sb.from("treatment_items").insert(t.map(x=>{ const st = OVS_STEPS[tx.findIndex(y=>y.start_date===x.start_date)] || OVS_STEPS[0];
+        return { treatment_id:x.id, supply_code:code(st), dose:OVS_DOSE, unit:"mL", route:"IM", every_hours:24, days:1 }; }));
+      await sb.from("cow_plans").insert({ cow_id:id, farm_id:farm, plan_type:"inseminar", due_date:addDays(D, OVS_IA), note:`Ovsynch del ${fmt(D)}` });
+    }
     todo.forEach(([, r])=>{ r.up = true; }); jset(key, res); sent += todo.length;
   }
   jset("ckOutbox", left); ckFlushing = false; updCheckNet();
