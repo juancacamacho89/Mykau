@@ -6390,7 +6390,8 @@ function ckTxHtml(v, r){
   return `<div class="row" style="gap:6px;margin-top:6px;align-items:center"><span class="sub" style="flex:0 0 74px">${esc(v)}</span>
     <select data-cktx="${esc(k)}" data-k="code" style="flex:1;min-width:0;padding:8px"><option value="">— producto —</option>${ops.map(m=>`<option value="${esc(m.code)}" ${m.code===t.code ? "selected" : ""}>${esc(m.name)}</option>`).join("")}</select>
     ${d.doses ? `<select data-cktx="${esc(k)}" data-k="n" style="width:auto;padding:8px">${[1, 2].map(n=>`<option value="${n}" ${(t.n || 1)==n ? "selected" : ""}>${n} dosis (${n*d.dose} ${d.unit})</option>`).join("")}</select>`
-      : `<input data-cktx="${esc(k)}" data-k="dose" inputmode="decimal" placeholder="dosis" value="${esc(t.dose ?? "")}" style="flex:0 0 64px;padding:8px"><span class="sub">${esc(sup?.unit || "")}</span>`}</div>`;
+      : `<input data-cktx="${esc(k)}" data-k="dose" inputmode="decimal" placeholder="dosis" value="${esc(t.dose ?? "")}" style="flex:0 0 64px;padding:8px"><span class="sub">${esc(sup?.unit || "")}</span>`}</div>
+    ${!t.code || (!d.doses && !(+String(t.dose || "").replace(",", ".") > 0)) ? `<div class="sub" style="color:var(--s3)">Sin producto${t.code ? " y dosis" : ""}: queda solo como comentario (no descuenta del inventario)</div>` : ""}`;
 }
 // los tratamientos del chequeo como filas para Salud
 function ckTxItems(r){
