@@ -4751,7 +4751,8 @@ async function openCalving(ev){
 
 // ── Eventos programados (hoja de vida): descarte al final de la lactancia, EXREP, secado anticipado… ──
 // Quedan pendientes hasta que se registra el evento (salida, secado, examen reproductivo) y ahí se dan por hechos.
-const PL_TYPES = [["descarte","🚪 Descarte al final de la lactancia"],["exrep","🔬 EXREP"],["secado","🌙 Secar antes (baja producción)"],["otro","📌 Otro"]];
+const PL_TYPES = [["descarte","🚪 Descarte"],["secado","🌙 Secar"]];
+const PL_NAMES = { descarte:"🚪 Descarte", secado:"🌙 Secar", exrep:"🔬 EXREP", otro:"📌 Otro" };   // los viejos se siguen mostrando
 const PL_DONE_EV = { descarte:["exit"], secado:["dry_off"], exrep:["repro_exam","ultrasound","preg_check"] };
 const plCan = () => isAdmin || canDo("chequeo") || canDo("vacas_secado");
 // ¿ya se hizo? el evento que corresponde, registrado desde que se programó
@@ -4765,7 +4766,7 @@ async function cowPlans(d){
   const rows = (data || []).map(pl=>({ pl, done: plDoneBy(pl, d.events) }));
   const pend = rows.filter(x=>!x.done), done = rows.filter(x=>x.done).slice(-3);
   if (!rows.length && !(plCan() && c.active)) { box.innerHTML = ""; return; }
-  const name = t => (PL_TYPES.find(x=>x[0]===t) || [t, t])[1];
+  const name = t => PL_NAMES[t] || t;
   const line = ({ pl, done }) => { const late = !done && pl.due_date < today(), soon = !done && !late && days(today(), pl.due_date) <= 7;
     const act = done ? "" : pl.plan_type==="descarte" && canDo("vacas_salida") ? `<button class="lnk" data-plrun="descarte">Ejecutar: registrar salida</button>`
       : pl.plan_type==="secado" && canDo("vacas_secado") ? `<button class="lnk" data-plrun="secado">Ejecutar: registrar secado</button>`
@@ -4798,7 +4799,7 @@ function plOpen(){
   const f = bg.querySelector("form");
   bg.addEventListener("click", e=>{ if (e.target===bg || e.target.closest("[data-close]")) bg.remove(); });
   f.addEventListener("change", e=>{ if (e.target.name==="pltype"){ f.date.value = sug(e.target.value);
-    if (e.target.value==="secado" && !f.note.value) f.note.value = "Baja producción"; } });
+    } });
   f.addEventListener("submit", async e=>{
     e.preventDefault();
     const row = { cow_id:c.id, farm_id:c.farm_id, plan_type:f.pltype.value, due_date:f.date.value, note:f.note.value.trim() || null };
