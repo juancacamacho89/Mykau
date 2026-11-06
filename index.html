@@ -1931,16 +1931,19 @@ let rgReady = false, rgNames = null, rgState = null;
 async function initRegistros(){
   if (!rgReady){
     rgReady = true;
-    rgState = { farm:"", cat:"", status:"all", user:"", from:addDays(today(), -30), to:today() };
+    rgState = { farm:"", cat:"", status:"all", user:"", by:"evento", q:"", from:addDays(today(), -30), to:today() };
     $("rgFilters").addEventListener("change", e=>{
       const t = e.target;
       if (t.name==="rgSt") rgState.status = t.value;
+      if (t.name==="rgBy") rgState.by = t.value;
       if (t.name==="rgFa") rgState.farm = t.value;
       if (t.id==="rgUser") rgState.user = t.value;
       if (t.id==="rgFrom") rgState.from = t.value || rgState.from;
       if (t.id==="rgTo") rgState.to = t.value || rgState.to;
       renderRgFilters(); loadRegistros();
     });
+    // buscar: vaca, detalle o tipo (solo redibuja, no vuelve a consultar)
+    $("rgFilters").addEventListener("input", e=>{ if (e.target.id==="rgQ"){ rgState.q = e.target.value; if (rgLast) rgDraw(); } });
     $("rgFilters").addEventListener("click", e=>{ const b = e.target.closest("[data-rgk]"); if (b){ rgState.cat = b.dataset.rgk; rgPick = { title:"", who:"" }; renderRgFilters(); if (rgLast) rgDraw(); } });
     $("rgBody").addEventListener("click", async e=>{
       const t = e.target, dl = t.closest("[data-rgdel]"), ed = t.closest("[data-rged]"), dm = t.closest("[data-rgdm]");
@@ -1956,6 +1959,7 @@ async function initRegistros(){
       if (ft){ rgPick.title = rgPick.title===ft.dataset.rgt ? "" : ft.dataset.rgt; return rgDraw(); }
       if (fw){ rgPick.who = rgPick.who===fw.dataset.rgw ? "" : fw.dataset.rgw; return rgDraw(); }
       if (t.closest("[data-rgclear]")){ rgPick = { title:"", who:"" }; return rgDraw(); }
+      if (t.id==="rgTxt"){ t.disabled = true; await rgExport(); t.disabled = false; return; }
       if (dm){ const [farm, pen, date] = dm.dataset.rgdm.split("|"); dmGoto = { farm:+farm, pen, date }; location.hash = "diaria"; window.scrollTo({ top:0 }); return; }
       const c = t.closest("[data-cow]"); if (c) openCow(c.dataset.cow);
     });
@@ -1971,9 +1975,11 @@ function renderRgFilters(){
   $("rgFilters").innerHTML = `${seg("rgSt", [["all","Todo lo registrado"],["pend","Pendientes de Interherd"]], s.status)}
     <div style="margin-top:8px">${seg("rgFa", [["","Ambas fincas"],["1","El Recodo"],["7","La Isla"]], s.farm)}</div>
     ${s.status==="all" ? `<div class="chips sm ckpan" style="padding:0;margin-top:6px"><div class="chips sm">${RG_CATS.map(([k,t])=>`<button class="${s.cat===k?"on":""}" data-rgk="${k}">${t}</button>`).join("")}</div></div>
+      <div style="margin-top:8px">${seg("rgBy", [["evento","Por fecha del evento"],["registro","Por fecha en que se registró"]], s.by || "evento")}</div>
       <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:6px">
-        <div><div class="sub">Registrado desde</div><input type="date" id="rgFrom" value="${s.from}" max="${today()}" style="min-width:0"></div>
-        <div><div class="sub">Hasta</div><input type="date" id="rgTo" value="${s.to}" max="${today()}" style="min-width:0"></div></div>` : ""}
+        <div><div class="sub">${s.by==="registro" ? "Registrado desde" : "Evento desde"}</div><input type="date" id="rgFrom" value="${s.from}" style="min-width:0"></div>
+        <div><div class="sub">Hasta</div><input type="date" id="rgTo" value="${s.to}" style="min-width:0"></div></div>
+      <input id="rgQ" placeholder="🔍 Buscar vaca, toro, lote, potrero, producto…" value="${esc(s.q || "")}" autocomplete="off" style="margin-top:8px">` : ""}
     ${!canSee("registros_todos") ? `<div class="sub" style="margin-top:6px">Ves solo lo que registraste tú.</div>` : ""}
     <div style="margin-top:6px${canSee("registros_todos") ? "" : ";display:none"}"><select id="rgUser"><option value="">Todas las personas</option>${users.map(([id,n])=>`<option value="${id}" ${s.user===id?"selected":""}>${esc(n)}</option>`).join("")}</select></div>`;
 }
@@ -2000,13 +2006,14 @@ async function loadRegistros(){
   $("rgBody").innerHTML = `<div class="card"><div class="empty">Cargando…</div></div>`;
   if (!navigator.onLine){ $("rgBody").innerHTML = `<div class="card"><div class="empty">Los registros necesitan señal.</div></div>`; return; }
   const s = rgState, pend = s.status==="pend", want = k => pend ? ["vacas","pesaje"].includes(k) : true;   // la categoría se filtra al dibujar
-  const t1 = addDays(s.to, 1), rows = [], notes = [];
+  const byEv = s.by!=="registro", qFrom = byEv ? addDays(s.from, -120) : s.from;
+  const t1 = byEv ? addDays(today(), 1) : addDays(s.to, 1), rows = [], notes = [];
   const all = canSee("registros_todos"), who = all ? s.user : me;   // sin "ver todos": solo lo que registró esta persona
   const add = r => { if ((!s.farm || +s.farm===r.farm) && (!who || who===r.who)) rows.push(r); };
   const jobs = [];
   if (want("vacas")) jobs.push((async()=>{
     let q = sb.from("app_event_log").select("*").order("created_at", { ascending:false }).limit(2000);
-    q = pend ? q.eq("status", "pendiente") : q.gte("created_at", s.from).lt("created_at", t1);
+    q = pend ? q.eq("status", "pendiente") : q.gte("created_at", qFrom).lt("created_at", t1);
     let { data, error } = await q;
     if (error){   // falta correr SQL/crear_registros.sql: solo los pendientes
       notes.push("Corre SQL/crear_registros.sql para ver también lo que ya pasó a Interherd.");
@@ -2019,13 +2026,13 @@ async function loadRegistros(){
       title:EV[e.event_type] || e.event_type,
       detail:([e.bull && "Toro " + e.bull, noSex(e.result), e.category, e.operator, e.comments].filter(Boolean).join(" · ")
         + (e.event_type==="calving" ? calvingTxt(e).replace(/&amp;/g, "&").replace(/&quot;/g, '"') : "")).replace(/^ · /, ""),
-      status:e.status }));
+      status:e.status, raw:{ bull:e.bull, result:noSex(e.result), category:e.category, operator:e.operator, comments:e.comments } }));
   })());
   if (want("pesaje")) jobs.push((async()=>{
     // in_interherd: lo marca el importador cuando la "Ult. leche" del listado coincide (SQL/leche_en_interherd.sql)
     const mq = cols => { let q = sb.from("cow_milk").select(cols).not("entered_by", "is", null).limit(5000);
       if (pend){ q = q.eq("source", "app"); if (/in_interherd/.test(cols)) q = q.eq("in_interherd", false); }
-      else q = q.gte("entered_at", s.from).lt("entered_at", t1);
+      else q = q.gte("entered_at", qFrom).lt("entered_at", t1);
       return q; };
     let { data, error } = await mq("cow_id,test_date,herd,source,am_kg,pm_kg,entered_by,entered_at,in_interherd");
     if (error) ({ data, error } = await mq("cow_id,test_date,herd,source,am_kg,pm_kg,entered_by,entered_at"));
@@ -2039,21 +2046,21 @@ async function loadRegistros(){
   })());
   if (want("diaria")) jobs.push((async()=>{
     const { data } = await sb.from("daily_milk").select("id,farm_id,pen,rec_date,total_l,cows,entered_by,entered_at").eq("source", "app")
-      .gte("entered_at", s.from).lt("entered_at", t1).limit(2000);
+      .gte("entered_at", qFrom).lt("entered_at", t1).limit(2000);
     (data||[]).forEach(d=>add({ kind:"diaria", icon:"🥛", when:d.entered_at, date:d.rec_date, farm:d.farm_id, who:d.entered_by, id:d.id, pen:d.pen,
       title:"Leche diaria", detail:`${d.pen} · ${Math.round(d.total_l||0).toLocaleString("es-CO")} L${d.cows ? " · " + d.cows + " vacas" : ""}`, status:"app" }));
   })());
   if (want("salud")) jobs.push((async()=>{
     const { data } = await sb.from("treatments_cow").select("id,farm_id,cow_id,start_date,diagnosis,prescribed_by,created_by,created_at,treatment_items(supply_code,dose,unit)")
-      .gte("created_at", s.from).lt("created_at", t1).limit(2000);
+      .gte("created_at", qFrom).lt("created_at", t1).limit(2000);
     (data||[]).forEach(t=>add({ kind:"salud", icon:"🩺", when:t.created_at, date:t.start_date, farm:t.farm_id, who:t.created_by, cow:t.cow_id, id:t.id,
       title:"Tratamiento", detail:(t.diagnosis ? t.diagnosis + " · " : "") + (t.treatment_items||[]).map(i=>`${i.supply_code} ${i.dose??""} ${i.unit||""}`).join(", ") + (t.prescribed_by ? " · formuló " + t.prescribed_by : ""), status:"app" }));
   })());
   if (want("pastos")) jobs.push((async()=>{
     const [w, g, r] = await Promise.all([
-      sb.from("paddock_works").select("id,farm_id,work_date,activity,product,value,created_by,created_at,paddocks(predio,number)").eq("source", "app").gte("created_at", s.from).lt("created_at", t1).limit(2000),
-      sb.from("grazing").select("id,farm_id,grp,entry_date,animals,created_by,created_at,paddocks(predio,number)").eq("source", "app").gte("created_at", s.from).lt("created_at", t1).limit(2000),
-      sb.from("rainfall").select("id,farm_id,rain_date,mm,created_by").eq("source", "app").gte("rain_date", s.from).lte("rain_date", s.to).limit(2000),
+      sb.from("paddock_works").select("id,farm_id,work_date,activity,product,value,created_by,created_at,paddocks(predio,number)").eq("source", "app").gte("created_at", qFrom).lt("created_at", t1).limit(2000),
+      sb.from("grazing").select("id,farm_id,grp,entry_date,animals,created_by,created_at,paddocks(predio,number)").eq("source", "app").gte("created_at", qFrom).lt("created_at", t1).limit(2000),
+      sb.from("rainfall").select("id,farm_id,rain_date,mm,created_by").eq("source", "app").gte("rain_date", byEv ? s.from : qFrom).lte("rain_date", s.to).limit(2000),
     ]);
     const pn = p => p ? `${p.predio} ${p.number}` : "";
     const wk = {};   // una labor en varios potreros = un registro
@@ -2065,7 +2072,7 @@ async function loadRegistros(){
     (r.data||[]).forEach(x=>add({ kind:"pastos", icon:"🌧️", when:x.rain_date, date:x.rain_date, farm:x.farm_id, who:x.created_by, tbl:"rainfall", id:String(x.id), title:"Lluvia", detail:x.mm + " mm", status:"app" }));
   })());
   if (want("otros")) jobs.push((async()=>{
-    const since = s.from, q = (t, sel) => sb.from(t).select(sel).gte("created_at", since).lt("created_at", t1).limit(2000);
+    const since = qFrom, q = (t, sel) => sb.from(t).select(sel).gte("created_at", since).lt("created_at", t1).limit(2000);
     const [lr, sm, pl, se, us, cc] = await Promise.all([
       q("lot_report", "farm_id,report_date,grp,created_by,created_at"),
       q("semen_moves", "id,move_date,kind,bull_code,straws,from_tank,to_tank,notes,created_by,created_at").neq("kind", "servicio"),
@@ -2096,15 +2103,36 @@ async function loadRegistros(){
   })());
   await Promise.all(jobs);
   rows.forEach(r=>{ r.cat = rgCat(r); });
+  if (byEv && !pend){   // por fecha del evento: solo los que caen en el rango
+    for (let i = rows.length - 1; i >= 0; i--){ const d = String(rows[i].date || "").slice(0, 10); if (d < s.from || d > s.to) rows.splice(i, 1); } }
   rows.sort((a,b)=>String(b.when).localeCompare(String(a.when)));
   rgLast = { rows, notes, pend }; rgPick = { title:"", who:"" }; rgDraw();
 }
 // lista de Registros con los filtros de los chips: tocar "Servicio: 14" deja solo los servicios; tocar de nuevo lo quita
-let rgLast = null, rgPick = { title:"", who:"" };
+let rgLast = null, rgPick = { title:"", who:"" }, rgShown = [];
+// exportar lo que se ve (con los filtros) a .txt separado por tabulaciones: se abre directo en Excel
+async function rgExport(){
+  const rows = rgShown; if (!rows.length) return toast("No hay registros con esos filtros");
+  const cat = c => (RG_CATS.find(x=>x[0]===c) || ["", ""])[1].replace(/^\S+\s/, "");
+  const head = ["Fecha del evento","Categoría","Tipo","Vaca","Finca","Detalle","Toro","Resultado","Categoría Interherd","Operario","Comentarios","Registró","Registrado el","Estado"];
+  const cell = v => String(v ?? "").replace(/[\t\r\n]+/g, " ").trim();
+  const lines = rows.map(r=>[String(r.date || "").slice(0, 10), cat(r.cat), r.title, r.cow, r.farm===7 ? "La Isla" : r.farm===1 ? "El Recodo" : "", r.detail,
+    r.raw?.bull, r.raw?.result, r.raw?.category, r.raw?.operator, r.raw?.comments, rgWho(r.who), rgTime(r.when),
+    r.status==="app" ? "" : r.status].map(cell).join("\t"));
+  const txt = "\ufeff" + [head.join("\t"), ...lines].join("\r\n");
+  const s = rgState, tag = [rgPick.title || (s.cat ? cat(s.cat) : "registros"), s.from, s.to].join("_").replace(/[^\w\-áéíóúñÁÉÍÓÚÑ]+/g, "_");
+  const name = `${tag}.txt`, file = new File([txt], name, { type:"text/plain" });
+  if (navigator.canShare?.({ files:[file] })){ try{ await navigator.share({ files:[file], title:name }); return; }catch(e){ if (e.name==="AbortError") return; } }
+  const a = document.createElement("a"); a.href = URL.createObjectURL(file); a.download = name; document.body.appendChild(a); a.click();
+  setTimeout(()=>{ URL.revokeObjectURL(a.href); a.remove(); }, 2000);
+}
 function rgDraw(){
   const { rows:all0, notes, pend } = rgLast, s = rgState;
   const all = pend || !s.cat ? all0 : all0.filter(r=>r.cat===s.cat);
-  const rows = all.filter(r=>(!rgPick.title || r.title===rgPick.title) && (!rgPick.who || rgWho(r.who)===rgPick.who));
+  const qq = String(s.q || "").trim().toLowerCase();
+  const hit = r => !qq || [r.cow, r.title, r.detail, rgWho(r.who), r.farm===7 ? "la isla" : r.farm===1 ? "el recodo" : ""].some(v=>String(v || "").toLowerCase().includes(qq));
+  const rows = all.filter(r=>(!rgPick.title || r.title===rgPick.title) && (!rgPick.who || rgWho(r.who)===rgPick.who) && hit(r));
+  rgShown = rows;
   const pendRows = rows.filter(r=>r.status==="pendiente");
   const byType = (pend ? all : all.filter(r=>!rgPick.who || rgWho(r.who)===rgPick.who)).reduce((g,r)=>{ g[r.title] = (g[r.title]||0) + 1; return g; }, {});
   const byWho = all.filter(r=>!rgPick.title || r.title===rgPick.title).reduce((g,r)=>{ const n = rgWho(r.who); g[n] = (g[n]||0) + 1; return g; }, {});
@@ -2119,7 +2147,8 @@ function rgDraw(){
     ${Object.keys(byType).length ? `<div class="card"><b>${pend ? "⏳ Falta pasar a Interherd" : s.cat ? (RG_CATS.find(c=>c[0]===s.cat)[1] + " · subcategorías") : "Por tipo"}</b> <span class="sub">· toca para filtrar</span>
       <div class="list">${Object.entries(byType).sort((a,b)=>b[1]-a[1]).map(([t,n])=>`<button class="chip ${rgPick.title===t ? "on" : ""}" data-rgt="${esc(t)}">${esc(t)}: <b>${n}</b></button>`).join("")}</div></div>` : ""}
     ${!canSee("registros_todos") ? "" : `<div class="card"><b>👤 Quién registró</b><div class="list">${Object.entries(byWho).sort((a,b)=>b[1]-a[1]).map(([t,n])=>`<button class="chip ${rgPick.who===t ? "on" : ""}" data-rgw="${esc(t)}">${esc(t)}: <b>${n}</b></button>`).join("") || `<span class="sub">—</span>`}</div></div>`}
-    <div class="card"><b>Registros</b>${rgPick.title || rgPick.who ? ` <span class="sub">· ${[rgPick.title, rgPick.who].filter(Boolean).map(esc).join(" · ")} (${rows.length}) · <button class="lnk" data-rgclear="1">quitar filtro</button></span>` : ""}
+    <div class="card"><div style="display:flex;justify-content:space-between;align-items:center;gap:8px"><b>Registros</b>
+      ${rows.length ? `<button class="btn ghost" id="rgTxt" style="width:auto;padding:6px 12px">⬇️ Exportar .txt (${rows.length})</button>` : ""}</div>${rgPick.title || rgPick.who ? ` <span class="sub">· ${[rgPick.title, rgPick.who].filter(Boolean).map(esc).join(" · ")} (${rows.length}) · <button class="lnk" data-rgclear="1">quitar filtro</button></span>` : ""}
       ${days.map(d=>`<div class="ckpen">${d.length===10 ? new Date(d + "T12:00").toLocaleDateString("es-CO", { weekday:"long", day:"numeric", month:"long" }) : esc(d)}</div>
         ${rows.filter(r=>String(r.when).startsWith(d)).map(r=>`<div class="hscard"><div style="display:flex;justify-content:space-between;gap:8px;align-items:baseline">
           <div>${r.icon} <b>${esc(r.title)}</b>${r.cow ? ` · <button class="lnk" data-cow="${esc(r.cow)}">${esc(r.cow)}</button>` : ""}</div>
