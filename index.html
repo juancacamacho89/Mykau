@@ -1931,7 +1931,7 @@ function renderRgFilters(){
     <div style="margin-top:6px${canSee("registros_todos") ? "" : ";display:none"}"><select id="rgUser"><option value="">Todas las personas</option>${users.map(([id,n])=>`<option value="${id}" ${s.user===id?"selected":""}>${esc(n)}</option>`).join("")}</select></div>`;
 }
 // editar / borrar desde Registros: quien lo registró o el administrador
-const RG_EDIT_TYPES = ["calving","service","heat","dry_off","exit","weight"];
+const RG_EDIT_TYPES = ["calving","service","heat","dry_off","exit","weight","abortion","embryo_loss"];
 function rgActs(r){
   if (!r.id || !(isAdmin || (me && r.who===me))) return "";
   const b = (attr, txt, color) => ` <button class="del" ${attr} ${color ? `style="color:var(${color})"` : ""}>${txt}</button>`;
@@ -4460,7 +4460,7 @@ async function openExit(ev, preType){
 // termo del que sale la pajilla: el del lote de la vaca (R 1 → R1, JCAL → JCAL…); si no tiene, el Principal
 const svTank = (pen, tanks) => (tanks||[]).find(t=>t.code===String(pen||"").toUpperCase().replace(/\s/g, ""))?.code || "PRINCIPAL";
 const pendTag = e => (e.sync_status && e.sync_status!=="pending" ? ` <span class="tag" style="background:var(--s0);color:#fff">✓ en Interherd</span>` : ` <span class="tag">⏳ falta en Interherd</span>`)
-  + `${(e.sync_status==="pending" || !e.sync_status) && (e.created_by===me || isAdmin) || isMain() ? `${["calving","service","heat","dry_off","exit","weight"].includes(e.event_type)
+  + `${(e.sync_status==="pending" || !e.sync_status) && (e.created_by===me || isAdmin) || isMain() ? `${["calving","service","heat","dry_off","exit","weight","abortion","embryo_loss"].includes(e.event_type)
   ? ` <button class="del" data-edit="${e.id}" style="color:var(--accent)">editar</button>` : ""}` : ""}`;
 // registros que llegaron de Interherd: solo el administrador principal los puede borrar (quedan en la papelera)
 const ihDel = e => "";
@@ -4486,7 +4486,7 @@ const seg = (name, opts, val) => `<div class="seg">${opts.map(([v,t])=>
 
 async function openReg(type, ev){
   const d = lastCowData; if (!d) return;
-  if (type==="calving") return openCalving(ev);
+  if (["calving", "abortion", "embryo_loss"].includes(type)) return openCalving(ev);
   if (type==="dry_off") return openDry(ev);
   if (type==="exit") return openExit(ev);
   if (type==="weight") return openWeight(ev);
@@ -4616,9 +4616,17 @@ async function openCalving(ev){
   const others = d.events.filter(e=>e.id!==ev?.id);     // al corregir, el propio parto no cuenta
   const segs = lactations(c, others), cur = segs[segs.length-1];
   const sire = ev ? ev.bull || "" : (cur?.fertile || cur?.services[cur.services.length-1])?.bull || "";
-  const x = ev?.details || {}, kv = ev?.category || "", aborto0 = /ABORTO/i.test(kv);
+  const x = ev?.details || {}, kv = ev?.category || "";
+  const kind0 = ev?.event_type==="embryo_loss" ? "me" : ev?.event_type==="abortion" || /ABORTO/i.test(kv) ? "aborto" : "parto";
+  // ¿está en ordeño? último parto sin secado después (o la ficha dice lactancia). Un aborto en ordeño NO es parto:
+  // sigue en su lactancia y su grupo. Si ya estaba seca, el aborto sí abre una nueva lactancia (se registra como parto).
+  const lastC = others.filter(e=>e.event_type==="calving" && (!ev || e.event_date <= (ev.event_date || today()))).pop();
+  const dryAfter = lastC && others.some(e=>e.event_type==="dry_off" && e.event_date > lastC.event_date && (!ev || e.event_date <= ev.event_date));
+  const milking = !!lastC && !dryAfter && !/(^|\/)(Horra|Seca)/i.test(ev ? "" : c.status || "");
   const warns = [];
   if (!ev && !/(^|\/)PR(\/|$)/.test(c.status||"")) warns.push("No figura <b>preñada</b> en Interherd.");
+  const abNote = milking ? `Está <b>en ordeño</b> (parto ${fmt(lastC.event_date)}): el aborto <b>no cuenta como parto</b>; sigue en su lactancia y en su grupo.`
+                         : `Está <b>seca</b>: el aborto <b>inicia una nueva lactancia</b> (cuenta como parto).`;
   const lastCv = others.filter(e=>e.event_type==="calving").pop();
   if (lastCv && days(lastCv.event_date, today()) < 250) warns.push(`Tuvo parto hace <b>${days(lastCv.event_date, today())} d</b> (${fmt(lastCv.event_date)}).`);
   if (!o.groups.length) warns.push("Esta finca no tiene grupos de parto configurados (tabla farm_lists).");
@@ -4638,11 +4646,12 @@ async function openCalving(ev){
       </div></div>`; };
   const bg = document.createElement("div"); bg.className = "sheet-bg";
   bg.innerHTML = `<form class="sheet" autocomplete="off">
-    <h3>${ev ? "Editar parto" : "Parto"} · vaca ${esc(c.id)}</h3>
+    <h3>${ev ? "Editar" : "Parto / aborto"} · vaca ${esc(c.id)}</h3>
     ${warns.map(w=>`<div class="warn">⚠️ ${w}</div>`).join("")}
     <label>Fecha</label><input type="date" name="date" value="${ev?.event_date || today()}" max="${today()}" required>
-    <label>Tipo</label>${seg("kind", [["parto","Parto"],["aborto","Aborto"]], aborto0 ? "aborto" : "parto")}
-    <label>Pasa al grupo</label>${o.groups.length ? seg("pen", o.groups.map(g=>[g,g]), x.dest_pen || "") : `<input name="pen" placeholder="Grupo" value="${esc(x.dest_pen||"")}" style="text-transform:uppercase">`}
+    <label>Tipo</label>${seg("kind", [["parto","Parto"],["aborto","Aborto"],["me","Muerte embrionaria"]], kind0)}
+    <div class="sub" id="cvKindNote" style="margin-top:6px"></div>
+    <div id="cvPen"><label>Pasa al grupo</label>${o.groups.length ? seg("pen", o.groups.map(g=>[g,g]), x.dest_pen || "") : `<input name="pen" placeholder="Grupo" value="${esc(x.dest_pen||"")}" style="text-transform:uppercase">`}</div>
     <div id="cvParto">
       <label>Dificultad</label>${seg("ease", [["Normal","Normal"],["Asistido","Asistido"],["Distocia","Distocia"],["Cesárea","Cesárea"]], x.ease || "Normal")}
       <label>Crías</label>${seg("n", [["1","Una"],["2","Gemelos"]], (x.calves||[]).length > 1 ? "2" : "1")}
@@ -4658,7 +4667,10 @@ async function openCalving(ev){
   const f = bg.querySelector("form");
   // los machos por defecto se venden; si muere no se pide número ni destino
   const sync = ()=>{
-    $("cvParto").classList.toggle("hidden", f.kind.value==="aborto");
+    const k = f.kind.value, noCalv = k==="me" || (k==="aborto" && milking);
+    $("cvParto").classList.toggle("hidden", k!=="parto");
+    $("cvPen").classList.toggle("hidden", noCalv);
+    $("cvKindNote").innerHTML = k==="aborto" ? abNote : k==="me" ? "La muerte embrionaria <b>no cuenta como parto</b>: la vaca queda vacía y sigue en su grupo." : "";
     const n = +f.n.value, box = $("calves");
     while (box.children.length < n) box.insertAdjacentHTML("beforeend", calfBox(box.children.length));
     while (box.children.length > n) box.lastElementChild.remove();
@@ -4689,9 +4701,17 @@ async function openCalving(ev){
     e.preventDefault();
     const err = msg => { f.querySelector("#regErr").textContent = msg; f.querySelector("#regSave").disabled = false; };
     f.querySelector("#regSave").disabled = true;
-    const date = f.date.value, aborto = f.kind.value==="aborto";
+    const date = f.date.value, kind = f.kind.value, aborto = kind!=="parto", noCalv = kind==="me" || (kind==="aborto" && milking);
     if (!date || date > today()) return err("La fecha no puede ser futura.");
-    if (others.some(x=>x.event_type==="calving" && x.event_date===date)) return err("Ya hay un parto registrado ese día.");
+    if (!noCalv && others.some(x=>x.event_type==="calving" && x.event_date===date)) return err("Ya hay un parto registrado ese día.");
+    if (noCalv){   // aborto en ordeño o muerte embrionaria: no es parto (no abre lactancia ni cambia de grupo)
+      const row = { cow_id:c.id, event_date:date, event_type: kind==="me" ? "embryo_loss" : "abortion", source:"app", sync_status:"pending",
+                    category:null, bull:f.bull.value.trim().toUpperCase() || null, comments:f.note.value.trim() || (kind==="me" ? "Muerte embrionaria" : "Aborto en lactancia"),
+                    details:{ in_milk: milking } };
+      const { error } = ev ? await sb.from("cow_events").update(editRow(row)).eq("id", ev.id) : await sb.from("cow_events").insert(row);
+      if (error) return err(/row-level|permission/i.test(error.message) ? "No tienes permiso para registrar en esta finca." : "No se pudo guardar: " + error.message);
+      bg.remove(); toast(`${kind==="me" ? "Muerte embrionaria" : "Aborto"} ${ev ? "corregido" : "guardado"} ✓`); loadCow(c.id); loadPending(); return;
+    }
     const pen = String(f.pen.value||"").trim().toUpperCase();
     if (!aborto && !pen) return err("Elige el grupo al que pasa la vaca.");
     const calves = aborto ? [] : [...$("calves").children].map(el=>{ const i = el.dataset.i, alive = f["alive"+i].value==="1";
@@ -4725,7 +4745,7 @@ async function openCalving(ev){
     const { error } = ev ? await sb.from("cow_events").update(editRow(row)).eq("id", ev.id)
                          : await sb.from("cow_events").insert(row);
     if (error) return err(/row-level|permission/i.test(error.message) ? "No tienes permiso para registrar en esta finca." : "No se pudo guardar: " + error.message);
-    bg.remove(); toast(`${aborto?"Aborto":"Parto"} ${ev ? "corregido" : "guardado"} ✓`); loadCow(c.id); loadPending();
+    bg.remove(); toast(`${aborto ? "Aborto (nueva lactancia)" : "Parto"} ${ev ? "corregido" : "guardado"} ✓`); loadCow(c.id); loadPending();
   });
 }
 
