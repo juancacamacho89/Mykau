@@ -4799,9 +4799,7 @@ function ivOrderHtml(){
       <div><label>Fecha</label><input id="ivODate" type="date" value="${o.date}" max="${today()}" style="min-width:0"></div>
       ${tr ? `<div><label>Nota</label><input id="ivONote" value="${esc(o.notes)}" style="min-width:0"></div></div>` : `<div><label>Proveedor</label><input id="ivOSup" value="${esc(o.supplier)}" list="ivSupps" style="min-width:0"></div></div>
     <datalist id="ivSupps">${[...new Set((ivData.moves || []).map(m=>m.supplier).filter(Boolean))].map(x=>`<option value="${esc(x)}">`).join("")}</datalist>
-    <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">
-      <div><label>Factura</label><input id="ivOInv" value="${esc(o.invoice)}" style="min-width:0"></div>
-      <div><label>Nota</label><input id="ivONote" value="${esc(o.notes)}" style="min-width:0"></div></div>`}
+    <label>Nota</label><input id="ivONote" value="${esc(o.notes)}">`}
     ${ivOptions()}
     <div id="ivLines">${o.lines.map((l, i)=>ivLineHtml(l, i)).join("")}</div>
     <div class="addbar" style="margin-top:8px"><button id="ivAddLine">＋ Otro producto</button>${tr ? "" : `<button id="ivNewProd">＋ Producto nuevo</button>`}</div>
