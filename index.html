@@ -290,6 +290,7 @@ details.lac td{padding:6px 8px}
           <circle cx="14" cy="10.6" r="1.6" fill="#fff" fill-opacity=".55"/><circle cx="31" cy="10.6" r="1.6" fill="#fff" fill-opacity=".55"/>
           <circle cx="14" cy="23.6" r="1.6" fill="#fff" fill-opacity=".55"/><circle cx="31" cy="23.6" r="1.6" fill="#fff" fill-opacity=".55"/>
         </svg></span><b>Mastitis</b></a>
+        <a class="appicon hidden" href="#finanzas" data-perm="finanzas_ver"><span class="ic" style="--g1:#ffe08a;--g2:#b8860b">💰</span><b>Finanzas</b></a>
         <a class="appicon hidden" href="#inventario" data-perm="inventario_ver"><span class="ic" style="--g1:#c3b5ff;--g2:#5b45c9">📦</span><b>Inventario</b><i class="badge hidden" id="badgeInv"></i></a>
         <a class="appicon hidden" href="#salud" data-perm="salud_ver salud_tratar"><span class="ic" style="--g1:#5fd0a5;--g2:#178a62">🩺</span><b>Salud</b><i class="badge hidden" id="badgeSalud"></i></a>
         <a class="appicon" href="#leche" data-perm="pesaje_registrar"><span class="ic" style="--g1:#7cc4ff;--g2:#2f6fd6"><svg viewBox="0 0 48 48" aria-hidden="true">
@@ -432,6 +433,13 @@ details.lac td{padding:6px 8px}
     </section>
 
     <!-- ═══ GENERADOR DE LISTAS ═══ -->
+    <section id="tabFin" class="hidden">
+      <header>
+        <div class="brand"><button class="back" data-home aria-label="Inicio">‹</button><div><h1>Finanzas</h1><div class="sub" id="finSub">Privado · solo Admin Principal</div></div></div>
+        <button class="link logout">Salir</button>
+      </header>
+      <div id="finBody"><div class="card"><div class="empty">Cargando…</div></div></div>
+    </section>
     <section id="tabInv" class="hidden">
       <header>
         <div class="brand"><button class="back" data-home aria-label="Inicio">‹</button><div><h1>Inventario</h1><div class="sub">Existencias, pedidos, conteos y alertas</div></div></div>
@@ -630,7 +638,8 @@ const PERM_FALLBACK = { vacas_repro:"vacas_ver", calidad_ver:"reporte_editar",
 const permOf = (k, n = 0) => perms[k] || (PERM_FALLBACK[k] && n < 5 ? permOf(PERM_FALLBACK[k], n + 1) : null);
 const INV_PROFILES = ["Administrador", "Admin Principal", "Gerente", "Maria"];
 const ivCan = () => INV_PROFILES.includes(myProfile);
-const can = k => (k==="inventario_ver" && ivCan() ? "R" : null) || permOf(k)
+const can = k => k==="finanzas_ver" ? (isMain() && myProfile==="Admin Principal" ? "R" : "N")   // privado: solo Juan
+  : (k==="inventario_ver" && ivCan() ? "R" : null) || permOf(k)
   || (k==="registros_ver" && Object.entries(perms).some(([f, v])=>v==="R" && f!=="registros_todos") ? "V" : null) || "N";   // "R" | "V" | "N"
 const canSee = k => can(k) !== "N", canDo = k => can(k) === "R";
 const ADMIN_PROFILES = ["Administrador", "Admin Principal"];
@@ -702,6 +711,8 @@ function setTab(tab){
   if (tab==="listas") initListas();
   $("tabGen").classList.toggle("hidden", tab!=="generador");
   $("tabInv").classList.toggle("hidden", tab!=="inventario");
+  $("tabFin").classList.toggle("hidden", tab!=="finanzas");
+  if (tab==="finanzas") initFin(); else if ($("finBody")?.dataset.on) { $("finBody").innerHTML = ""; delete $("finBody").dataset.on; }   // no dejar los datos abiertos
   if (tab==="inventario") initInv();
   if (tab==="generador") initGen();
   $("tabToros").classList.toggle("hidden", tab!=="toros");
@@ -721,7 +732,7 @@ function setTab(tab){
 // pantallas y el permiso que las abre (si no lo tiene, vuelve al inicio)
 const TAB_PERM = { terneras:"terneras_historial terneras_vigilar terneras_registrar", traslados:"traslados", leche:"pesaje_registrar",
   diaria:"diaria_registrar diaria_totales diaria_resumen", reporte:"reporte_ver produccion_ver pastos_ver calidad_ver", registros:"registros_ver", chequeo:"chequeo",
-  mastitis:"mastitis_historial mastitis_vigilar", salud:"salud_ver salud_tratar", pastos:"pastos_ver pastos_registrar", pesot:"pesot_registrar", listas:"listas_ver", generador:"generador_ver", inventario:"inventario_ver", toros:"toros_ver toros_registrar", racion:"racion_ver racion_registrar", ronda:"ronda_registrar ronda_ver", rapido:"vacas_servicio vacas_celo vacas_secado salud_tratar traslados vacas_salida", vaca:"vacas_ver" };
+  mastitis:"mastitis_historial mastitis_vigilar", salud:"salud_ver salud_tratar", pastos:"pastos_ver pastos_registrar", pesot:"pesot_registrar", listas:"listas_ver", generador:"generador_ver", inventario:"inventario_ver", finanzas:"finanzas_ver", toros:"toros_ver toros_registrar", racion:"racion_ver racion_registrar", ronda:"ronda_registrar ronda_ver", rapido:"vacas_servicio vacas_celo vacas_secado salud_tratar traslados vacas_salida", vaca:"vacas_ver" };
 function route(){
   const h = decodeURIComponent(location.hash.slice(1));
   const tk = Object.keys(TAB_PERM).find(k=>h.startsWith(k));
@@ -740,6 +751,7 @@ function route(){
   if (h.startsWith("listas")) { setTab("listas"); return; }
   if (h.startsWith("generador")) { setTab("generador"); return; }
   if (h.startsWith("inventario")) { setTab("inventario"); return; }
+  if (h.startsWith("finanzas")) { setTab("finanzas"); return; }
   if (h.startsWith("toros")) { setTab("toros"); return; }
   if (h.startsWith("racion")) { setTab("racion"); return; }
   if (h.startsWith("ronda")) { setTab("ronda"); return; }
@@ -4780,6 +4792,23 @@ document.addEventListener("click", e=>{
   const r = e.target.closest("[data-plrun]");
   if (r){ if (r.dataset.plrun==="descarte") return openExit(null, "descarte"); if (r.dataset.plrun==="secado") return openDry(); }
 });
+
+// ═══════════════════════ FINANZAS (privado: solo Admin Principal) ═══════════════
+// El Dashboard Financiero Pro: SUBIR_FINANZAS.bat sube los datos de Contabilidad\INFORME.xlsx y la plantilla
+// a finance_snapshot (Supabase solo deja leerla al Admin Principal). Nunca se guarda en el celular.
+async function initFin(){
+  const box = $("finBody");
+  if (!navigator.onLine){ box.innerHTML = `<div class="card"><div class="empty">Finanzas necesita señal.</div></div>`; return; }
+  box.innerHTML = `<div class="card"><div class="empty">Cargando…</div></div>`;
+  const { data, error } = await sb.from("finance_snapshot").select("data,template,generated_at").eq("id", 1).maybeSingle();
+  if (error || !data){ box.innerHTML = `<div class="card"><div class="empty">${error ? (/does not exist|schema cache/i.test(error.message) ? "Falta correr SQL/finanzas.sql en Supabase." : esc(error.message))
+    : "Aún no hay datos: corre EJECUTABLES\SUBIR_FINANZAS.bat."}</div></div>`; return; }
+  $("finSub").textContent = `Privado · datos del ${data.generated_at || "—"}`;
+  const html = data.template.replace("/*__DATA__*/null", JSON.stringify(data.data).replace(/<\/script/gi, "<\/script"));
+  box.dataset.on = "1";
+  box.innerHTML = `<iframe id="finFrame" title="Dashboard financiero" style="width:100%;border:0;border-radius:14px;background:#fff;height:calc(100vh - 110px);height:calc(100dvh - 110px)"></iframe>`;
+  $("finFrame").srcdoc = html;
+}
 
 // ═══════════════════════ INVENTARIO ═══════════════════════════
 // La app es la principal: catálogo, presentaciones, pedidos (varias líneas), conteos/salidas y alertas por finca.
