@@ -4679,7 +4679,9 @@ const IV_UNITS = ["mL","L","g","kg","unidad","dosis","jeringa","bolo","pajilla",
 const IV_DRUG = c => !["Material veterinario","Reactivo / diagnóstico","Desinfectante / sellador","Concentrado","Sal mineralizada","Semen",
   "Fertilizante","Semilla","Herbicida / plaguicida","Insecticida","Fungicida","Herbicida","Foliar","Otro",""].includes(c || "");
 const IV_FEED = [["","No"],["concentrate_bags","Concentrado"],["kau_bags","KAU"],["silage_bags","Silo"]];
-const IV_KIND = { entrada:"📥 Entrada", ajuste:"🔢 Conteo", salida:"📤 Salida" };
+const IV_KIND = { entrada:"📥 Entrada", ajuste:"🔢 Conteo", salida:"📤 Salida", traslado:"🔁 Traslado" };
+const IV_ISLA = 7;   // los medicamentos entran a La Isla y de ahí se trasladan a El Recodo
+let ivPedidoSeen = false;
 let ivState = { tab:"stock", farm:null, q:"", cat:"", low:false }, ivData = null, ivReady = false, ivFarms = [], ivOrder = null;
 const ivN = v => (+v || 0).toLocaleString("es-CO", { maximumFractionDigits:1 });
 const ivSup = code => (ivData?.supplies || []).find(x=>x.code===code);
@@ -4722,7 +4724,7 @@ async function ivLoad(){
   const [su, st, mv, al] = await Promise.all([
     psAll(()=>sb.from("supplies").select("*").order("name")),
     sb.from("supply_stock").select("*").eq("farm_id", f),
-    sb.from("supply_entries").select("id,entry_date,kind,supply_code,packs,qty,presentation,pack_size,supplier,invoice,notes,created_by,created_at")
+    sb.from("supply_entries").select("id,entry_date,kind,supply_code,packs,qty,presentation,pack_size,supplier,invoice,notes,created_by,created_at,transfer_ref")
       .eq("farm_id", f).order("entry_date", { ascending:false }).order("id", { ascending:false }).limit(300),
     sb.from("supply_alerts").select("supply_code,min_qty").eq("farm_id", f)]);
   if (al.error || st.error){ ivData = { err:"Falta correr SQL/inventario.sql en Supabase." }; return; }
@@ -4774,7 +4776,7 @@ function ivMovesHtml(list){
     const del = ivCan() && (isMain() || m.created_by===me);
     return `<tr${del ? ` data-swdel="supply_entries|${m.id}"` : ""}><td>${fmt(m.entry_date)}</td><td>${IV_KIND[m.kind || "entrada"] || m.kind}</td>
       <td><b>${esc(sp?.name || m.supply_code)}</b><div class="sub">${m.packs ? `${ivN(m.packs)} × ${esc(m.presentation || "")} · ` : ""}${[m.supplier, m.invoice, m.notes].filter(Boolean).map(esc).join(" · ")}</div></td>
-      <td style="text-align:right;white-space:nowrap">${+m.qty > 0 && m.kind!=="entrada" ? "+" : ""}${ivN(m.qty)} ${esc(sp?.unit || "")}</td></tr>`; }).join("")
+      <td style="text-align:right;white-space:nowrap${+m.qty < 0 ? ";color:var(--s3)" : ""}">${+m.qty > 0 && m.kind!=="entrada" ? "+" : ""}${ivN(m.qty)} ${esc(sp?.unit || "")}</td></tr>`; }).join("")
     || `<tr><td><div class="empty">Sin movimientos</div></td></tr>`}</table>`;
 }
 // ── Pedido: varias líneas a la vez ──
@@ -4784,22 +4786,28 @@ const ivOptions = () => `<datalist id="ivSupList">${(ivData?.supplies || []).fil
 const ivByName = v => { const t = String(v || "").trim().toLowerCase(); const L = (ivData?.supplies || []).filter(x=>x.active!==false);
   return L.find(x=>x.name.toLowerCase()===t) || L.find(x=>x.code.toLowerCase()===t) || null; };
 function ivOrderHtml(){
-  ivOrder ||= { date:today(), supplier:"", invoice:"", notes:"", lines:[ivNewLine()] };
-  const o = ivOrder;
-  return `<div class="card sheet hsform" style="max-height:none"><b>Pedido / entrada de insumos</b>
+  ivOrder ||= { mode:"entrada", to:null, date:today(), supplier:"", invoice:"", notes:"", lines:[ivNewLine()] };
+  const o = ivOrder, others = ivFarms.filter(f=>f.id!==ivState.farm), tr = o.mode==="traslado" && others.length;
+  if (tr && !others.some(f=>f.id===o.to)) o.to = others[0].id;
+  const fl = id => esc(farmLabel(ivFarms.find(f=>f.id===id) || {}));
+  return `<div class="card sheet hsform" style="max-height:none"><b>${tr ? "Traslado entre fincas" : "Pedido / entrada de insumos"}</b>
+    ${others.length ? seg("ivOM", [["entrada","📥 Entrada (pedido)"],["traslado","🔁 Traslado"]], tr ? "traslado" : "entrada") : ""}
+    ${tr ? `<div class="sub" style="margin-top:6px">Sale de <b>${fl(ivState.farm)}</b> y entra a ${others.length > 1
+        ? `<select id="ivOTo">${others.map(f=>`<option value="${f.id}" ${f.id===o.to ? "selected" : ""}>${fl(f.id)}</option>`).join("")}</select>` : `<b>${fl(o.to)}</b>`}.</div>`
+      : ivState.farm!==IV_ISLA && ivFarms.some(f=>f.id===IV_ISLA) ? `<div class="sub" style="margin-top:6px">Ojo: estás registrando la entrada en <b>${fl(ivState.farm)}</b>. Los medicamentos entran a La Isla y de ahí se trasladan.</div>` : ""}
     <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">
       <div><label>Fecha</label><input id="ivODate" type="date" value="${o.date}" max="${today()}" style="min-width:0"></div>
-      <div><label>Proveedor</label><input id="ivOSup" value="${esc(o.supplier)}" list="ivSupps" style="min-width:0"></div></div>
+      ${tr ? `<div><label>Nota</label><input id="ivONote" value="${esc(o.notes)}" style="min-width:0"></div></div>` : `<div><label>Proveedor</label><input id="ivOSup" value="${esc(o.supplier)}" list="ivSupps" style="min-width:0"></div></div>
     <datalist id="ivSupps">${[...new Set((ivData.moves || []).map(m=>m.supplier).filter(Boolean))].map(x=>`<option value="${esc(x)}">`).join("")}</datalist>
     <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">
       <div><label>Factura</label><input id="ivOInv" value="${esc(o.invoice)}" style="min-width:0"></div>
-      <div><label>Nota</label><input id="ivONote" value="${esc(o.notes)}" style="min-width:0"></div></div>
+      <div><label>Nota</label><input id="ivONote" value="${esc(o.notes)}" style="min-width:0"></div></div>`}
     ${ivOptions()}
     <div id="ivLines">${o.lines.map((l, i)=>ivLineHtml(l, i)).join("")}</div>
-    <div class="addbar" style="margin-top:8px"><button id="ivAddLine">＋ Otro producto</button><button id="ivNewProd">＋ Producto nuevo</button></div>
+    <div class="addbar" style="margin-top:8px"><button id="ivAddLine">＋ Otro producto</button>${tr ? "" : `<button id="ivNewProd">＋ Producto nuevo</button>`}</div>
     <div class="sub" id="ivOTot" style="margin-top:8px"></div>
     <div class="err" id="ivErr"></div>
-    <button class="btn" id="ivOSave" style="margin-top:12px">Guardar pedido</button></div>`;
+    <button class="btn" id="ivOSave" style="margin-top:12px">${tr ? "Guardar traslado" : "Guardar pedido"}</button></div>`;
 }
 function ivLineHtml(l, i){
   const sp = ivSup(l.code), ps = ivPres(sp);
@@ -4821,7 +4829,9 @@ function ivOrderCalc(){
   ivOrder.lines.forEach((l, i)=>{ const el = document.querySelector(`[data-ivsum="${i}"]`); if (!el) return;
     const sp = ivSup(l.code), q = (+String(l.packs).replace(",", ".") || 0) * ivLineSize(l), st = ivData.stock.find(r=>r.code===l.code);
     if (q) n++;
-    el.innerHTML = `${q ? `= <b>${ivN(q)} ${esc(sp.unit || "")}</b> · ` : ""}hoy hay ${ivQty(sp, st ? st.stock : 0)}`; });
+    const have = st ? +st.stock : 0, over = ivOrder.mode==="traslado" && q > have + 1e-9;
+    el.innerHTML = `${q ? `= <b>${ivN(q)} ${esc(sp.unit || "")}</b> · ` : ""}${ivOrder.mode==="traslado" ? "hay en esta finca" : "hoy hay"} ${ivQty(sp, have)}`
+      + (over ? ` <b style="color:var(--s4)">· trasladas más de lo que hay</b>` : ""); });
   const t = $("ivOTot"); if (t) t.textContent = n ? `${n} producto${n > 1 ? "s" : ""} con cantidad` : "";
 }
 async function ivOrderSave(){
@@ -4829,21 +4839,30 @@ async function ivOrderSave(){
   const lines = o.lines.filter(l=>l.code && +String(l.packs).replace(",", ".") > 0);
   if (!lines.length) return err("Escoge al menos un producto con cantidad.");
   if (lines.some(l=>+l.pres===-1 && !(ivLineSize(l) > 0 && l.cname.trim()))) return err("En «Otra presentación» escribe el nombre y cuánto trae.");
-  const rows = lines.map(l=>{ const sp = ivSup(l.code), size = ivLineSize(l), packs = +String(l.packs).replace(",", ".");
+  const tr = o.mode==="traslado" && o.to, fl = id => farmLabel(ivFarms.find(f=>f.id===id) || {});
+  let rows = lines.map(l=>{ const sp = ivSup(l.code), size = ivLineSize(l), packs = +String(l.packs).replace(",", ".");
     const pres = +l.pres===-1 ? l.cname.trim() : ivPres(sp)[+l.pres || 0].name;
     return { entry_date:o.date, farm_id:ivState.farm, supply_code:l.code, kind:"entrada", packs, pack_size:size, qty:Math.round(packs*size*1000)/1000,
       presentation:pres, supplier:o.supplier.trim() || null, invoice:o.invoice.trim() || null, notes:o.notes.trim() || null, source:"app" }; });
+  if (tr){
+    const over = rows.filter(r=>r.qty > +(ivData.stock.find(x=>x.code===r.supply_code)?.stock || 0) + 1e-9);
+    if (over.length && !confirm(`Trasladas más de lo que hay registrado en ${fl(ivState.farm)} de: ${over.map(r=>ivSup(r.supply_code)?.name).join(", ")}.\n¿Guardar igual? (falta cargar una entrada o un conteo)`)) return;
+    rows = rows.flatMap(r=>{ const ref = trUid(), note = o.notes.trim();
+      return [{ ...r, kind:"traslado", qty:-r.qty, packs:-r.packs, supplier:null, invoice:null, transfer_ref:ref, notes:`→ ${fl(o.to)}` + (note ? " · " + note : "") },
+              { ...r, kind:"traslado", farm_id:o.to, supplier:null, invoice:null, transfer_ref:ref, notes:`← ${fl(ivState.farm)}` + (note ? " · " + note : "") }]; });
+  }
   $("ivOSave").disabled = true;
   const { error } = await sb.from("supply_entries").insert(rows);
   $("ivOSave").disabled = false;
   if (error) return err(/row-level|permission/i.test(error.message) ? "No tienes permiso para registrar en esta finca." : "No se pudo guardar: " + error.message);
   // presentaciones nuevas quedan guardadas en el producto (no cambian la usual)
-  for (const l of lines.filter(l=>+l.pres===-1)){
+  for (const l of lines.filter(l=>+l.pres===-1 && !tr)){
     const sp = ivSup(l.code), ps = ivPres(sp);
     if (!ps.some(p=>p.name.toLowerCase()===l.cname.trim().toLowerCase()))
       await sb.from("supplies").update({ presentations:[...ps, { name:l.cname.trim(), size:ivLineSize(l) }], updated_at:new Date().toISOString() }).eq("code", l.code);
   }
-  toast(`Pedido guardado ✓ (${rows.length} producto${rows.length > 1 ? "s" : ""})`);
+  const n = tr ? rows.length / 2 : rows.length;
+  toast(`${tr ? "Traslado" : "Pedido"} guardado ✓ (${n} producto${n > 1 ? "s" : ""})`);
   ivOrder = null; ivState.tab = "stock"; await ivLoad(); renderInv(); ivBadge();
 }
 // ── Conteo físico (ajusta al número contado) o salida manual ──
@@ -5024,8 +5043,10 @@ function ivProdForm(sp){
 }
 async function ivDelMove(id){
   const m = ivData?.moves.find(x=>x.id===id), sp = ivSup(m?.supply_code);
-  if (!confirm(`¿Borrar ${IV_KIND[m?.kind || "entrada"] || "el movimiento"} de ${sp?.name || m?.supply_code || ""} del ${fmt(m?.entry_date)}?`)) return;
-  const { data, error } = await sb.from("supply_entries").delete().eq("id", id).select("id");
+  if (!confirm(`¿Borrar ${IV_KIND[m?.kind || "entrada"] || "el movimiento"} de ${sp?.name || m?.supply_code || ""} del ${fmt(m?.entry_date)}?`
+    + (m?.transfer_ref ? "\nSe borra en las dos fincas (sale y entra)." : ""))) return;
+  const q = sb.from("supply_entries").delete();
+  const { data, error } = await (m?.transfer_ref ? q.eq("transfer_ref", m.transfer_ref) : q.eq("id", id)).select("id");
   if (error || !data?.length) return toast("No se pudo borrar" + (error ? ": " + error.message : " (sin permiso)"));
   toast("Borrado"); document.querySelectorAll(".sheet-bg").forEach(b=>b.remove()); await ivLoad(); renderInv(); ivBadge();
 }
@@ -5033,8 +5054,13 @@ function ivWire(){
   const body = $("ivBody");
   body.addEventListener("change", e=>{
     const t = e.target;
-    if (t.name==="ivF"){ ivState.farm = +t.value; jset("ivLast", { farm:ivState.farm }); ivOrder = null; return ivLoad().then(renderInv); }
-    if (t.name==="ivT"){ ivState.tab = t.value; ivState.q = ""; return renderInv(); }
+    if (t.name==="ivF"){ ivState.farm = +t.value; jset("ivLast", { farm:ivState.farm }); if (ivOrder) ivOrder.to = null; return ivLoad().then(renderInv); }
+    if (t.name==="ivT"){ ivState.tab = t.value; ivState.q = "";
+      if (t.value==="pedido" && !ivPedidoSeen && ivState.farm!==IV_ISLA && ivFarms.some(f=>f.id===IV_ISLA)){
+        ivPedidoSeen = true; ivState.farm = IV_ISLA; ivOrder = null; return ivLoad().then(renderInv); }
+      ivPedidoSeen ||= t.value==="pedido"; return renderInv(); }
+    if (t.name==="ivOM"){ ivOrder.mode = t.value; return renderInv(); }
+    if (t.id==="ivOTo"){ ivOrder.to = +t.value; return; }
     if (t.id==="ivAll"){ ivState.all = t.checked; return renderInv(); }
     if (t.name==="ivCM"){ ivCnt.mode = t.value; return renderInv(); }
     if (t.id==="ivCName"){ const sp = ivByName(t.value); ivCnt.code = sp?.code || ""; ivCnt.unit = "pack"; return renderInv(); }
