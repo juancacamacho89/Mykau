@@ -2163,7 +2163,11 @@ async function renderProduccion(box){
       const fb = e.target.closest("[data-prf]"); if (fb){ s.farm = fb.dataset.prf; s.pen = ""; jset("prLast", { farm:s.farm, per:s.per }); prDraw(); return; }
       const pb = e.target.closest("[data-prpe]"); if (pb){ s.per = pb.dataset.prpe; jset("prLast", { farm:s.farm, per:s.per }); prDraw(); return; }
       const k = e.target.closest("[data-prk]"); if (k){ s.a = prShift(s.per, s.a, +k.dataset.prk); prDraw(); } });
-    $("prOut").addEventListener("click", e=>{ const m = e.target.closest("[data-prmet]"); if (m){ prState.met = m.dataset.prmet; prDraw(); } });
+    $("prOut").addEventListener("click", e=>{ const m = e.target.closest("[data-prmet]"); if (m){ prState.met = m.dataset.prmet; prDraw(); return; }
+      const w = e.target.closest("[data-prwk]"); if (!w) return;
+      const rs = $("prOut").querySelectorAll(`[data-prwd="${w.dataset.prwk}"]`), open = rs[0]?.classList.contains("hidden");
+      rs.forEach(r=>r.classList.toggle("hidden", !open));
+      const b = w.querySelector("b"); b.textContent = b.textContent.replace(/^[▸▾]/, open ? "▾" : "▸"); });
   }
   if (!navigator.onLine){ $("prOut").innerHTML = `<div class="card"><div class="empty">Los reportes necesitan señal.</div></div>`; return; }
   const r = await prLoad();
@@ -2185,24 +2189,21 @@ function prWeekTable(){
   const td = (v, b) => `<td style="text-align:right">${b ? "<b>" : ""}${v}${b ? "</b>" : ""}</td>`;
   // semanas de lunes a domingo: subtotal al terminar cada una (la lista va del día más nuevo al más viejo)
   const monday = d => { const w = (new Date(d + "T12:00").getDay() + 6) % 7; return addDays(d, -w); };
-  let rows = "", wk = [];
-  ds.forEach((d, i)=>{
-    rows += `<tr><td style="text-transform:capitalize">${dn(d)}</td>${FS.map(([f])=>td(cell(d, f)!=null ? n0(cell(d, f)) : "—")).join("")}${td(dayTot(d) ? n0(dayTot(d)) : "—", 1)}</tr>`;
-    wk.push(d);
-    if (d===monday(d) || i===ds.length - 1){
-      rows += `<tr style="background:var(--line)"><td class="sub"><b>Semana del ${fmt(wk[wk.length - 1])}</b></td>${FS.map(([f])=>td(n0(sum(f, wk)), 1)).join("")}${td(n0(FS.reduce((a,[f])=>a + sum(f, wk), 0)), 1)}</tr>`;
-      wk = [];
-    }
-  });
+  // una fila por semana (de lunes a domingo); al tocarla se abren sus días
+  const weeks = []; let wk = [];
+  ds.forEach((d, i)=>{ wk.push(d); if (d===monday(d) || i===ds.length - 1){ weeks.push(wk); wk = []; } });
+  const rows = weeks.map((w, k)=>`<tr data-prwk="${k}" style="cursor:pointer;background:var(--line)"><td><b>${k===0 ? "▾" : "▸"} Semana del ${fmt(w[w.length - 1])}</b>${w.length < 7 ? ` <span class="sub">(${w.length} d)</span>` : ""}</td>
+      ${FS.map(([f])=>td(n0(sum(f, w)), 1)).join("")}${td(n0(FS.reduce((a,[f])=>a + sum(f, w), 0)), 1)}</tr>`
+    + w.map(d=>`<tr data-prwd="${k}"${k===0 ? "" : ` class="hidden"`}><td style="text-transform:capitalize;padding-left:18px">${dn(d)}</td>${FS.map(([f])=>td(cell(d, f)!=null ? n0(cell(d, f)) : "—")).join("")}${td(dayTot(d) ? n0(dayTot(d)) : "—", 1)}</tr>`).join("")).join("");
   const avg = f => { const n = ds.filter(d=>cell(d, f)!=null).length; return n ? n0(sum(f)/n) : "—"; };
   const totAll = FS.reduce((a,[f])=>a + sum(f), 0), nAll = Math.max(1, ds.filter(d=>dayTot(d)).length);
-  return `<div class="card"><details><summary style="cursor:pointer"><b>🥛 Leche producida · último mes</b>
-      <div class="sub">Litros por finca, ${fmt(first)} a ${fmt(last)} · total <b>${n0(totAll)}</b> · ${n0(totAll/nAll)} L/día · toca para ver día a día</div></summary>
+  return `<div class="card"><b>🥛 Leche producida · último mes</b>
+      <div class="sub">Litros por finca, ${fmt(first)} a ${fmt(last)} · toca una semana para ver sus días</div>
     <table class="ivt" style="font-size:14px;margin-top:6px"><tr><th>Día</th>${FS.map(([,n])=>`<th style="text-align:right">${n}</th>`).join("")}<th style="text-align:right">Total</th></tr>
     ${rows}
     <tr style="border-top:2px solid var(--line)"><td><b>Mes</b></td>${FS.map(([f])=>td(n0(sum(f)), 1)).join("")}${td(n0(totAll), 1)}</tr>
     <tr><td class="sub">Promedio/día</td>${FS.map(([f])=>`<td class="sub" style="text-align:right">${avg(f)}</td>`).join("")}<td class="sub" style="text-align:right">${n0(totAll/nAll)}</td></tr>
-    </table></details></div>`;
+    </table></div>`;
 }
 function prDraw(){
   const s = prState, farms = [["all","Ambas"],["1","El Recodo"],["7","La Isla"]];
