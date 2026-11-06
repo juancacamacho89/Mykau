@@ -2961,13 +2961,13 @@ function trInvHtml(){
       ${neg.map(x=>`<div style="margin-top:4px"><b>${esc(x.bull_code)}</b> ${esc(trBull(x.bull_code)?.name || "")} · ${esc(x.tank)}: <b>${x.straws}</b></div>`).join("")}</div>` : ""}
     <div class="card">${chips}
       <div class="rpk" style="margin-top:10px"><div><b>${tot}</b><span>pajillas</span></div><div><b>${list.length}</b><span>toros</span></div></div>
-      <table style="margin-top:10px"><tr><th>Toro</th><th style="text-align:right">Pajillas</th></tr>
+      <table class="ivt" style="margin-top:10px"><tr><th>Toro</th><th style="text-align:right">Pajillas</th></tr>
       ${list.map(r=>{ const b = trBull(r.code) || {};
         return `<tr><td><b>${esc(r.code)}</b> ${esc(b.name || "")}${b.sexed ? ` <span class="tag">♀ sexado</span>` : ""}<div class="sub">${esc(b.company || "")}${!s.tank ? (b.company ? " · " : "") + tanks.filter(t=>r.by[t.code]).map(t=>`${esc(t.name || t.code)} ${r.by[t.code]}`).join(" · ") : ""}</div></td>
           <td style="text-align:right;font-size:17px"><b ${r.n < 0 || Object.values(r.by).some(v=>v < 0) ? `style="color:var(--s4)"` : ""}>${r.n}</b></td></tr>`; }).join("") || `<tr><td colspan="2"><div class="empty">Sin pajillas${s.tank ? " en este termo" : ""}</div></td></tr>`}</table>
       <div class="sub" style="margin-top:8px"><button class="lnk" id="trReload">actualizar</button></div></div>
     <div class="card"><b>Últimos movimientos</b>
-      <table style="font-size:13px;margin-top:6px">${mv.map(m=>`<tr><td>${fmt(m.move_date)}</td><td>${TR_KIND[m.kind] || m.kind}</td>
+      <table class="ivt" style="font-size:13px;margin-top:6px">${mv.map(m=>`<tr><td>${fmt(m.move_date)}</td><td>${TR_KIND[m.kind] || m.kind}</td>
         <td><b>${esc(m.bull_code)}</b> ${esc(trBull(m.bull_code)?.name || "")}<div class="sub">${m.from_tank ? esc(m.from_tank) + (m.to_tank ? " → " : "") : ""}${esc(m.to_tank || "")}${m.notes && m.kind==="servicio" ? " · " + esc(m.notes) : ""}${m.price ? " · $" + Number(m.price).toLocaleString("es-CO") : ""}</div></td>
         <td style="text-align:right">${m.straws}</td></tr>`).join("") || `<tr><td><div class="empty">Sin movimientos</div></td></tr>`}</table></div>`;
 }
@@ -3035,7 +3035,7 @@ function trBullsHtml(){
         ${reg && !e ? `<button class="btn" id="trBNew" style="width:auto;flex:none">＋ Crear</button>` : ""}</div>
       <div class="sheet" style="margin-top:8px;padding:0;background:none;max-height:none">${seg("trA", [["act","Activos"],["all","Todos"]], s.all)}</div>
       <div class="sub" id="trCount" style="margin-top:6px">${s.all==="all" ? "Todos los toros" : "Activos: con pajillas en algún termo"}${q ? " · búsqueda" : ""} (${list.length})</div>
-      <table id="trList" style="margin-top:6px">${list.map(b=>`<tr ${reg ? `data-trb="${esc(b.code)}" style="cursor:pointer"` : ""}><td><b>${esc(b.code)}</b> ${esc(b.name || "")}
+      <table class="ivt" id="trList" style="margin-top:6px">${list.map(b=>`<tr ${reg ? `data-trb="${esc(b.code)}" style="cursor:pointer"` : ""}><td><b>${esc(b.code)}</b> ${esc(b.name || "")}
           <div class="sub">${[b.breed, b.sexed ? "♀ Sexado" : "Convencional", b.company, b.registration].filter(Boolean).map(esc).join(" · ")}${b.active ? "" : " · inactivo"}</div></td>
         <td style="text-align:right">${trData.stock.filter(x=>x.bull_code===b.code).reduce((a,x)=>a + +x.straws, 0) || ""}</td></tr>`).join("")
         || `<tr><td><div class="empty">Ninguno</div></td></tr>`}</table></div>`;
