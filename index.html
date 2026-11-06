@@ -604,8 +604,20 @@ const badge = s => `<span class="sc" style="background:${COLORS[Math.max(0,Math.
 const SHORT = {TRIMETO_SULFA:"SULFA",ENROFLOXACINA:"ENRO",MARBOFLOXACINA:"MARBO",OXITETRACICLINA:"OXI",FLORFENICOL:"FLOR",CEFTIOFUR:"CEFT",CEFALEXINA:"CEFA",PENICILINA:"PENI",TILOSINA:"TILO"};
 const short = d => SHORT[d] || String(d).slice(0,5);
 const drugsOf = e => (e.treatments||[]).map(t=>t.drugs?.name).filter(Boolean);
+// Si el celular se queda sin espacio, se borran primero las copias que se vuelven a bajar solas (listas, lotes,
+// catálogos) y las planillas viejas ya enviadas; las planillas sin enviar y los "por subir" nunca se borran.
+const STORE_CACHE = /^(ckData|ckLists|dmCows|dmPads|hsList|psField|psList|psLots|rcData|tnCows|mkLot|lsData|gnData|trData|hsCat|nextCalf|ivData)(:|$)/;
+function storeFree(){
+  try{
+    const keys = Object.keys(localStorage), old = Date.now() - 10*864e5;
+    keys.filter(k=>STORE_CACHE.test(k)).forEach(k=>localStorage.removeItem(k));
+    keys.filter(k=>k.startsWith("mk:")).forEach(k=>{ try{ const d = JSON.parse(localStorage.getItem(k));
+      if (d && !d.dirty && (d.updated || d.created || 0) < old) localStorage.removeItem(k); }catch(e){} });
+  }catch(e){}
+}
 const store = { get:k=>{ try{ return localStorage.getItem(k); }catch(e){ return null; } },
-                set:(k,v)=>{ try{ localStorage.setItem(k,v); }catch(e){} } };
+                set:(k,v)=>{ try{ localStorage.setItem(k,v); return true; }catch(e){}
+                             storeFree(); try{ localStorage.setItem(k,v); return true; }catch(e){ return false; } } };
 
 function age(birth){
   if (!birth) return "—";
@@ -5502,14 +5514,14 @@ $("mkOpen").addEventListener("click", async ()=>{
     if (!lot) return $("mkErr").textContent = "Sin señal y sin copia guardada de este lote. Ábrelo una vez con internet.";
     const f = mkFarms.find(x=>x.id===farm);
     d = { farm, pen, herd:f.herd, date, cows:lot.cows, prev:lot.prev, am:{}, pm:{}, note:{}, created:Date.now() };
-    jset(key, d);
+    if (!jset(key, d)) toast("⚠️ El celular no tiene espacio: la planilla abre, pero envíala apenas termines");
   }
   // lo que otra persona ya registró ese día (p. ej. la mañana desde otro celular) aparece en la planilla
   if (navigator.onLine){
     const got = await mkMergeDay(d);
     if (got){ jset(key, d); toast(`Se cargaron ${got} datos que ya estaban registrados ese día`); }
   }
-  openSheet(key, ses);
+  openSheet(key, ses, d);
 });
 
 // datos de ese día que ya están en Supabase (otro usuario u otro celular): llenan lo que esté vacío en la planilla
@@ -5545,13 +5557,17 @@ async function loadLot(farm, pen, date){
   return jget(ck, null);
 }
 
-function openSheet(key, ses){
-  mkCur = { key, ses, ...jget(key) };
+function openSheet(key, ses, d0){
+  // si el celular no la pudo guardar, se abre con la que está en memoria (antes quedaba la pantalla negra)
+  const d = jget(key, null) || d0;
+  if (!d?.cows) return toast("No se pudo abrir la planilla: vuelve a intentar con señal");
+  mkCur = { key, ses, am:{}, pm:{}, note:{}, prev:{}, ...d };
   $("mkSetup").classList.add("hidden"); $("mkSheet").classList.remove("hidden");
   renderSheet(); window.scrollTo({top:0});
   const first = $("mkSheet").querySelector("input.kg:not(:disabled)"); first && first.focus();
 }
-function saveCur(){ const { key, ses, ...d } = mkCur; d.updated = Date.now(); d.dirty = true; jset(key, d); }
+function saveCur(){ const { key, ses, warned, ...d } = mkCur; d.updated = Date.now(); d.dirty = true;
+  if (!jset(key, d) && !mkCur.warned){ mkCur.warned = true; toast("⚠️ El celular no tiene espacio: envía la planilla apenas termines"); } }
 
 function renderSheet(){
   const d = mkCur, s = d.ses, other = s==="am" ? "pm" : "am";
