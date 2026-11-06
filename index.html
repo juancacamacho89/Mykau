@@ -2563,6 +2563,10 @@ function rqInfo(c){
   return [st, c.lactation_num > 0 && del!=null ? `${del} d` : "", c.lactation_num > 0 ? `L${c.lactation_num}` : (c.birth_date ? Math.floor(days(c.birth_date, today())/30.4) + " m" : "")].filter(Boolean).join(" · ");
 }
 function renderRapido(){
+  renderRapido0();
+  if (rq.type==="dry_off") rqLoadLost().then(ok=>{ if (ok && $("rqDry")) $("rqDry").innerHTML = rqDryHtml(); });
+}
+function renderRapido0(){
   const types = RQ_TYPES.filter(t=>canDo(t[2])), f = rqFarm(rq.farm);
   const pens = [...new Set(rqCows.map(c=>c.pen||"—"))].sort(byNum);
   const shown = rqShown();
@@ -2583,6 +2587,89 @@ function renderRapido(){
     <div class="card hsform"><b>3 · Datos</b>${rqForm(f)}</div>
     <div class="err" id="rqErr"></div>
     <button class="btn" id="rqGo" style="font-size:18px;padding:14px;margin-bottom:24px" ${sel.length ? "" : "disabled"}>Ejecutar · ${esc(RQ_TYPES.find(t=>t[0]===rq.type)[1].replace(/^\S+\s/, ""))} a ${sel.length} animal${sel.length===1?"":"es"}</button>` : ""}</div>`;
+}
+// ── Secado: cuartos perdidos (CMT "P" en Mastitis) → jeringas por vaca, y PDF por lote ──
+let rqLost = {}, rqCull = {};   // cow_id → cuartos perdidos (lostQuarters) · descarte programado (hoja de vida)
+async function rqLoadLost(){
+  const need = rqCows.filter(c=>rq.sel.has(c.id) && !(c.id in rqLost)); if (!need.length || !navigator.onLine) return false;
+  for (let i = 0; i < need.length; i += 150){
+    const part = need.slice(i, i + 150);
+    const { data, error } = await sb.from("cow_mastitis").select("cow_id,check_date,ai,ad,pi,pd").in("cow_id", part.map(c=>c.id)).order("check_date");
+    if (error) return false;
+    const pl = await sb.from("cow_plans").select("cow_id,due_date").in("cow_id", part.map(c=>c.id)).eq("plan_type", "descarte").eq("status", "pending");
+    (pl.data || []).forEach(x=>{ rqCull[x.cow_id] = x.due_date; });
+    part.forEach(c=>{ rqLost[c.id] = lostQuarters((data || []).filter(m=>m.cow_id===c.id && (!c.birth_date || m.check_date >= c.birth_date))); });
+  }
+  return true;
+}
+// jeringas de cada vaca: lo que se escribió, o 4 − cuartos que siguen perdidos (los que "volvieron" se cuentan, con aviso)
+const rqSyr = c => { const w = rq.d.jw?.[c.id]; if (w!=null) return w; if (rqCull[c.id]) return 0; const l = rqLost[c.id]; return l ? 4 - l.filter(q=>!q.recovered).length : 4; };
+const rqLostTxt = c => [rqCull[c.id] ? `descarte programado ${fmt(rqCull[c.id])}` : "",
+  ...(rqLost[c.id] || []).map(q=>`${q.k.toUpperCase()} perdido${q.recovered ? " (volvió a dar " + q.recovered[q.k] + " el " + fmt(q.recovered.check_date) + ": revisar)" : ""}`)].filter(Boolean).join(", ");
+function rqDryHtml(){
+  const cows = rqCows.filter(c=>rq.sel.has(c.id)).sort((a, b)=>byNum(a.pen || "", b.pen || "") || byNum(a.id, b.id));
+  if (!cows.length) return `<div class="empty">Primero escoge las vacas arriba</div>`;
+  const loading = cows.some(c=>!(c.id in rqLost)), tot = cows.reduce((a, c)=>a + rqSyr(c), 0), warn = cows.filter(c=>rqLostTxt(c));
+  return `<div class="sub" style="margin:4px 0"><b>${tot} jeringas</b> para ${cows.length} vaca${cows.length===1 ? "" : "s"}${loading ? " · revisando cuartos perdidos…" : ""}
+      ${warn.length ? ` · <b style="color:var(--s4)">⚠️ ${warn.length} con cuarto perdido o descarte</b>` : ""}</div>
+    <div style="max-height:40vh;overflow:auto;border-top:1px solid var(--line)">${cows.map(c=>{ const lt = rqLostTxt(c), n = rqSyr(c);
+      return `<div class="row" style="align-items:center;gap:8px;padding:6px 2px;border-bottom:1px solid var(--line)">
+        <b style="min-width:62px">${esc(c.id)}</b><span class="sub" style="flex:1;min-width:0">${esc(c.pen || "")}${lt ? ` · <b style="color:var(--s4)">⚠️ ${esc(lt)}</b>` : ""}</span>
+        <select data-rqjw="${esc(c.id)}" style="width:auto;padding:8px">${[4, 3, 2, 1, 0].map(k=>`<option value="${k}" ${n===k ? "selected" : ""}>${k} jer.</option>`).join("")}</select></div>`; }).join("")}</div>
+    <div class="row" style="gap:8px;margin-top:8px"><button class="btn ghost" id="rqDryPdf" ${loading ? "disabled" : ""}>📄 PDF de secado</button>
+      ${navigator.canShare ? `<button class="btn ghost" id="rqDryShare" ${loading ? "disabled" : ""}>📤 Enviar PDF</button>` : ""}</div>`;
+}
+async function rqDryRefresh(){
+  if (rq.type!=="dry_off" || !$("rqDry")) return;
+  $("rqDry").innerHTML = rqDryHtml();
+  if (await rqLoadLost() && $("rqDry")) $("rqDry").innerHTML = rqDryHtml();
+}
+// PDF A4: un bloque por lote (hasta 3 por fila), vaca · jeringas · nota; total por lote y total general
+async function rqDryPdf(mode){
+  rqRead();
+  const cows = rqCows.filter(c=>rq.sel.has(c.id)); if (!cows.length) return toast("Escoge las vacas");
+  let JsPDF; try{ JsPDF = await lsLoadJsPdf(); }catch(e){ return toast("Se necesita señal la primera vez para armar el PDF"); }
+  const sup = jget("hsCat", { supplies:[] }).supplies.find(m=>m.code===rq.d.sup);
+  const pens = [...new Set(cows.map(c=>c.pen || "—"))].sort(byNum);
+  const groups = pens.map(p=>({ pen:p, rows:cows.filter(c=>(c.pen || "—")===p).sort((a, b)=>byNum(a.id, b.id)).map(c=>({ id:c.id, n:rqSyr(c), note:rqLostTxt(c) })) }));
+  const doc = new JsPDF({ unit:"mm", format:"a4", compress:true }), M = 8, W = 210 - 2*M, GAP = 4, CW = (W - 2*GAP)/3;
+  const colW = [CW*0.26, CW*0.16, CW*0.58], farm = farmLabel(rqFarm(rq.farm) || {});
+  const title = `SECADO ${fmt(rq.date)} · ${farm}${sup ? " · " + sup.name : ""}`;
+  const head = ()=>{ doc.setTextColor(224, 0, 0); doc.setFont("helvetica", "bold"); doc.setFontSize(15); doc.text(title, 105, M + 6, { align:"center" }); };
+  head();
+  let y = M + 12, rowMax = 0;
+  for (let g = 0; g < groups.length; g += 3){
+    const band = groups.slice(g, g + 3), n = Math.max(...band.map(b=>b.rows.length));
+    let RH = 6.2; if (y + 8 + n*RH + 10 > 297 - M - 14){ if (y > M + 12){ doc.addPage(); head(); y = M + 12; } RH = Math.max(3.6, Math.min(6.2, (297 - 2*M - 40)/Math.max(1, n))); }
+    band.forEach((b, k)=>{
+      const x0 = M + k*(CW + GAP);
+      doc.setTextColor(31, 56, 100); doc.setFont("helvetica", "bold"); doc.setFontSize(11);
+      doc.text(String(LS_PEN_NAME[b.pen] || b.pen), x0, y + 4);
+      doc.setFontSize(7); doc.setTextColor(90); doc.text("VACA", x0 + 1, y + 8.5); doc.text("JER.", x0 + colW[0] + 1, y + 8.5); doc.text("NOTA", x0 + colW[0] + colW[1] + 1, y + 8.5);
+      b.rows.forEach((r, j)=>{
+        const y0 = y + 10 + j*RH, lost = !!r.note;
+        doc.setDrawColor(0); doc.setLineWidth(0.2);
+        if (lost){ doc.setFillColor(255, 230, 153); doc.rect(x0, y0, colW[0] + colW[1] + colW[2], RH, "F"); }
+        doc.rect(x0, y0, colW[0], RH); doc.rect(x0 + colW[0], y0, colW[1], RH); doc.rect(x0 + colW[0] + colW[1], y0, colW[2], RH);
+        doc.setTextColor(0); doc.setFont("helvetica", lost ? "bold" : "normal"); doc.setFontSize(Math.min(11, RH*1.8));
+        doc.text(String(r.id), x0 + colW[0]/2, y0 + RH*0.72, { align:"center" });
+        doc.text(String(r.n), x0 + colW[0] + colW[1]/2, y0 + RH*0.72, { align:"center" });
+        if (lost){ doc.setFontSize(Math.min(6.5, RH*1.1)); doc.text(doc.splitTextToSize(r.note, colW[2] - 2).slice(0, 2), x0 + colW[0] + colW[1] + 1, y0 + RH*0.45); }
+      });
+      const tot = b.rows.reduce((a, r)=>a + r.n, 0);
+      doc.setTextColor(31, 56, 100); doc.setFont("helvetica", "bold"); doc.setFontSize(10);
+      doc.text(`${b.rows.length} vaca${b.rows.length===1 ? "" : "s"} · ${tot} jeringas`, x0 + CW, y + 10 + b.rows.length*RH + 5, { align:"right" });
+    });
+    y += 10 + n*RH + 12;
+  }
+  const all = groups.flatMap(g=>g.rows), tot = all.reduce((a, r)=>a + r.n, 0), lostN = all.filter(r=>r.note).length;
+  doc.setTextColor(224, 0, 0); doc.setFont("helvetica", "bold"); doc.setFontSize(15);
+  const yT = Math.min(y + 2, 297 - M - 10);
+  doc.text(`TOTAL: ${all.length} vaca${all.length===1 ? "" : "s"} · ${tot} jeringas${sup ? " de " + sup.name : ""}`, 210 - M, yT, { align:"right" });
+  if (lostN){ doc.setFontSize(9); doc.setTextColor(90); doc.text(`En amarillo: ${lostN} vaca${lostN===1 ? "" : "s"} con cuarto perdido (CMT de Mastitis) o descarte programado`, 210 - M, yT + 6, { align:"right" }); }
+  const name = `Secado ${rq.date} ${farm}.pdf`, file = new File([doc.output("blob")], name, { type:"application/pdf" });
+  if (mode==="share" && navigator.canShare?.({ files:[file] })){ try{ await navigator.share({ files:[file], title:name.replace(/\.pdf$/, "") }); }catch(e){} return; }
+  const a = document.createElement("a"); a.href = URL.createObjectURL(file); a.download = name; a.click(); setTimeout(()=>URL.revokeObjectURL(a.href), 4000);
 }
 // lista de animales (se redibuja sola al buscar: el campo de búsqueda no se toca y el teclado no cambia)
 // un número: los que lo contienen · varios (separados por espacio o coma): exactamente esos
@@ -2629,7 +2716,9 @@ function rqForm(f){
     const sup = jget("hsCat", { supplies:[] }).supplies.filter(m=>m.unit==="jeringa");
     h += `<label>Pasa al grupo</label>${dry.length ? seg("rqPen", dry.map(g=>[g,g]), d.pen || dry[0]) : `<input id="rqPenT" value="${esc(d.pen||"")}">`}
       <label>Producto de secado (opcional · por vaca)</label><div class="row"><input class="supq" placeholder="🔍 nombre" autocomplete="off" style="flex:0 0 34%;min-width:0;padding:8px"><select data-supsel="1" id="rqSup" style="flex:1">${opt("", "— Ninguno —", !d.sup)}${sup.map(m=>opt(m.code, m.name, m.code===d.sup)).join("")}</select>
-      <input id="rqQty" inputmode="decimal" value="${esc(d.qty ?? 4)}" style="flex:0 0 80px"></div>`;
+      </div>
+      <label>Jeringas por vaca</label><div class="sub">Una por cuarto (4). Si en Mastitis tiene un cuarto reportado perdido (P), se le quita esa jeringa; si tiene descarte programado, 0. Puedes cambiar el número de cada vaca (0 = no se le aplica).</div>
+      <div id="rqDry">${rqDryHtml()}</div>`;
   }
   if (rq.type==="treat"){
     const sup = jget("hsCat", { supplies:[] }).supplies.filter(x=>!/material|reactivo|concentrado|sal mineral|semen|fertiliz|semilla|herbicida/i.test(x.category||""));
@@ -2668,7 +2757,7 @@ function rqRead(){
   if (r("rqStraws")) d.straws = +r("rqStraws");
   if (r("rqPen")) d.pen = r("rqPen"); if ($("rqPenT")) d.pen = v("rqPenT").trim().toUpperCase();
   if (r("rqTF")) d.toFarm = +r("rqTF");
-  if ($("rqSup")) d.sup = v("rqSup"); if ($("rqQty")) d.qty = v("rqQty");
+  if ($("rqSup")) d.sup = v("rqSup");
   if ($("rqDest")) d.dest = v("rqDest"); if ($("rqVal")) d.val = v("rqVal"); if ($("rqNote")) d.note = v("rqNote");
 }
 $("rqBody").addEventListener("click", async e=>{
@@ -2693,6 +2782,8 @@ $("rqBody").addEventListener("click", async e=>{
     if (miss.length) toast(`No están activos en esta finca: ${miss.join(", ")}`);
     return; }
   if (t.id==="rqGo") return rqExec();
+  if (t.id==="rqDryPdf") return rqDryPdf("download");
+  if (t.id==="rqDryShare") return rqDryPdf("share");
 });
 $("rqBody").addEventListener("change", async e=>{
   const t = e.target;
@@ -2702,7 +2793,9 @@ $("rqBody").addEventListener("change", async e=>{
     $("rqCount").textContent = `(${n} escogidos)`;
     if (go){ go.disabled = !n; go.textContent = go.textContent.replace(/a \d+ animal(es)?$/, `a ${n} animal${n===1?"":"es"}`); }
     if ($("rqPerBull")) $("rqPerBull").innerHTML = rqPerBullHtml();
+    rqDryRefresh();
     return; }
+  if (t.dataset.rqjw!=null){ (rq.d.jw ||= {})[t.dataset.rqjw] = +t.value; $("rqDry").innerHTML = rqDryHtml(); return; }
   if (t.id==="rqBull"){ rq.d.bull = t.value.trim().toUpperCase(); if ($("rqPerBull")) $("rqPerBull").innerHTML = rqPerBullHtml(); return; }
   if (t.name==="rqStraws"){ rq.d.straws = +t.value; if ($("rqPerBull")) $("rqPerBull").innerHTML = rqPerBullHtml(); return; }
   if (t.dataset.rqsw!=null){ (rq.d.sw ||= {})[t.dataset.rqsw] = +t.value; $("rqPerBull").innerHTML = rqPerBullHtml(); return; }
@@ -2753,7 +2846,10 @@ async function rqExec(){
   if (rq.type==="dry_off"){
     if (!d.pen) return err("Escoge el grupo de secas.");
     rows = cows.map(c=>({ ...base, cow_id:c.id, event_type:"dry_off", details:{ dest_pen:d.pen } })); label = `Secado → ${d.pen}`;
-    if (d.sup && +d.qty > 0) treat = { kind:"Secado", items:[{ code:d.sup, dose:+String(d.qty).replace(",", "."), unit:"jeringa", route:"Intramamaria" }] };
+    if (d.sup) treat = { kind:"Secado", items:[{ code:d.sup, dose:null, unit:"jeringa", route:"Intramamaria" }], doseOf:id=>rqSyr(rqCows.find(c=>c.id===id)) };
+    const lostC = cows.filter(c=>rqLostTxt(c));
+    label = `Secado → ${d.pen}` + (d.sup ? ` · ${cows.reduce((a, c)=>a + rqSyr(c), 0)} jeringas` : "")
+      + (lostC.length ? `\n⚠️ Cuarto perdido o descarte: ${lostC.map(c=>`${c.id} (${rqSyr(c)} jer.)`).join(", ")}` : "");
   }
   if (rq.type==="treat"){
     const items = (d.items||[]).filter(i=>i.code);
@@ -2785,12 +2881,14 @@ async function rqExec(){
   }
   if (treat){   // un tratamiento por animal en Salud (descuenta del inventario)
     const uid = () => crypto.randomUUID ? crypto.randomUUID() : String(Date.now()) + Math.random();
-    const tx = cows.map(c=>({ client_id:uid(), farm_id:c.farm_id, cow_id:c.id, start_date:date, diagnosis:treat.kind, protocol:"Ingreso rápido",
+    const txCows = treat.doseOf ? cows.filter(c=>treat.doseOf(c.id) > 0) : cows;
+    const tx = txCows.map(c=>({ client_id:uid(), farm_id:c.farm_id, cow_id:c.id, start_date:date, diagnosis:treat.kind, protocol:"Ingreso rápido",
       prescribed_by: isAdmin ? "Juan (veterinario)" : "Mayordomo", notes:note }));
     for (let i = 0; i < tx.length; i += 200){
-      const { data:t, error:e2 } = await sb.from("treatments_cow").insert(tx.slice(i, i + 200)).select("id");
+      const { data:t, error:e2 } = await sb.from("treatments_cow").insert(tx.slice(i, i + 200)).select("id,cow_id");
       if (e2){ toast("Los registros quedaron, pero no se pudo cargar a Salud: " + e2.message); break; }
-      const its = (t||[]).flatMap(r=>treat.items.map(it=>({ treatment_id:r.id, supply_code:it.code, dose:it.dose, unit:it.unit, route:it.route, every_hours:24, days:1 })));
+      const its = (t||[]).flatMap(r=>treat.items.map(it=>({ treatment_id:r.id, supply_code:it.code, dose: treat.doseOf ? treat.doseOf(r.cow_id) : it.dose,
+        unit:it.unit, route:it.route, every_hours:24, days:1 })));
       if (its.length) await sb.from("treatment_items").insert(its);
     }
   }
