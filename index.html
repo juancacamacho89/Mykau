@@ -4790,7 +4790,7 @@ function ivOrderHtml(){
   const o = ivOrder, others = ivFarms.filter(f=>f.id!==ivState.farm), tr = o.mode==="traslado" && others.length;
   if (tr && !others.some(f=>f.id===o.to)) o.to = others[0].id;
   const fl = id => esc(farmLabel(ivFarms.find(f=>f.id===id) || {}));
-  return `<div class="card sheet hsform" style="max-height:none"><b>${tr ? "Traslado entre fincas" : "Pedido / entrada de insumos"}</b>
+  return `<div class="card sheet hsform" style="max-height:none"><b>${tr ? "Traslado entre fincas" : "Pedido / entrada en " + fl(ivState.farm)}</b>
     ${others.length ? seg("ivOM", [["entrada","📥 Entrada (pedido)"],["traslado","🔁 Traslado"]], tr ? "traslado" : "entrada") : ""}
     ${tr ? `<div class="sub" style="margin-top:6px">Sale de <b>${fl(ivState.farm)}</b> y entra a ${others.length > 1
         ? `<select id="ivOTo">${others.map(f=>`<option value="${f.id}" ${f.id===o.to ? "selected" : ""}>${fl(f.id)}</option>`).join("")}</select>` : `<b>${fl(o.to)}</b>`}.</div>`
@@ -4835,6 +4835,10 @@ function ivOrderCalc(){
   const t = $("ivOTot"); if (t) t.textContent = n ? `${n} producto${n > 1 ? "s" : ""} con cantidad` : "";
 }
 async function ivOrderSave(){
+  if (ivBusy) return; ivBusy = true;
+  try { await ivOrderSave0(); } finally { ivBusy = false; }
+}
+async function ivOrderSave0(){
   const o = ivOrder, err = m => ($("ivErr").textContent = m);
   const lines = o.lines.filter(l=>l.code && +String(l.packs).replace(",", ".") > 0);
   if (!lines.length) return err("Escoge al menos un producto con cantidad.");
@@ -4869,7 +4873,7 @@ async function ivOrderSave(){
 let ivCnt = { mode:"conteo", code:"", unit:"pack", qty:"", date:null, note:"" };
 function ivCountHtml(){
   const c = ivCnt, sp = ivSup(c.code), p = ivPres(sp)[0];
-  return `<div class="card sheet hsform" style="max-height:none"><b>${c.mode==="conteo" ? "Conteo físico" : "Salida manual"}</b>
+  return `<div class="card sheet hsform" style="max-height:none"><b>${c.mode==="conteo" ? "Conteo físico" : "Salida manual"} · ${esc(farmLabel(ivFarms.find(f=>f.id===ivState.farm) || {}))}</b>
     ${seg("ivCM", [["conteo","🔢 Conteo"],["salida","📤 Salida"]], c.mode)}
     <div class="sub" style="margin-top:6px">${c.mode==="conteo" ? "Escribe lo que hay en la bodega: el sistema ajusta la diferencia." : "Lo que sale y no queda registrado en tratamientos, labores ni Leche diaria (ej. lotes de terneras, se dañó, préstamo)."}</div>
     ${ivOptions()}
@@ -4892,7 +4896,12 @@ function ivCountCalc(){
   h.innerHTML = `En el sistema: ${ivQty(sp, st)}` + (q==null ? "" : ivCnt.mode==="conteo"
     ? ` · ajuste <b>${q - st >= 0 ? "+" : ""}${ivN(q - st)} ${esc(sp.unit || "")}</b>` : ` · queda <b>${ivQty(sp, st - q)}</b>`);
 }
+let ivBusy = false;   // evita guardar dos veces con un doble toque
 async function ivCountSave(){
+  if (ivBusy) return; ivBusy = true;
+  try { await ivCountSave0(); } finally { ivBusy = false; }
+}
+async function ivCountSave0(){
   const err = m => ($("ivErr").textContent = m), sp = ivSup(ivCnt.code), q = ivCntQty();
   if (!sp) return err("Escoge el producto."); if (q==null) return err("Escribe la cantidad.");
   if (ivCnt.mode==="salida" && !(q > 0)) return err("La salida debe ser mayor que cero.");
