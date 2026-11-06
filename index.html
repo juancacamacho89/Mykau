@@ -1007,7 +1007,7 @@ function renderCow(d){
       return `<div class="addbar">${!young && (canDo("vacas_servicio") || canDo("vacas_celo")) ? `<button data-add="${canDo("vacas_servicio") ? "service" : "heat"}">＋ Servicio${canDo("vacas_servicio") ? "" : " (celo)"}</button>` : ""}${
       !young && canDo("vacas_parto") ? `<button data-add="calving">＋ Parto</button>` : ""}${canDo("pesot_registrar") ? `<button data-add="weight">＋ Peso</button>` : ""}${
       !young && canDo("vacas_secado") && /(^|\/)Lac/.test(c.status||"") ? `<button data-add="dry_off">＋ Secado</button>` : ""}</div>`; })() : ""}
-    ${!canSee("vacas_repro") ? "" : segs.length ? segs.slice().reverse().map((s,i)=>lacHtml(s, i===0, kids, bulls)).join("") : `<div class="empty">Sin eventos desde 2020</div>`}
+    ${!canSee("vacas_repro") ? "" : segs.length ? segs.slice().reverse().map((s,i)=>lacHtml(s, i===0, kids, bulls, i===0 ? projEvents(c, s) : null)).join("") : `<div class="empty">Sin eventos desde 2020</div>`}
   </div>` : ""}
 
   <div id="cowPlans"></div>
@@ -1029,7 +1029,35 @@ function renderCow(d){
   if (canSee("salud_ver")) cowWithdrawal(c.id);
 }
 
-function lacHtml(s, open, kids, bulls){
+// eventos programados (aún sin ejecutar), como en Interherd, contados desde el servicio que la preñó:
+//   ECO1 positiva → ECO2 (46 d) y parto (282 d) · ECO2 positiva → DPR (60 d) · DPR cargada → DP5 (158 d), DPSEC (220 d) y secado (parto − 60 d)
+// Cada uno desaparece cuando se registra. Si después sale vacía, muerte embrionaria o aborto, no se programa nada.
+const PJ = { ECO2:46, DPR:60, DP5:158 };
+function projEvents(c, s){
+  if (!c?.active) return null;
+  const eco = e => e.event_type==="ultrasound", dp = e => e.event_type==="preg_check";
+  const stageOf = e => eco(e) ? (e.category==="ECO2" ? "ECO2" : "ECO1") : dp(e) ? (e.category==="DP5" ? "DP5" : e.category==="DPSEC" ? "DPSEC" : "DPR") : null;
+  // ECO1 positiva y el servicio anterior a ella
+  const e1 = s.events.filter(e=>stageOf(e)==="ECO1" && /^positivo/i.test(e.result || "")).pop(); if (!e1) return null;
+  const sv = s.services.filter(e=>e.event_date <= e1.event_date).pop(); if (!sv) return null;
+  const later = s.events.filter(e=>e.event_date >= e1.event_date && e!==e1);
+  const lost = later.some(e=>["embryo_loss", "abortion"].includes(e.event_type) || ((eco(e) || dp(e)) && /^(negativ|vac)/i.test(e.result || ""))
+    || (e.event_type==="service" && e.event_date > e1.event_date) || e.event_type==="calving");
+  if (lost) return null;
+  const done = st => later.find(e=>stageOf(e)===st), pos = e => e && isPositive(e);
+  const at = n => addDays(sv.event_date, n), out = [], lac = s.num > 0;
+  const e2 = done("ECO2"), dpr = done("DPR");
+  if (!e2) out.push({ d:at(PJ.ECO2), ev:"ECO2", det:"Reconfirmación" });
+  if (pos(e2) && !dpr) out.push({ d:at(PJ.DPR), ev:"DPR", det:"Diagnóstico de preñez" });
+  if (pos(dpr)){
+    if (!done("DP5")) out.push({ d:at(PJ.DP5), ev:"DP5", det:"Reconfirmación de 5 meses" });
+    if (lac && !done("DPSEC")) out.push({ d:at(LS_DPSEC), ev:"DPSEC", det:"Chequeo antes de secar" });
+    if (lac && !later.some(e=>e.event_type==="dry_off")) out.push({ d:at(LS_GEST - LS_DRY), ev:"Secado", det:"Parto esperado − 60 d" });
+  }
+  out.push({ d:at(LS_GEST), ev:"Parto esperado", det:`${LS_GEST} d del servicio del ${fmt(sv.event_date)}${sv.bull ? " · toro " + esc(sv.bull) : ""}` });
+  return out.sort((x, y)=>x.d.localeCompare(y.d));
+}
+function lacHtml(s, open, kids, bulls, proj){
   const cv = s.calving;
   const kid = cv ? kids.find(k=>k.birth_date===cv.event_date) : null;
   const title = s.num > 0 ? `Lactancia ${s.num}` : "Novilla";
@@ -1050,8 +1078,11 @@ function lacHtml(s, open, kids, bulls){
   }).join("");
   const cvRow = cv ? `<tr${swAttr(cv)}><td>${fmt(cv.event_date)}</td><td class="ev">Parto</td><td>${esc(cv.category||"")}${cv.bull?` · toro ${bullTxt(cv.bull,bulls)}`:""}
       ${kid ? ` · cría <button class="lnk" data-cow="${esc(kid.id)}">${esc(kid.id)}</button>` : ""}${cv.source==="app" ? calvingTxt(cv) + pendTag(cv) : ihDel(cv)}</td></tr>` : "";
-  return `<details class="lac" ${open?"open":""}><summary><b>${title}</b><div class="sub">${sum}</div></summary>
-    <table>${rows}${cvRow}</table></details>`;
+  const pRows = (proj || []).slice().reverse().map(p=>`<tr style="opacity:.75;font-style:italic"><td>${fmt(p.d)}</td><td class="ev">📅 ${p.ev}</td>
+    <td><span class="tag">programado</span> ${p.det}${p.d < today() ? ` <b style="color:var(--s4)">· atrasado</b>` : ""}</td></tr>`).join("");
+  const due = (proj || []).find(p=>p.ev==="Parto esperado");
+  return `<details class="lac" ${open?"open":""}><summary><b>${title}</b><div class="sub">${sum}${due ? ` · parto esperado <b>${fmt(due.d)}</b>` : ""}</div></summary>
+    <table>${pRows}${rows}${cvRow}</table></details>`;
 }
 
 // ── Mastitis: CMT por cuarto (AI AD / PI PD) ────────────────
@@ -3619,7 +3650,7 @@ $("rnBody").addEventListener("click", async e=>{
 // ═══════════════════════ LISTAS DE TRABAJO ═══════════════
 // Desde el último parto: concepción = último servicio de una vaca preñada; parto esperado = concepción + 283 d;
 // secado = parto esperado − 60 d. Se guarda la última descarga para ver sin señal.
-const LS_GEST = 283, LS_DRY = 60;
+const LS_GEST = 282, LS_DRY = 60, LS_DPSEC = 220;   // como Interherd: parto = servicio + 282 d · secado = parto − 60 · DPSEC = servicio + 220
 const LS_LISTS = [
   ["chequeo", "🩺 Para chequeo", "Las que entran al chequeo reproductivo de esa fecha (mismo cálculo del módulo Chequeo): para marcarlas el día antes", ""],
   ["secar", "🌙 Para secar", "Preñadas en lactancia con secado en los próximos 14 días (o ya pasado)", "dry_off"],
