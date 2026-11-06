@@ -1944,6 +1944,8 @@ async function initRegistros(){
     });
     // buscar: vaca, detalle o tipo (solo redibuja, no vuelve a consultar)
     $("rgFilters").addEventListener("input", e=>{ if (e.target.id==="rgQ"){ rgState.q = e.target.value; if (rgLast) rgDraw(); } });
+    $("rgFilters").addEventListener("click", e=>{ const fa = e.target.closest("[data-rgfa]");
+      if (fa){ const n = farmFlip(rgState.farm, fa.dataset.rgfa, ""); if (n!==rgState.farm){ rgState.farm = n; renderRgFilters(); loadRegistros(); } return; } });
     $("rgFilters").addEventListener("click", e=>{ const b = e.target.closest("[data-rgk]"); if (b){ rgState.cat = b.dataset.rgk; rgPick = { title:"", who:"" }; renderRgFilters(); if (rgLast) rgDraw(); } });
     $("rgBody").addEventListener("click", async e=>{
       const t = e.target, dl = t.closest("[data-rgdel]"), ed = t.closest("[data-rged]"), dm = t.closest("[data-rgdm]");
@@ -1973,7 +1975,7 @@ async function initRegistros(){
 function renderRgFilters(){
   const s = rgState, users = Object.entries(rgNames || {}).sort((a,b)=>a[1].localeCompare(b[1]));
   $("rgFilters").innerHTML = `${seg("rgSt", [["all","Todo lo registrado"],["pend","Pendientes de Interherd"]], s.status)}
-    <div style="margin-top:8px">${seg("rgFa", [["","Ambas fincas"],["1","El Recodo"],["7","La Isla"]], s.farm)}</div>
+    <div style="margin-top:8px">${farmToggle("data-rgfa", s.farm, "")}</div>
     ${s.status==="all" ? `<div class="chips sm ckpan" style="padding:0;margin-top:6px"><div class="chips sm">${RG_CATS.map(([k,t])=>`<button class="${s.cat===k?"on":""}" data-rgk="${k}">${t}</button>`).join("")}</div></div>
       <div style="margin-top:8px">${seg("rgBy", [["evento","Por fecha del evento"],["registro","Por fecha en que se registró"]], s.by || "evento")}</div>
       <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:6px">
@@ -2281,7 +2283,7 @@ async function renderProduccion(box){
       jset("prLast", { farm:s.farm, per:s.per }); prDraw(); });
     $("prCtl").addEventListener("click", e=>{ const s = prState;
       const p = e.target.closest("[data-prpen]"); if (p){ s.pen = p.dataset.prpen; prDraw(); return; }
-      const fb = e.target.closest("[data-prf]"); if (fb){ s.farm = fb.dataset.prf; s.pen = ""; jset("prLast", { farm:s.farm, per:s.per }); prDraw(); return; }
+      const fb = e.target.closest("[data-prf]"); if (fb){ const n = farmFlip(s.farm, fb.dataset.prf, "all"); if (n===s.farm) return; s.farm = n; s.pen = ""; jset("prLast", { farm:s.farm, per:s.per }); prDraw(); return; }
       const pb = e.target.closest("[data-prpe]"); if (pb){ s.per = pb.dataset.prpe; jset("prLast", { farm:s.farm, per:s.per }); prDraw(); return; }
       const k = e.target.closest("[data-prk]"); if (k){ s.a = prShift(s.per, s.a, +k.dataset.prk); prDraw(); } });
     $("prOut").addEventListener("click", e=>{ const m = e.target.closest("[data-prmet]"); if (m){ prState.met = m.dataset.prmet; prDraw(); return; }
@@ -2327,7 +2329,7 @@ function prWeekTable(){
     </table></div>`;
 }
 function prDraw(){
-  const s = prState, farms = [["all","Ambas"],["1","El Recodo"],["7","La Isla"]];
+  const s = prState;
   const rows0 = prRows.filter(r=>s.farm==="all" || r.farm_id===+s.farm);
   const pens = [...new Set(rows0.map(r=>r.pen))].sort(byNum);
   const rows = rows0.filter(r=>!s.pen || r.pen===s.pen);
@@ -2336,7 +2338,7 @@ function prDraw(){
     : s.per==="mes" ? MES[+d0.slice(5,7) - 1] + " " + d0.slice(0,4) : s.per==="anio" ? d0.slice(0,4) : `${fmt(d0)} – ${fmt(d1)}`;
   // finca, lote y período: los mismos botones redondeados
   const chips = (opts, cur, attr) => `<div class="chips sm ckpan" style="padding:0;margin-top:6px"><div class="chips sm">${opts.map(([v,t])=>`<button class="${cur===v?"on":""}" ${attr}="${esc(v)}">${esc(t)}</button>`).join("")}</div></div>`;
-  $("prCtl").innerHTML = `${chips(farms, s.farm, "data-prf")}
+  $("prCtl").innerHTML = `${farmToggle("data-prf", s.farm, "all")}
     ${chips([["", "Todos los lotes"], ...pens.map(p=>[p,p])], s.pen, "data-prpen")}
     ${chips(PR_PER, s.per, "data-prpe")}
     ${s.per==="rango" ? `<div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:8px"><div><div class="sub">Desde</div><input type="date" id="prFrom" value="${s.from}" style="min-width:0"></div>
@@ -4148,11 +4150,16 @@ const QL_FARMS = [[1,"El Recodo","--s0"],[7,"La Isla","--milk"]];
 let qlRows = null, qlReady = false;
 const qlOk = (q, v) => v==null ? null : (q.min==null || v >= q.min) && (q.max==null || v <= q.max);
 const qlMeta = q => q.min!=null && q.max!=null ? `${q.min}–${q.max}` : q.min!=null ? `≥ ${q.min}` : `≤ ${q.max}`;
+let qlFarmSel = "both";
 async function initQuality(){
   if (!qlReady){
     qlReady = true;
     const last = jget("qlLast", {});
-    $("qlFarm").innerHTML = seg("qlF", [["both","Las dos"],["1","El Recodo"],["7","La Isla"]], last.farm || "both");
+    qlFarmSel = last.farm || "both";
+    const drawF = () => { $("qlFarm").innerHTML = farmToggle("data-qlf", qlFarmSel, "both"); };
+    drawF();
+    $("qlFarm").addEventListener("click", e=>{ const b = e.target.closest("[data-qlf]"); if (!b) return;
+      const n = farmFlip(qlFarmSel, b.dataset.qlf, "both"); if (n===qlFarmSel) return; qlFarmSel = n; drawF(); renderQuality(); });
     $("qlFrom").value = last.from || addDays(today(), -730); $("qlTo").value = last.to || today();
     $("qlFarm").addEventListener("change", renderQuality);
     $("qlFrom").addEventListener("change", renderQuality); $("qlTo").addEventListener("change", renderQuality);
@@ -4177,7 +4184,7 @@ function qlByFarm(raw){
 }
 function renderQuality(){
   if (!qlRows) return;
-  const farmSel = document.querySelector('input[name="qlF"]:checked').value;
+  const farmSel = qlFarmSel;
   let since = $("qlFrom").value || "2000-01-01", until = $("qlTo").value || today();
   if (since > until) [since, until] = [until, since];
   const sel = jget("qlSel", ["fat","protein","ufc","scc"]);
@@ -4590,6 +4597,12 @@ function calvingTxt(e){
   return parts.length ? ` · ${esc(parts.join(" · "))}` : "";
 }
 
+const FARM_TG = [["1","El Recodo"],["7","La Isla"]];
+const farmOn = (cur, all) => cur===all ? FARM_TG.map(f=>f[0]) : [String(cur)];
+const farmToggle = (attr, cur, all) => `<div class="chips sm ckpan" style="padding:0"><div class="chips">${FARM_TG.map(([v, t])=>{
+  const on = farmOn(cur, all).includes(v); return `<button class="${on ? "on" : ""}" ${attr}="${v}">${on ? "✓ " : ""}${t}</button>`; }).join("")}</div></div>`;
+const farmFlip = (cur, v, all) => { const s = new Set(farmOn(cur, all)); s.has(v) ? s.delete(v) : s.add(v);
+  return !s.size ? cur : s.size===FARM_TG.length ? all : [...s][0]; };
 const seg = (name, opts, val) => `<div class="seg">${opts.map(([v,t])=>
   `<label><input type="radio" name="${name}" value="${esc(v)}" ${v===val?"checked":""}><span>${esc(t)}</span></label>`).join("")}</div>`;
 
