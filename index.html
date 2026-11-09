@@ -2963,7 +2963,8 @@ $("rqBody").addEventListener("input", e=>{
 async function rqExec(){
   rqRead();
   const err = m => { $("rqErr").textContent = m; $("rqGo").disabled = false; };
-  const d = rq.d, date = rq.date, cows = rqCows.filter(c=>rq.sel.has(c.id)), note = (d.note||"").trim() || null;
+  const d = rq.d, date = rq.date, note = (d.note||"").trim() || null;
+  let cows = rqCows.filter(c=>rq.sel.has(c.id));
   if (!cows.length) return err("Escoge al menos un animal.");
   if (!date || date > today()) return err("La fecha no puede ser futura.");
   const base = { event_date:date, source:"app", sync_status:"pending", comments:note };
@@ -2977,6 +2978,15 @@ async function rqExec(){
     const bad = codes.filter(x=>!(bx||[]).some(b=>b.code===x));
     if (bad.length) return err(`El toro ${bad.join(", ")} no existe. Revisa el código.`);
     const strawsOf = c => +((d.sw || {})[c.id] || d.straws || 1);
+    // ¿ya tienen servicio? el mismo día no se repite; a 1–3 días se pregunta
+    const near = await svNear(cows.map(c=>c.id), date);
+    const same = cows.filter(c=>(near[c.id] || []).some(x=>x.event_date===date));
+    const close = cows.filter(c=>!same.includes(c) && (near[c.id] || []).length);
+    if (same.length===cows.length) return err(`Ya tiene${same.length > 1 ? "n" : ""} servicio el ${fmt(date)}: ${same.map(c=>`${c.id} (${svTxt(near[c.id].find(x=>x.event_date===date))})`).join(", ")}. No se registró otra vez; si hay que cambiar algo, edítalo en la hoja de vida.`);
+    if (same.length && !confirm(`⚠️ Ya tienen servicio el ${fmt(date)} (no se registran otra vez):\n${same.map(c=>`${c.id}: ${svTxt(near[c.id].find(x=>x.event_date===date))}`).join("\n")}\n\n¿Seguir solo con las demás (${cows.length - same.length})?`)) return err("No se guardó.");
+    if (close.length && !confirm(`⚠️ Tienen un servicio muy cerca:\n${close.map(c=>`${c.id}: ${near[c.id].map(svTxt).join(" / ")}`).join("\n")}\n\n¿Registrar el servicio a estas también?`)) return err("No se guardó.");
+    cows = cows.filter(c=>!same.includes(c));
+    if (!cows.length) return err("Todas ya tenían servicio ese día: no se registró nada.");
     rows = cows.map(c=>({ ...base, cow_id:c.id, event_type:"service", bull:bullOf(c), operator:d.op || null, category:d.cat || "Inseminación",
       details:{ straws: strawsOf(c), ...(rq.opts?.tanks?.length ? { tank: d.tank || svTank(c.pen, rq.opts.tanks) } : {}) } }));
     label = `Inseminación · ` + codes.map(b=>{ const xs = cows.filter(c=>bullOf(c)===b), n = xs.reduce((a,c)=>a + strawsOf(c), 0);
@@ -4607,6 +4617,19 @@ const farmFlip = (cur, v, all) => { const s = new Set(farmOn(cur, all)); s.has(v
 const seg = (name, opts, val) => `<div class="seg">${opts.map(([v,t])=>
   `<label><input type="radio" name="${name}" value="${esc(v)}" ${v===val?"checked":""}><span>${esc(t)}</span></label>`).join("")}</div>`;
 
+// servicios que ya tiene la vaca entre 3 días antes y 3 después (lo que hay en Supabase en este momento + lo cargado)
+async function svNear(ids, date, skipId){
+  const lo = addDays(date, -3), hi = addDays(date, 3), out = {};
+  if (navigator.onLine){
+    for (let i = 0; i < ids.length; i += 150){
+      const { data } = await sb.from("cow_events").select("id,cow_id,event_date,bull,operator,sync_status,details").eq("event_type", "service")
+        .in("cow_id", ids.slice(i, i + 150)).gte("event_date", lo).lte("event_date", hi);
+      (data || []).filter(x=>x.id!==skipId).forEach(x=>(out[x.cow_id] ||= []).push(x));
+    }
+  }
+  return out;
+}
+const svTxt = x => `${fmt(x.event_date)} · toro ${x.bull || "—"}${x.operator ? " · " + x.operator : ""}${x.details?.straws > 1 ? ` · ${x.details.straws} pajillas` : ""}${x.sync_status==="pending" ? " (pendiente Interherd)" : ""}`;
 async function openReg(type, ev){
   const d = lastCowData; if (!d) return;
   if (["calving", "abortion", "embryo_loss"].includes(type)) return openCalving(ev);
@@ -4663,7 +4686,13 @@ async function openReg(type, ev){
     const tipo = f.querySelector('input[name="tipo"]:checked')?.value || tipo0;
     isSv = tipo!=="Celo"; type = isSv ? "service" : "heat";
     if (ev && ev.event_type!==type) return err(`Este registro es un ${ev.event_type==="heat" ? "celo" : "servicio"}: bórralo y regístralo de nuevo como ${isSv ? "servicio" : "celo"}.`);
-    if (d.events.some(x=>x.event_type===type && x.event_date===date && x.id!==ev?.id)) return err(`Ya hay un ${isSv?"servicio":"celo"} registrado ese día.`);
+    if (d.events.some(x=>x.event_type===type && x.event_date===date && x.id!==ev?.id)) return err(`Ya hay un ${isSv?"servicio":"celo"} registrado ese día.${isSv ? " Si hay que cambiar el toro o las pajillas, edita ese servicio." : ""}`);
+    if (isSv){
+      const near = (await svNear([c.id], date, ev?.id))[c.id] || [];
+      const same = near.filter(x=>x.event_date===date);
+      if (same.length) return err(`Ya tiene un servicio ese día: ${svTxt(same[0])}. Si hay que cambiar el toro o las pajillas, edita ese servicio (no lo registres otra vez).`);
+      if (near.length && !confirm(`⚠️ La vaca ${c.id} ya tiene un servicio muy cerca:\n${near.map(svTxt).join("\n")}\n\n¿Registrar este otro servicio el ${fmt(date)}?`)) return err("No se guardó.");
+    }
     const row = { cow_id:c.id, event_date:date, event_type:type, source:"app", sync_status:"pending",
                   category: isSv ? tipo : (f.querySelector('input[name="obs"]:checked')?.value || null), comments: f.note.value.trim() || null };
     if (isSv){
