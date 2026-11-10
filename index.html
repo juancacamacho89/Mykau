@@ -981,7 +981,7 @@ function renderCow(d){
       </div>
       <div style="min-width:0">
         <h2>${esc(c.id)}</h2>
-        <div style="margin:4px 0">${c.active ? statusPill(canSee("vacas_repro") ? status : String(status||"").split("/").filter(x=>!/^(PR|Ser|Nc|Palp-|Ca)$/.test(x)).join("/"), curSv?.event_date, curPr?.event_date) : `<span class="pill" style="background:${css("--muted")}">Fuera del hato</span>`}${
+        <div style="margin:4px 0" ${c.active && /(^|\/)Desc\.?(\/|$)/.test(c.status || "") && plCan() ? `data-uncull="${esc(c.id)}" title="Tocar para quitar el descarte"` : ""}>${c.active ? statusPill(canSee("vacas_repro") ? status : String(status||"").split("/").filter(x=>!/^(PR|Ser|Nc|Palp-|Ca)$/.test(x)).join("/"), curSv?.event_date, curPr?.event_date) : `<span class="pill" style="background:${css("--muted")}">Fuera del hato</span>`}${c.active && /(^|\/)Desc\.?(\/|$)/.test(c.status || "") && plCan() ? ` <button class="lnk" data-uncullbtn>quitar descarte</button>` : ""}${
           (()=>{ const lq = lostQuarters(d.mast||[]); return lq.length ? `<span class="pill" style="background:${css("--s5")}" title="Cuarto perdido">⚠️ ${lq.map(q=>q.k.toUpperCase()).join(", ")} perdido${lq.length>1?"s":""}</span>` : ""; })()}</div>
         <div class="sub">${[newPen ? (String(newPen).endsWith(c.pen||"~") ? `Grupo <b>${esc(c.pen)}</b> ⏳` : `Grupo ${esc(c.pen||"—")} → <b>${esc(newPen)}</b> ⏳`) : c.pen&&`Grupo ${esc(c.pen)}`, c.herd&&`Hato ${esc(c.herd)}`, esc(c.breed||""), esc(c.sex||"")].filter(Boolean).join(" · ")}</div>
       </div>
@@ -4014,8 +4014,9 @@ async function lsLoad(force){
     const e = await psAll(()=>sb.from("cow_events").select("cow_id,event_date,event_type,result,weight_kg,category,cows!inner(farm_id)").eq("cows.farm_id", farm)
       .gte("event_date", addDays(today(), -600)).in("event_type", ["service","calving","ultrasound","preg_check","repro_exam","embryo_loss","abortion","weight"]).order("event_date"));
     const lc = await sb.from("lacto_cows").select("cow_id,pen,list_date").eq("farm_id", farm);   // si falta la tabla, sin lacto
+    const pl = await sb.from("cow_plans").select("cow_id,due_date,note,created_at").eq("farm_id", farm).eq("plan_type", "exrep").eq("status", "pending");
     if (!c.error && !e.error){ jset(key, { farm, at:Date.now(), cows:c.data, ev:e.data.map(x=>[x.cow_id, x.event_date, x.event_type, noSex(x.result), x.weight_kg, x.category]),
-      lacto: lc.error ? [] : lc.data }); }
+      lacto: lc.error ? [] : lc.data, plans: pl.error ? [] : pl.data.map(x=>[x.cow_id, x.due_date, x.note, x.created_at.slice(0, 10)]) }); }
   }
   lsData = jget(key, null);
 }
@@ -4032,7 +4033,11 @@ function lsCompute(){
     const exp = preg && sv ? addDays(sv.d, LS_GEST) : null, dry = exp ? addDays(exp, -LS_DRY) : null;
     const w = ev.filter(e=>e.t==="weight" && e.w).pop();
     // chequeo: el mismo motor del módulo Chequeo, para la fecha escogida
-    const ck = ckClassify({ ...c, bd:c.birth_date, lc:c.last_calving }, ev, lsState.ckDate || D);
+    let ck = ckClassify({ ...c, bd:c.birth_date, lc:c.last_calving }, ev, lsState.ckDate || D);
+    // EXREP programado en la hoja de vida para la fecha del chequeo o antes (si no se le ha hecho examen desde que se programó)
+    if (!ck){ const pl = (lsData?.plans || []).find(([id, due, , from])=>id===c.id && due <= (lsState.ckDate || D)
+                && !ev.some(e=>["repro_exam","ultrasound","preg_check"].includes(e.t) && e.d >= from));
+      if (pl) ck = { cat:"EXREP", prog:pl[1], note:pl[2], heifer:!(c.lactation_num > 0) && !C, del: C ? days(C, lsState.ckDate || D) : null }; }
     const ageM0 = c.birth_date ? days(c.birth_date, D)/30.44 : null;
     const doubt = !C && ageM0!=null && ageM0 < 12 ? svs.filter(e=>e.d >= c.birth_date) : [];   // servicio a una ternera: error de datos
     return { c, C, ck, doubt, lacto: lsLactoSet().has(c.id), del: C ? days(C, D) : null, svs, sv, preg, lac, exp, dry, gest: preg && sv ? days(sv.d, D) : null,
@@ -4134,6 +4139,7 @@ function lsDetail(x, k){
   const D = today(), dd = d => { const n = days(D, d); return n < 0 ? `<b style="color:var(--s4)">hace ${-n} d</b>` : n === 0 ? "<b>hoy</b>" : `en ${n} d`; };
   if (k==="chequeo"){ const q = x.ck;
     return (x.lacto ? `<span class="tag" style="background:#ffe699;color:#333">💉 lacto</span> ` : "") + `<span class="ckcat" style="background:var(${CK_COLOR[q.cat] || "--muted"})">${q.cat}</span>${q.late ? `<b style="color:var(--s4)">atrasada</b> · ` : ""}`
+      + (q.prog ? `programado ${fmt(q.prog)}${q.note ? " · " + esc(q.note) : ""} · ` : "")
       + (q.cat==="EXREP" ? (q.heifer ? `novilla ${Math.floor(x.ageM||0)} m${x.w ? " · " + x.w + " kg" : ""}` : `${q.del} d de parida${q.ready===false ? " (antes de 50 d)" : ""}`) + (q.last?.r ? ` · últ. ${q.last.r}` : "")
          : q.g!=null ? `${q.g} d de servida (${fmt(q.sv.d)})` : ""); }
   if (k==="secar") return `secar ${fmt(x.dry)} (${dd(x.dry)}) · ${x.gest} d preñada · parto ${fmt(x.exp)}`;
@@ -5275,8 +5281,16 @@ function plOpen(){
     else { toast("Programado ✓"); cowPlans(lastCowData); }
   });
 }
-document.addEventListener("click", e=>{
+document.addEventListener("click", async e=>{
   if (e.target.closest("[data-plnew]")) return plOpen();
+  const uc = e.target.closest("[data-uncull]");
+  if (uc && (e.target.closest('.pill[title^="Desc"]') || e.target.closest("[data-uncullbtn]"))){
+    const id = uc.dataset.uncull;
+    if (!confirm(`¿Quitarle el DESCARTE a la vaca ${id}?\n\nSe cancela el descarte programado (si tiene) y la importación de Interherd ya no se lo vuelve a poner.\nSi más adelante se le programa un descarte, vuelve a quedar en Descarte.`)) return;
+    const { error } = await sb.rpc("cull_off", { p_cow:id });
+    if (error) return toast(/function|schema cache/i.test(error.message) ? "Falta correr SQL/quitar_descarte.sql" : "No se pudo: " + error.message);
+    toast(`Descarte quitado a la ${id} ✓`); return loadCow(id);
+  }
   const r = e.target.closest("[data-plrun]");
   if (r){ if (r.dataset.plrun==="descarte") return openExit(null, "descarte"); if (r.dataset.plrun==="secado") return openDry(); }
 });
@@ -6519,7 +6533,7 @@ function ckShow(){
   $("ckInfo").innerHTML = `Lista descargada ${age < 1 ? "hace menos de 1 hora" : age < 48 ? `hace ${age} h` : `hace ${Math.round(age/24)} días`}${age > 72 ? ` · <span class="late">descárgala de nuevo</span>` : ""}`;
   ckRes = jget(ckKey(farm, D), {});
   ckRender();
-  ckLoadLists().then(()=>{ if (ckOpen) ckRender(); });
+  ckLoadLists().then(ch=>{ if (ckOpen || ch) ckRender(); });
 }
 function ckList(){
   const D = $("ckDate").value || today();
@@ -6788,6 +6802,17 @@ async function ckLoadLists(){
     if (data?.length) jset(`ckLists:${farm}`, { exrep: data.filter(r=>r.kind==="exrep_result").map(r=>r.value), extra: data.filter(r=>r.kind==="check_extra").map(r=>r.value) });
   }
   const l = jget(`ckLists:${farm}`, {}); ckLists = { exrep: l.exrep?.length ? l.exrep : null, extra: l.extra?.length ? l.extra : null };
+  // EXREP programados en la hoja de vida después de descargar la lista
+  const pack = jget(`ckData:${farm}`, null);
+  if (navigator.onLine && pack){
+    const pl = await sb.from("cow_plans").select("cow_id,due_date,note,created_at").eq("farm_id", farm).eq("plan_type", "exrep").eq("status", "pending");
+    if (!pl.error){
+      const ids = new Set(pack.cows.map(c=>c[0]));
+      const plans = (pl.data || []).filter(x=>ids.has(x.cow_id)).map(x=>[x.cow_id, x.due_date, x.note, x.created_at.slice(0, 10)]);
+      if (JSON.stringify(plans) !== JSON.stringify(pack.plans || [])){ pack.plans = plans; jset(`ckData:${farm}`, pack); if (ckData && ckFarmSel()===farm) ckData.plans = plans; return true; }
+    }
+  }
+  return false;
 }
 function ckSave(){ jset(ckKey(ckFarmSel(), $("ckDate").value || today()), ckRes); }
 $("ckBody").addEventListener("click", e=>{
