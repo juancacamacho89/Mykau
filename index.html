@@ -3042,7 +3042,7 @@ async function rqLoadDry(){
   const [pl, mk, sv] = await Promise.all([
     sb.from("cow_plans").select("id,cow_id,due_date,note").eq("farm_id", f).eq("plan_type", "secado").eq("status", "pending"),
     plan ? psAll(()=>sb.from("cow_milk").select("id,cow_id,test_date,am_kg,pm_kg,total_kg,cows!inner(farm_id)").eq("cows.farm_id", f).gte("test_date", addDays(today(), -15)).order("id")) : { data:[] },
-    plan ? psAll(()=>sb.from("cow_events").select("id,cow_id,event_date,bull,cows!inner(farm_id)").eq("cows.farm_id", f).eq("event_type", "service").gte("event_date", addDays(today(), -330)).order("id")) : { data:[] }]);
+    psAll(()=>sb.from("cow_events").select("id,cow_id,event_date,bull,cows!inner(farm_id)").eq("cows.farm_id", f).eq("event_type", "service").gte("event_date", addDays(today(), -330)).order("id"))]);
   const d = { farm:f, plans:{}, milk:{}, sv:{} };
   (pl.data || []).forEach(x=>{ const o = d.plans[x.cow_id]; if (!o || x.due_date < o.due) d.plans[x.cow_id] = { id:x.id, due:x.due_date, note:x.note }; });
   (mk.data || []).sort((a, b)=>a.test_date.localeCompare(b.test_date)).forEach(m=>(d.milk[m.cow_id] ||= []).push([m.test_date, m.am_kg, m.pm_kg, m.total_kg]));
@@ -3056,7 +3056,8 @@ function rqDryInfo(c){
   const preg = /(^|\/)PR(\/|$)/.test(c.status || ""), sv = D.sv[c.id] && (!c.last_calving || D.sv[c.id].d > c.last_calving) ? D.sv[c.id] : null;
   const dry = preg && sv ? addDays(sv.d, LS_GEST - LS_DRY) : null;
   const lastKg = tot(last), low = lastKg!=null && lastKg < (rq.lowKg || 13);
-  return { ms:ms.slice(-2), last, lastKg, low, preg, sv, dry, gest: preg && sv ? days(sv.d, today()) : null, plan:D.plans[c.id], tot };
+  const due = !!(preg && /(^|\/)Lac/.test(c.status || "") && dry && dry <= addDays(today(), 14));
+  return { ms:ms.slice(-2), last, lastKg, low, preg, sv, dry, due, gest: preg && sv ? days(sv.d, today()) : null, plan:D.plans[c.id], tot };
 }
 const rqDel = c => c.last_calving ? days(c.last_calving, today()) : null;
 function rqInfo(c){
@@ -3085,11 +3086,13 @@ function renderRapido0(){
       <details style="margin-top:6px"><summary class="sub" style="cursor:pointer">Pegar o escribir varios números</summary>
         <textarea id="rqPaste" rows="3" style="width:100%;margin-top:6px;font:inherit;padding:8px;border-radius:10px;border:1px solid var(--line);background:var(--bg);color:var(--ink)" placeholder="1076 1044 863 ..."></textarea>
         <button class="btn ghost" id="rqPasteGo" style="margin-top:6px">Marcar esos números</button><div class="sub" id="rqPasteMsg"></div></details>
-      ${rq.type==="dry_off" ? (()=>{ const np = Object.keys(rqDryD?.plans || {}).filter(id=>rqCows.some(c=>c.id===id)).length, pl = rqCanPlan();
-        return `<div class="chips sm ckpan" style="padding:0;margin-top:6px"><div class="chips sm">${[["","Todas"],["lac","En leche"],["prog",`🌙 Programadas (${np})`], ...(pl ? [["low","Bajitas"]] : [])].map(([k,t])=>`<button class="${(rq.dryF||"")===k ? "on" : ""}" data-rqdf="${k}">${t}</button>`).join("")}</div></div>
+      ${rq.type==="dry_off" ? (()=>{ const np = rqCows.filter(c=>rqDryD?.plans[c.id] || rqDryInfo(c).due).length, pl = rqCanPlan();
+        return `<div class="chips sm ckpan" style="padding:0;margin-top:6px"><div class="chips sm">${[["","Todas"],["lac","En leche"],["prog",`🌙 Para secar (${np})`], ...(pl ? [["low","Bajitas"]] : [])].map(([k,t])=>`<button class="${(rq.dryF||"")===k ? "on" : ""}" data-rqdf="${k}">${t}</button>`).join("")}</div></div>
+          ${pl ? `<div class="chips sm ckpan" style="padding:0;margin-top:6px"><div class="chips sm"><span class="sub" style="align-self:center">Ordenar:</span>${[["","Por número"],["milk","Por última leche (menor primero)"]].map(([k,t])=>`<button class="${(rq.dryOrd||"")===k ? "on" : ""}" data-rqdo="${k}">${t}</button>`).join("")}</div></div>` : ""}
           ${pl ? `<div class="row" style="align-items:center;gap:6px;margin-top:6px"><span class="sub" style="flex:none">Bajita: menos de</span><select id="rqLowKg" style="flex:0 0 90px">${[8,10,12,13,14,16].map(k=>`<option value="${k}" ${(rq.lowKg||13)===k ? "selected" : ""}>${k} kg</option>`).join("")}</select><span class="sub" style="flex:none">en el último pesaje</span></div>` : ""}
-          ${np ? `<button class="btn ghost" data-rqmarkplan="1" style="margin-top:6px">🌙 Marcar ${np===1 ? "la programada" : "las " + np + " programadas"}</button>` : ""}
-          ${pl ? `<div class="sub" style="margin-top:4px">En rojo: programadas para secar y bajitas. Toca el número para ver preñez y secado esperado.</div>` : ""}`; })() : ""}
+          ${np ? `<button class="btn ghost" data-rqmarkplan="1" style="margin-top:6px">🌙 Marcar ${np===1 ? "la que toca secar" : "las " + np + " para secar"}</button>` : ""}
+          <div class="sub" style="margin-top:4px">Para secar = las programadas y las preñadas con secado esperado en los próximos 14 días (o ya pasado), como en Listas de trabajo.</div>
+          ${pl ? `<div class="sub" style="margin-top:4px">En rojo: para secar y bajitas. Toca el número para ver preñez y secado esperado.</div>` : ""}`; })() : ""}
       <div id="rqList" style="max-height:${rq.type==="dry_off" ? 60 : 46}vh;overflow:auto;margin-top:8px;border-top:1px solid var(--line)">${rqListHtml(shown)}</div></div>
     <div class="card hsform"><b>3 · Datos</b>${rqForm(f)}</div>
     <div class="err" id="rqErr"></div>
@@ -3182,8 +3185,13 @@ async function rqDryPdf(mode){
 // un número: los que lo contienen · varios (separados por espacio o coma): exactamente esos
 const rqTokens = () => [...new Set(String(rq.q || "").toUpperCase().split(/[\s,;]+/).filter(Boolean))];
 const rqShown = () => { const tk = rqTokens(), dry = rq.type==="dry_off";
+  const L = rqShown0(tk, dry);
+  // secado: ordenar por la última leche (las más bajitas primero; sin pesaje al final)
+  if (dry && rq.dryOrd==="milk"){ const kg = c => rqDryInfo(c).lastKg ?? 1e9; return L.sort((a, b)=>kg(a) - kg(b) || byNum(a.id, b.id)); }
+  return L; };
+const rqShown0 = (tk, dry) => { 
   return rqCows.filter(c=>(!rq.pen || (c.pen||"—")===rq.pen) && (!tk.length || (tk.length > 1 ? tk.includes(c.id) : c.id.includes(tk[0])))
-    && (!dry || !rq.dryF || (rq.dryF==="prog" ? !!rqDryD?.plans[c.id] : rq.dryF==="low" ? rqDryInfo(c).low : rq.dryF==="lac" ? /(^|\/)Lac/.test(c.status || "") : true))); };
+    && (!dry || !rq.dryF || (rq.dryF==="prog" ? (!!rqDryD?.plans[c.id] || rqDryInfo(c).due) : rq.dryF==="low" ? rqDryInfo(c).low : rq.dryF==="lac" ? /(^|\/)Lac/.test(c.status || "") : true))); };
 function rqListHtml(shown){
   const tk = rqTokens(), miss = tk.length > 1 ? tk.filter(t=>!shown.some(c=>c.id===t)) : [];
   const head = tk.length > 1 ? `<div class="row" style="align-items:center;gap:8px;padding:8px 2px;border-bottom:1px solid var(--line)">
@@ -3196,10 +3204,10 @@ function rqListHtml(shown){
           ${rq.type==="exit" ? `<input data-rqwt="${esc(c.id)}" inputmode="decimal" placeholder="kg" value="${esc(rq.d.w?.[c.id] || "")}" style="width:78px;flex:none;padding:8px;font-size:15px">` : ""}</label>`).join("") || `<div class="empty">Sin animales</div>`;
 }
 function rqDryRow(c){
-  const x = rqDryInfo(c), plan = rqCanPlan(), red = !!x.plan || (plan && x.low);
+  const x = rqDryInfo(c), plan = rqCanPlan(), red = !!x.plan || x.due || (plan && x.low);
   const n = v => v==null ? "—" : String(+v).replace(".", ",");
   const pes = plan ? (x.ms.length ? x.ms.map(m=>`<span style="white-space:nowrap">${fmt(m[0]).slice(0, 5)}: ${n(m[1])}/${n(m[2])} = <b>${n(x.tot(m))}</b></span>`).join(" · ") : `<span>sin pesaje en 15 días</span>`) : "";
-  const tags = [x.plan ? `<b style="color:var(--s4)">🌙 secar ${fmt(x.plan.due)}</b>` : "", plan && x.low ? `<b style="color:var(--s4)">bajita</b>` : "",
+  const tags = [x.plan ? `<b style="color:var(--s4)">🌙 programada ${fmt(x.plan.due)}</b>` : x.due ? `<b style="color:var(--s4)">🌙 toca secar ${fmt(x.dry)}${x.dry < today() ? " (vencido)" : ""}</b>` : "", plan && x.low ? `<b style="color:var(--s4)">bajita</b>` : "",
     plan ? (x.preg ? `<span>PR ${x.gest ?? "?"} d${x.dry ? ` · secado ${days(today(), x.dry) >= 0 ? "en " + days(today(), x.dry) + " d" : "vencido"}` : ""}</span>` : `<span>vacía</span>`) : ""].filter(Boolean).join(" · ");
   const open = rq.dryOpen===c.id;
   return `<div style="border-bottom:1px solid var(--line);${red ? "background:color-mix(in srgb, var(--s4) 12%, transparent);border-left:4px solid var(--s4);" : ""}">
@@ -3324,7 +3332,8 @@ $("rqBody").addEventListener("click", async e=>{
     if (miss.length) toast(`No están activos en esta finca: ${miss.join(", ")}`);
     return; }
   if (q("data-rqdf")!=null){ rqRead(); rq.dryF = q("data-rqdf"); return renderRapido(); }
-  if (q("data-rqmarkplan")){ rqRead(); rqCows.filter(c=>rqDryD?.plans[c.id]).forEach(c=>rq.sel.add(c.id)); rq.dryF = "prog"; return renderRapido(); }
+  if (q("data-rqdo")!=null){ rqRead(); rq.dryOrd = q("data-rqdo"); return renderRapido(); }
+  if (q("data-rqmarkplan")){ rqRead(); rqCows.filter(c=>rqDryD?.plans[c.id] || rqDryInfo(c).due).forEach(c=>rq.sel.add(c.id)); rq.dryF = "prog"; return renderRapido(); }
   if (q("data-rqcow")){ e.preventDefault(); rq.dryOpen = rq.dryOpen===q("data-rqcow") ? null : q("data-rqcow"); $("rqList").innerHTML = rqListHtml(rqShown()); return; }
   if (t.id==="rqPlanGo") return rqPlanDry();
   if (t.id==="rqGo") return rqExec();
