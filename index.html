@@ -6725,11 +6725,11 @@ $("mkDrafts").addEventListener("click", e=>{
 // Planilla diaria por lote: litros al tanque, personal, terneras, antibiótico, vacas, potrero y alimento.
 // Total = tanque mañana + tarde + personal + terneras + antibiótico. Sin señal queda en el celular.
 const DM_FIELDS = [
-  ["am", "Mañana", [["am_tank_l","Tanque (L)"],["staff_l","Personal (L)"],["am_calves_l","Terneras (L)"],["am_abx_l","Antibiótico (L)"],["paddock_am_id","Potrero","paddock"]]],
-  ["pm", "Tarde",  [["pm_tank_l","Tanque (L)"],["pm_calves_l","Terneras (L)"],["pm_abx_l","Antibiótico (L)"],["paddock_pm_id","Potrero","paddock"]]],
+  ["am", "Mañana", [["am_tank_l","Tanque (L)"],["am_staff_l","Personal (L)"],["am_calves_l","Terneras (L)"],["am_abx_l","Antibiótico (L)"],["paddock_am_id","Potrero","paddock"]]],
+  ["pm", "Tarde",  [["pm_tank_l","Tanque (L)"],["pm_staff_l","Personal (L)"],["pm_calves_l","Terneras (L)"],["pm_abx_l","Antibiótico (L)"],["paddock_pm_id","Potrero","paddock"]]],
   ["day","Día",    [["cows","# Vacas"],["concentrate_bags","Concentrado (bultos)"],["kau_bags","KAU (bultos)"],["silage_bags","Silo (bultos)"]]],
 ];
-const DM_L = ["am_tank_l","pm_tank_l","staff_l","am_calves_l","pm_calves_l","am_abx_l","pm_abx_l"];
+const DM_L = ["am_tank_l","pm_tank_l","am_staff_l","pm_staff_l","am_calves_l","pm_calves_l","am_abx_l","pm_abx_l"];   // personal: mañana + tarde (en Supabase staff_l = la suma)
 const dmTotal = r => DM_L.reduce((a,k)=>a + (+r[k]||0), 0);
 const dmKey = (farm, pen, date) => `dm:${farm}|${pen}|${date}`;
 // se puede guardar por partes (ej. el antibiótico temprano, el tanque y el concentrado después): queda pendiente lo que falte
@@ -6815,6 +6815,8 @@ async function openDaily(){
         sb.from("cows").select("id", { count:"exact", head:true }).eq("farm_id", farm).eq("pen", pen).eq("active", true).ilike("status", "%Lac%"),
       ]);
       if (ex.data) DM_FIELDS.forEach(([,,fs])=>fs.forEach(([k])=>{ if (ex.data[k]!=null) r[k] = ex.data[k]; })), r.note = ex.data.note, r.saved = { id:ex.data.id, by:ex.data.entered_by };
+      // registros de antes (solo el personal del día): se muestra en la mañana
+      if (ex.data && ex.data.staff_l!=null && ex.data.am_staff_l==null && ex.data.pm_staff_l==null) r.am_staff_l = ex.data.staff_l;
       // registros viejos con el potrero escrito a mano: se busca en el catálogo
       if (ex.data) ["am","pm"].forEach(x=>{ if (r[`paddock_${x}_id`]==null && ex.data[`paddock_${x}`]){
         const m = jget(`dmPads:${farm}`, []).find(p=>p.number===ex.data[`paddock_${x}`] && p.predio===DM_PEN_PREDIO[pen]); if (m) r[`paddock_${x}_id`] = m.id; } });
@@ -6903,7 +6905,11 @@ async function flushDaily(){
     if (r.note) row.note = r.note;
     // el número del potrero también queda escrito (como antes)
     ["am","pm"].forEach(x=>{ const pd = jget(`dmPads:${r.farm_id}`, []).find(p=>p.id===row[`paddock_${x}_id`]); if (pd) row[`paddock_${x}`] = pd.number; });
-    const { error } = await sb.from("daily_milk").upsert(row, { onConflict:"farm_id,pen,rec_date" });
+    let { error } = await sb.from("daily_milk").upsert(row, { onConflict:"farm_id,pen,rec_date" });
+    // sin las columnas de personal por ordeño (falta SQL/leche_diaria_personal_tarde.sql): se sube la suma en staff_l
+    if (error && /_staff_l/.test(error.message)){ const { am_staff_l, pm_staff_l, ...r2 } = row;
+      if (am_staff_l!=null || pm_staff_l!=null) r2.staff_l = (+am_staff_l || 0) + (+pm_staff_l || 0);
+      ({ error } = await sb.from("daily_milk").upsert(r2, { onConflict:"farm_id,pen,rec_date" })); }
     if (error){ left.push(key); console.warn("leche diaria", key, error.message); continue; }
     try{ localStorage.removeItem(key); }catch(e){} sent++;
   }
