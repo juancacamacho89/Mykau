@@ -154,6 +154,7 @@ svg text{fill:var(--muted);font-size:11px}
 .photo{position:relative;flex:0 0 110px;height:110px;border-radius:12px;background:var(--bg);overflow:hidden;
   display:flex;align-items:center;justify-content:center;color:var(--muted);font-size:12px;text-align:center}
 .photo img{width:100%;height:100%;object-fit:cover;cursor:zoom-in}
+.photo .phdel{position:absolute;left:4px;top:4px;background:rgba(0,0,0,.6);color:#fff;border:0;border-radius:14px;padding:3px 7px;font-size:12px;cursor:pointer}
 .photo label{position:absolute;right:4px;bottom:4px;background:var(--accent);color:#fff;border-radius:16px;padding:3px 8px;font-size:12px;cursor:pointer}
 .pill{display:inline-block;border-radius:12px;padding:2px 9px;font-size:13px;font-weight:700;color:#fff;margin-right:4px}
 .exit{background:var(--s4);color:#fff;border-radius:10px;padding:10px 12px;margin-top:10px;font-size:14px}
@@ -982,6 +983,7 @@ function renderCow(d){
       <div class="photo" id="photoBox">
         ${photoUrl ? `<img src="${esc(photoUrl)}" alt="Foto de ${esc(c.id)}" id="cowImg">` : `Sin foto`}
         ${canDo("vacas_foto") ? `<label>📷 ${photoUrl?"Cambiar":"Foto"}<input type="file" accept="image/*" id="photoIn" hidden></label>` : ""}
+        ${photoUrl && myProfile==="Admin Principal" ? `<button class="phdel" id="photoDel" title="Borrar foto">🗑</button>` : ""}
       </div>
       <div style="min-width:0">
         <h2>${esc(c.id)}</h2>
@@ -5805,8 +5807,12 @@ function ivMvHtml(){
   const others = ivFarms.filter(f=>f.id!==ivState.farm), tr = m.mode==="traslado" && others.length, inn = m.mode==="entrada";
   if (tr && !others.some(f=>f.id===m.to)) m.to = others[0].id;
   const line = (l, i) => { const sp = ivSup(l.code), ps = ivMvPres(sp), cur = ivMvUnit(l, sp);
-    return `<div data-mvl="${i}" style="display:grid;grid-template-columns:1.6fr 0.7fr 1fr auto;gap:6px;margin-top:6px;align-items:center">
-      <input data-mvk="name" list="ivMvSup" value="${esc(sp?.name || l.typed || "")}" placeholder="escribe el producto" autocomplete="off" style="min-width:0${l.typed && !sp ? ";border-color:var(--s4)" : ""}">
+    // con categoría escogida: lista desplegable con el nombre corto ("Concentrado novillas" → "novillas"); sin categoría: escribir
+    const short = x => { const c = String(x.category || "").split(" ")[0], n = x.name; return n.toLowerCase().startsWith(c.toLowerCase() + " ") ? n.slice(c.length + 1) : n; };
+    const pick = m.cat ? `<select data-mvk="code" style="grid-column:1/-1;min-width:0;font-weight:700"><option value="">— escoge ${esc(m.cat.toLowerCase())} —</option>${L.map(x=>`<option value="${esc(x.code)}" ${x.code===l.code ? "selected" : ""}>${esc(short(x))}</option>`).join("")}${sp && !L.includes(sp) ? `<option value="${esc(sp.code)}" selected>${esc(sp.name)}</option>` : ""}</select>`
+      : `<input data-mvk="name" list="ivMvSup" value="${esc(sp?.name || l.typed || "")}" placeholder="escribe el producto" autocomplete="off" style="grid-column:1/-1;min-width:0${l.typed && !sp ? ";border-color:var(--s4)" : ""}">`;
+    return `<div data-mvl="${i}" style="display:grid;grid-template-columns:0.8fr 1.4fr auto;gap:6px;margin-top:10px;align-items:center;padding-top:8px;border-top:1px solid var(--line)">
+      ${pick}
       <input data-mvk="qty" type="number" inputmode="decimal" min="0" step="any" value="${esc(l.qty)}" placeholder="cant." style="min-width:0">
       <select data-mvk="unit" style="min-width:0">${ps.map(([k, x])=>`<option value="${k}" ${cur===k ? "selected" : ""}>${esc(x.name)}${x.size !== 1 ? ` (${ivN(x.size)} ${esc(sp?.unit || "")})` : ""}</option>`).join("")}
         <option value="unit" ${cur==="unit" ? "selected" : ""}>${esc(sp?.unit || "unidad")}</option></select>
@@ -6017,6 +6023,7 @@ function ivWire(){
     const mv = t.closest("[data-mvl]");
     if (mv){ const l = ivMv.lines[+mv.dataset.mvl], k = t.dataset.mvk;
       if (k==="name"){ const sp = ivMvByName(t.value, ivMv.grp); if ((sp?.code || "") !== l.code || (!sp && l.typed !== t.value)){ l.code = sp?.code || ""; l.typed = sp ? "" : t.value; l.unit = "pack"; return renderInv(); } return; }
+      if (k==="code"){ l.code = t.value; l.typed = ""; l.unit = "pack"; renderInv(); body.querySelector(`[data-mvl="${mv.dataset.mvl}"] [data-mvk="qty"]`)?.focus(); return; }
       if (k==="unit"){ l.unit = t.value; return; } }
     if (t.name==="ivT"){ ivState.tab = t.value; ivState.q = "";
       if (t.value==="pedido" && !ivPedidoSeen && ivState.farm!==IV_ISLA && ivFarms.some(f=>f.id===IV_ISLA)){
@@ -7525,6 +7532,17 @@ $("trSave").addEventListener("click", async ()=>{
   toast(`${move.length} traslado${move.length===1?"":"s"} guardado${move.length===1?"":"s"} ✓`);
 });
 
+// ── Borrar foto (solo Admin Principal; SQL/borrar_foto_vaca.sql) ──
+document.addEventListener("click", async e=>{
+  if (e.target.id !== "photoDel" || !currentCow) return;
+  e.preventDefault(); e.stopPropagation();
+  const id = currentCow;
+  if (!confirm(`¿Borrar la foto de la vaca ${id}? No se puede recuperar.`)) return;
+  const { data:path, error } = await sb.rpc("borrar_foto_vaca", { p_cow:id });
+  if (error) return alert("No se pudo borrar: " + (/function|schema cache/i.test(error.message) ? "falta correr SQL/borrar_foto_vaca.sql" : error.message));
+  if (path) await sb.storage.from("cow-photos").remove([path]);
+  toast("Foto borrada"); loadCow(id);
+}, true);
 // ── Foto: se achica en el celular y se sube a Storage ───────
 document.addEventListener("change", async e=>{
   if (e.target.id !== "photoIn" || !e.target.files[0] || !currentCow) return;
