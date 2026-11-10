@@ -6501,7 +6501,8 @@ $("ckBody").addEventListener("click", e=>{
     r.res = ckResTxt(r); if (!r.res) return;
     ckSave(); ckNext(id); return;
   }
-  if (e.target.closest(".ckpan") || ckMode==="pad") return;   // tocar el comentario (o la ficha) no cierra la vaca
+  // tocar el comentario, la ficha o la historia reproductiva (desplegable) no cierra la vaca
+  if (e.target.closest(".ckpan") || e.target.closest(".ckmore") || ckMode==="pad") return;
   ckOpen = ckOpen===id ? null : id; ckRender();
   row.scrollIntoView({ block:"nearest" });
 });
