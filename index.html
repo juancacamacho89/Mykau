@@ -2142,6 +2142,13 @@ async function initRegistros(){
       if (t.closest("[data-rgclear]")){ rgPick = { title:"", who:"" }; return rgDraw(); }
       if (t.id==="rgTxt"){ t.disabled = true; await rgExport(); t.disabled = false; return; }
       if (dm){ const [farm, pen, date] = dm.dataset.rgdm.split("|"); dmGoto = { farm:+farm, pen, date }; location.hash = "diaria"; window.scrollTo({ top:0 }); return; }
+      const mk = t.closest("[data-rgmk]");
+      if (mk){ const [mode, farm, herd, pen, date, who] = mk.dataset.rgmk.split("|");
+        if (mode==="e"){ mkGoto = { farm:+farm, herd, pen, date }; location.hash = "leche"; window.scrollTo({ top:0 }); return; }
+        const box = mk.parentElement.querySelector("[data-rgmkbox]"); if (!box) return;
+        if (box.innerHTML){ box.innerHTML = ""; mk.textContent = "ver planilla"; return; }
+        mk.textContent = "cerrar planilla"; box.innerHTML = `<div class="sub" style="margin-top:6px">Cargando…</div>`;
+        box.innerHTML = await rgMkSheet(herd, pen, date, who); return; }
       const c = t.closest("[data-cow]"); if (c) openCow(c.dataset.cow);
     });
   }
@@ -2167,8 +2174,12 @@ function renderRgFilters(){
 // editar / borrar desde Registros: quien lo registró o el administrador
 const RG_EDIT_TYPES = ["calving","service","heat","dry_off","exit","weight","abortion","embryo_loss"];
 function rgActs(r){
-  if (!r.id || !(isAdmin || (me && r.who===me))) return "";
   const b = (attr, txt, color) => ` <button class="del" ${attr} ${color ? `style="color:var(${color})"` : ""}>${txt}</button>`;
+  if (r.kind==="pesaje"){ const k = [r.farm, r.herd, r.pen, r.date, r.who].map(x=>esc(x ?? "")).join("|");
+    return b(`data-rgmk="v|${k}"`, "ver planilla", "--accent")
+      + ((isAdmin || (me && r.who===me)) && canDo("pesaje_registrar") && r.pen ? b(`data-rgmk="e|${k}"`, "editar", "--accent") : "")
+      + `<div data-rgmkbox="${k}"></div>`; }
+  if (!r.id || !(isAdmin || (me && r.who===me))) return "";
   if (r.kind==="vacas") return r.status!=="pendiente" && !(isMain() && r.status==="en Interherd") ? "" :
     (RG_EDIT_TYPES.includes(r.etype) ? b(`data-rged="${r.id}|${esc(r.cow)}"`, "editar", "--accent") : "") + b(`data-rgdel="cow_events|${r.id}"`, "borrar");
   if (r.kind==="diaria") return b(`data-rgdm="${r.farm}|${esc(r.pen)}|${r.date}"`, "editar", "--accent") + b(`data-rgdel="daily_milk|${r.id}"`, "borrar");
@@ -2179,6 +2190,22 @@ function rgActs(r){
 const RG_DEL_MSG = { cow_events:"¿Borrar este registro de la vaca? Si ya estaba en Interherd, bórralo también allá.", daily_milk:"¿Borrar esta planilla de leche diaria?",
   treatments_cow:"¿Borrar este tratamiento? Los insumos vuelven al inventario.", paddock_works:"¿Borrar esta labor? Los insumos vuelven al inventario.",
   grazing:"¿Borrar este movimiento de lote?", rainfall:"¿Borrar este registro de lluvia?" };
+// planilla de un pesaje: cada vaca con mañana, tarde, total y nota
+async function rgMkSheet(herd, pen, date, who){
+  let q = sb.from("cow_milk").select("cow_id,am_kg,pm_kg,total_kg,note").eq("herd", herd).eq("test_date", date).limit(2000);
+  q = pen ? q.eq("pen", pen) : q.eq("entered_by", who);
+  const { data, error } = await q;
+  if (error) return `<div class="sub" style="margin-top:6px">No se pudo cargar: ${esc(error.message)}</div>`;
+  const rows = (data || []).sort((a, b)=>byNum(a.cow_id, b.cow_id)), n = v => v==null ? "—" : String(+v).replace(".", ",");
+  const sum = k => rows.reduce((a, r)=>a + (+r[k] || 0), 0), cnt = k => rows.filter(r=>r[k]!=null).length;
+  return `<div style="max-height:420px;overflow:auto;margin-top:6px;border:1px solid var(--line);border-radius:10px">
+    <table style="font-size:13px;width:100%"><tr><th>Vaca</th><th style="text-align:right">Mañana</th><th style="text-align:right">Tarde</th><th style="text-align:right">Total</th><th>Nota</th></tr>
+    ${rows.map(r=>`<tr><td><button class="lnk" data-cow="${esc(r.cow_id)}">${esc(r.cow_id)}</button></td><td style="text-align:right">${n(r.am_kg)}</td><td style="text-align:right">${n(r.pm_kg)}</td>
+      <td style="text-align:right;font-weight:700">${n(r.total_kg)}</td><td class="sub">${esc(r.note || "")}</td></tr>`).join("")}
+    ${canSee("pesaje_totales") && rows.length ? `<tr style="font-weight:800"><td>${rows.length} vacas</td><td style="text-align:right">${n(Math.round(sum("am_kg")*10)/10)}</td>
+      <td style="text-align:right">${n(Math.round(sum("pm_kg")*10)/10)}</td><td style="text-align:right">${n(Math.round(sum("total_kg")*10)/10)}</td>
+      <td class="sub">prom. ${cnt("total_kg") ? n(Math.round(sum("total_kg")/cnt("total_kg")*10)/10) : "—"}</td></tr>` : ""}</table></div>`;
+}
 let rgEditAfter = null;   // al abrir la hoja de vida desde Registros, abre de una vez el formulario para editar
 const rgWho = id => id ? (rgNames?.[id] || "Usuario " + String(id).slice(0, 4)) : "—";
 const rgTime = t => !t ? "" : String(t).length===10 ? fmt(t)   // solo fecha (lluvia, ración): sin hora
@@ -2215,15 +2242,15 @@ async function loadRegistros(){
       if (pend){ q = q.eq("source", "app"); if (/in_interherd/.test(cols)) q = q.eq("in_interherd", false); }
       else q = q.gte("entered_at", qFrom).lt("entered_at", t1);
       return q; };
-    let { data, error } = await mq("cow_id,test_date,herd,source,am_kg,pm_kg,entered_by,entered_at,in_interherd");
+    let { data, error } = await mq("cow_id,test_date,herd,pen,source,am_kg,pm_kg,entered_by,entered_at,in_interherd");
     if (error) ({ data, error } = await mq("cow_id,test_date,herd,source,am_kg,pm_kg,entered_by,entered_at"));
     if (error){ notes.push("Pesaje: corre SQL/agregar_leche_app.sql (falta para subir pesajes desde la app)."); return; }
     const g = {};
-    (data||[]).forEach(m=>{ const k = m.test_date + "|" + m.herd + "|" + m.entered_by;
-      const x = g[k] = g[k] || { date:m.test_date, herd:m.herd, who:m.entered_by, when:m.entered_at, n:0, am:0, pm:0, app:0 };
+    (data||[]).forEach(m=>{ const k = m.test_date + "|" + m.herd + "|" + (m.pen || "") + "|" + m.entered_by;
+      const x = g[k] = g[k] || { date:m.test_date, herd:m.herd, pen:m.pen || "", who:m.entered_by, when:m.entered_at, n:0, am:0, pm:0, app:0 };
       x.n++; if (m.am_kg!=null) x.am++; if (m.pm_kg!=null) x.pm++; if (m.source==="app" && !m.in_interherd) x.app++; if (m.entered_at > x.when) x.when = m.entered_at; });
-    Object.values(g).forEach(x=>add({ kind:"pesaje", icon:"⚖️", when:x.when, date:x.date, farm:RG_HERD_FARM[x.herd], who:x.who,
-      title:"Pesaje de leche", detail:`${x.n} vacas · mañana ${x.am} · tarde ${x.pm}`, status: x.app ? "pendiente" : "en Interherd" }));
+    Object.values(g).forEach(x=>add({ kind:"pesaje", icon:"⚖️", when:x.when, date:x.date, farm:RG_HERD_FARM[x.herd], who:x.who, herd:x.herd, pen:x.pen,
+      title:"Pesaje de leche", detail:`${x.pen ? "Lote " + x.pen + " · " : ""}${x.n} vacas · mañana ${x.am} · tarde ${x.pm}`, status: x.app ? "pendiente" : "en Interherd" }));
   })());
   if (want("diaria")) jobs.push((async()=>{
     const { data } = await sb.from("daily_milk").select("id,farm_id,pen,rec_date,total_l,cows,entered_by,entered_at").eq("source", "app")
@@ -5548,7 +5575,7 @@ async function ivLoad(){
   if (!canSee("inventario_ver")){   // solo Movimientos: productos y salidas, sin existencias
     const [su, mv] = await Promise.all([psAll(()=>sb.from("supplies").select("*").order("name")),
       sb.from("supply_entries").select("id,entry_date,kind,supply_code,packs,qty,presentation,pack_size,notes,created_by,created_at,transfer_ref")
-        .eq("farm_id", f).in("kind", ["salida","traslado"]).order("entry_date", { ascending:false }).order("id", { ascending:false }).limit(200)]);
+        .eq("farm_id", f).in("kind", ["salida","traslado","entrada"]).order("entry_date", { ascending:false }).order("id", { ascending:false }).limit(200)]);
     ivData = su.error ? { err:"No se pudieron cargar los productos." } : { supplies:su.data || [], stock:[], moves:mv.data || [], alerts:[], feed:[] };
     return;
   }
@@ -5610,7 +5637,7 @@ function ivStockHtml(){
 }
 function ivMovesHtml(list){
   return `<table class="ivt" style="font-size:13px;margin-top:6px">${list.map(m=>{ const sp = ivSup(m.supply_code);
-    const del = (ivCan() && (isMain() || m.created_by===me)) || (["salida","traslado"].includes(m.kind) && m.created_by===me && ivMvGroups().some(g=>ivInGrp(sp, g[0])));
+    const del = (ivCan() && (isMain() || m.created_by===me)) || (["salida","traslado","entrada"].includes(m.kind) && m.created_by===me && ivMvGroups().some(g=>ivInGrp(sp, g[0])));
     return `<tr${del ? ` data-swdel="supply_entries|${m.id}"` : ""}><td>${fmt(m.entry_date)}</td><td>${IV_KIND[m.kind || "entrada"] || m.kind}</td>
       <td><b>${esc(sp?.name || m.supply_code)}</b><div class="sub">${m.packs ? `${ivN(m.packs)} × ${esc(m.presentation || "")} · ` : ""}${[m.supplier, m.invoice, m.notes].filter(Boolean).map(esc).join(" · ")}</div></td>
       <td style="text-align:right;white-space:nowrap${+m.qty < 0 ? ";color:var(--s3)" : ""}">${+m.qty > 0 && m.kind!=="entrada" ? "+" : ""}${ivN(m.qty)} ${esc(sp?.unit || "")}</td></tr>`; }).join("")
@@ -5758,21 +5785,24 @@ const IV_MEDCATS = ["Antibiótico","Antiinflamatorio / analgésico","Hormona","A
 const ivMvGroups = () => [canDo("insumos_mov_alimento") && ["alim","🌾 Alimento"], canDo("insumos_mov_medicamento") && ["med","💊 Medicamentos"]].filter(Boolean);
 const ivInGrp = (sp, g) => !!sp && (g==="alim" ? IV_FEEDCATS : IV_MEDCATS).includes(sp.category);
 const ivMvLine = () => ({ code:"", unit:"pack", qty:"" });
-let ivMv = { grp:"", mode:"salida", to:null, date:null, lot:"", note:"", lines:[ivMvLine()] };
+let ivMv = { grp:"", cat:"", mode:"salida", to:null, date:null, lot:"", supplier:"", invoice:"", note:"", lines:[ivMvLine()] };
 // producto escrito → código (solo los del grupo: alimento o medicamentos)
 // presentaciones para escoger (las que traen más de 1 unidad) y la que está escogida en la línea
 const ivMvPres = sp => ivPres(sp).map((x, i)=>["p" + i, x]).filter(([, x])=>x.size !== 1);
 const ivMvUnit = (l, sp) => { const ps = ivMvPres(sp); return l.unit==="unit" ? "unit" : ps.some(([k])=>k===l.unit) ? l.unit : ivPres(sp)[0]?.size !== 1 && ps[0]?.[0]==="p0" ? "p0" : "unit"; };   // por defecto: la presentación usual
 const ivMvByName = (v, g) => { const t = String(v || "").trim().toLowerCase(); if (!t) return null;
-  const L = (ivData?.supplies || []).filter(x=>x.active!==false && ivInGrp(x, g));
+  const L = (ivData?.supplies || []).filter(x=>x.active!==false && ivInGrp(x, g) && (!ivMv.cat || x.category===ivMv.cat));
   return L.find(x=>x.name.toLowerCase()===t) || L.find(x=>x.code.toLowerCase()===t) || null; };
 function ivMvHtml(){
   const gs = ivMvGroups(), m = ivMv;
   if (!gs.length) return `<div class="card"><div class="empty">Tu perfil no registra movimientos.</div></div>`;
   if (!gs.some(g=>g[0]===m.grp)) m.grp = gs[0][0];
-  const L = ivData.supplies.filter(x=>x.active!==false && ivInGrp(x, m.grp)).sort((a, b)=>a.name.localeCompare(b.name)), alim = m.grp==="alim";
+  const all = ivData.supplies.filter(x=>x.active!==false && ivInGrp(x, m.grp)), alim = m.grp==="alim";
+  const cats = (alim ? IV_FEEDCATS : IV_MEDCATS).filter(c=>all.some(x=>x.category===c));
+  if (m.cat && !cats.includes(m.cat)) m.cat = "";
+  const L = all.filter(x=>!m.cat || x.category===m.cat).sort((a, b)=>a.name.localeCompare(b.name));
   const lots = [...new Set([...jget(`psField:${ivState.farm}`, []), ...jget(`rnData:${ivState.farm}`, { lots:[] }).lots.map(l=>l.name)])];
-  const others = ivFarms.filter(f=>f.id!==ivState.farm), tr = m.mode==="traslado" && others.length;
+  const others = ivFarms.filter(f=>f.id!==ivState.farm), tr = m.mode==="traslado" && others.length, inn = m.mode==="entrada";
   if (tr && !others.some(f=>f.id===m.to)) m.to = others[0].id;
   const line = (l, i) => { const sp = ivSup(l.code), ps = ivMvPres(sp), cur = ivMvUnit(l, sp);
     return `<div data-mvl="${i}" style="display:grid;grid-template-columns:1.6fr 0.7fr 1fr auto;gap:6px;margin-top:6px;align-items:center">
@@ -5781,26 +5811,27 @@ function ivMvHtml(){
       <select data-mvk="unit" style="min-width:0">${ps.map(([k, x])=>`<option value="${k}" ${cur===k ? "selected" : ""}>${esc(x.name)}${x.size !== 1 ? ` (${ivN(x.size)} ${esc(sp?.unit || "")})` : ""}</option>`).join("")}
         <option value="unit" ${cur==="unit" ? "selected" : ""}>${esc(sp?.unit || "unidad")}</option></select>
       <button class="lnk" data-mvdel="${i}" style="color:var(--s4)" aria-label="Quitar">✕</button></div>`; };
-  const recent = ivData.moves.filter(x=>["salida","traslado"].includes(x.kind) && ivInGrp(ivSup(x.supply_code), m.grp)).slice(0, 30);
+  const recent = ivData.moves.filter(x=>["salida","traslado","entrada"].includes(x.kind) && ivInGrp(ivSup(x.supply_code), m.grp)).slice(0, 30);
   const fl = id => esc(farmLabel(ivFarms.find(f=>f.id===id) || {}));
-  return `<div class="card sheet hsform" style="max-height:none"><b>${tr ? `Traslado · sale de ${fl(ivState.farm)}` : `Salida · ${fl(ivState.farm)}`}</b>
+  return `<div class="card sheet hsform" style="max-height:none"><b>${tr ? `Traslado · sale de ${fl(ivState.farm)}` : inn ? `Ingreso · llegó a ${fl(ivState.farm)}` : `Salida · ${fl(ivState.farm)}`}</b>
       ${gs.length > 1 ? seg("ivMG", gs, m.grp) : ""}
-      ${others.length ? `<div style="margin-top:6px">${seg("ivMM", [["salida","📤 Salida"],["traslado","🔁 Traslado a otra finca"]], m.mode)}</div>` : ""}
+      <div style="margin-top:6px">${seg("ivMM", [["entrada","📥 Ingreso (llegó)"],["salida","📤 Salida"], ...(others.length ? [["traslado","🔁 Traslado"]] : [])], m.mode)}</div>
       ${tr ? `<label>Llega a</label>${others.length > 1 ? `<select id="ivMvTo">${others.map(f=>`<option value="${f.id}" ${f.id===m.to ? "selected" : ""}>${fl(f.id)}</option>`).join("")}</select>`
         : `<div><b>${fl(others[0].id)}</b> <span class="sub">(sale de ${fl(ivState.farm)} y entra a ${fl(others[0].id)})</span></div>`}` : ""}
       <datalist id="ivMvSup">${L.map(x=>`<option value="${esc(x.name)}">`).join("")}</datalist>
-      <div class="sub" style="margin-top:6px">${tr ? "Lo que se lleva de una finca a la otra: se descuenta de aquí y entra allá." : alim ? "Bultos que se llevan a cada lote (próximas, novillas, terneras, KAU multipropósito…). El concentrado de las vacas en ordeño se sigue descontando de la Leche diaria."
+      <div class="sub" style="margin-top:6px">${inn ? "Lo que llegó a la finca (ej. 400 bultos de concentrado): se suma al inventario." : tr ? "Lo que se lleva de una finca a la otra: se descuenta de aquí y entra allá." : alim ? "Bultos que se llevan a cada lote (próximas, novillas, terneras, KAU multipropósito…). El concentrado de las vacas en ordeño se sigue descontando de la Leche diaria."
         : "Lo que sale y no queda en un tratamiento de Salud (los tratamientos descuentan solos): se dañó, se venció, préstamo…"}</div>
       <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">
         <div><label>Fecha</label><input id="ivMvDate" type="date" value="${m.date || today()}" max="${today()}" style="min-width:0"></div>
-        ${tr ? "" : `<div><label>${alim ? "Lote" : "Para qué"}</label><input id="ivMvLot" value="${esc(m.lot)}" list="ivMvLots" placeholder="${alim ? "ej. PROXIMAS" : "ej. se venció"}" style="min-width:0"></div>`}</div>
+        ${inn || tr ? "" : `<div><label>${alim ? "Lote" : "Para qué"}</label><input id="ivMvLot" value="${esc(m.lot)}" list="ivMvLots" placeholder="${alim ? "ej. PROXIMAS" : "ej. se venció"}" style="min-width:0"></div>`}</div>
       <datalist id="ivMvLots">${alim ? lots.map(l=>`<option value="${esc(l)}">`).join("") : ""}</datalist>
-      <label>Productos</label>${m.lines.map(line).join("")}
+      <label>Categoría</label><div class="chips sm ckpan" style="padding:0"><div class="chips sm">${cats.map(c=>`<button class="${m.cat===c ? "on" : ""}" data-mvcat="${esc(c)}">${esc(c)}</button>`).join("")}</div></div>
+      <label>Productos${m.cat ? ` · ${esc(m.cat)}` : ""}</label>${m.lines.map(line).join("")}
       <div class="addbar" style="margin-top:8px"><button id="ivMvAdd">＋ Otro producto</button></div>
       <label>Nota (opcional)</label><input id="ivMvNote" value="${esc(m.note)}" maxlength="200">
       <div class="err" id="ivErr"></div>
-      <button class="btn" id="ivMvSave" style="margin-top:12px">${tr ? "Guardar traslado" : "Guardar salida"}</button></div>
-    <div class="card"><b>Últimas salidas y traslados de ${alim ? "alimento" : "medicamentos"}</b>${ivMovesHtml(recent)}</div>`;
+      <button class="btn" id="ivMvSave" style="margin-top:12px">${tr ? "Guardar traslado" : inn ? "Guardar ingreso" : "Guardar salida"}</button></div>
+    <div class="card"><b>Últimos ingresos, salidas y traslados de ${alim ? "alimento" : "medicamentos"}</b>${ivMovesHtml(recent)}</div>`;
 }
 async function ivMvSave(){
   if (ivBusy) return; ivBusy = true;
@@ -5812,20 +5843,21 @@ async function ivMvSave0(){
   if (!lines.length) return err("Escoge el producto y la cantidad.");
   if (lines.some(l=>!l.code)) return err(lines.some(l=>l.typed) ? `No encontré «${lines.find(l=>!l.code && l.typed).typed}»: escoge el producto de la lista.` : "Falta escoger el producto en una línea.");
   if (lines.some(l=>!(+String(l.qty).replace(",", ".") > 0))) return err("Escribe una cantidad mayor que cero en cada producto.");
-  const others = ivFarms.filter(f=>f.id!==ivState.farm), tr = m.mode==="traslado" && others.length;
-  if (alim && !tr && !m.lot.trim()) return err("Escribe a qué lote van.");
-  const date = m.date || today(), txt = [m.lot.trim(), m.note.trim()].filter(Boolean).join(" · ") || null;
+  const others = ivFarms.filter(f=>f.id!==ivState.farm), tr = m.mode==="traslado" && others.length, inn = m.mode==="entrada";
+  if (alim && !tr && !inn && !m.lot.trim()) return err("Escribe a qué lote van.");
+  const date = m.date || today(), txt = (inn ? [m.note.trim()] : [m.lot.trim(), m.note.trim()]).filter(Boolean).join(" · ") || null;
   const rows = lines.map(l=>{ const sp = ivSup(l.code), u = ivMvUnit(l, sp), p = u==="unit" ? null : ivPres(sp)[+u.slice(1)], v = +String(l.qty).replace(",", "."), pk = !!p;
     return { entry_date:date, farm_id:ivState.farm, supply_code:l.code, kind:"salida", packs:pk ? v : null, presentation:pk ? p.name : null, pack_size:pk ? p.size : null,
       qty:-Math.round((pk ? v * p.size : v)*1000)/1000, notes:txt, source:"app" }; });
+  if (inn) rows.forEach(r=>{ r.kind = "entrada"; r.qty = -r.qty; });
   const fl = id => farmLabel(ivFarms.find(f=>f.id===id) || {}), to = tr ? (others.find(f=>f.id===m.to) || others[0]).id : null;
   const ins = !tr ? rows : rows.flatMap(r=>{ const ref = trUid(), note = m.note.trim();
     return [{ ...r, kind:"traslado", packs:r.packs!=null ? -r.packs : null, transfer_ref:ref, notes:`→ ${fl(to)}` + (note ? " · " + note : "") },
             { ...r, kind:"traslado", farm_id:to, qty:-r.qty, transfer_ref:ref, notes:`← ${fl(ivState.farm)}` + (note ? " · " + note : "") }]; });
   const { error } = await sb.from("supply_entries").insert(ins);
-  if (error) return err(/row-level|permission/i.test(error.message) ? `No tienes permiso para registrar ${tr ? "ese traslado (necesitas acceso a las dos fincas)" : "esa salida en esta finca"}.` : "No se pudo guardar: " + error.message);
-  toast(`${tr ? "Traslado" : "Salida"} guardado ✓ (${rows.length} producto${rows.length===1 ? "" : "s"})`);
-  ivMv = { ...m, lot:"", note:"", lines:[ivMvLine()] }; await ivLoad(); renderInv(); ivBadge();
+  if (error) return err(/row-level|permission/i.test(error.message) ? `No tienes permiso para registrar ${tr ? "ese traslado (necesitas acceso a las dos fincas)" : inn ? "ese ingreso en esta finca" : "esa salida en esta finca"}.` : "No se pudo guardar: " + error.message);
+  toast(`${tr ? "Traslado" : inn ? "Ingreso" : "Salida"} guardado ✓ (${rows.length} producto${rows.length===1 ? "" : "s"})`);
+  ivMv = { ...m, lot:"", supplier:"", invoice:"", note:"", lines:[ivMvLine()] }; await ivLoad(); renderInv(); ivBadge();
 }
 // ── Productos ──
 function ivProdHtml(){
@@ -5978,7 +6010,7 @@ function ivWire(){
     const t = e.target;
     if (t.name==="ivF"){ ivState.farm = +t.value; jset("ivLast", { farm:ivState.farm }); if (ivOrder) ivOrder.to = null; return ivLoad().then(renderInv); }
     if (t.name==="ivP"){ ivState.part = t.value; return renderInv(); }
-    if (t.name==="ivMG"){ ivMv = { ...ivMv, grp:t.value, lines:[ivMvLine()] }; return renderInv(); }
+    if (t.name==="ivMG"){ ivMv = { ...ivMv, grp:t.value, cat:"", lines:[ivMvLine()] }; return renderInv(); }
     if (t.name==="ivMM"){ ivMv.mode = t.value; return renderInv(); }
     if (t.id==="ivMvTo"){ ivMv.to = +t.value; return; }
     if (t.id==="ivMvDate"){ ivMv.date = t.value; return; }
@@ -6012,6 +6044,8 @@ function ivWire(){
     if (t.id==="ivONote") ivOrder.notes = t.value;
     if (t.id==="ivCQty"){ ivCnt.qty = t.value; return ivCountCalc(); }
     if (t.id==="ivMvLot"){ ivMv.lot = t.value; return; }
+    if (t.id==="ivMvSupp"){ ivMv.supplier = t.value; return; }
+    if (t.id==="ivMvInv"){ ivMv.invoice = t.value; return; }
     if (t.id==="ivMvNote"){ ivMv.note = t.value; return; }
     if (t.dataset.mvk==="qty"){ const mv = t.closest("[data-mvl]"); if (mv) ivMv.lines[+mv.dataset.mvl].qty = t.value; return; }
     if (t.dataset.mvk==="name"){ const mv = t.closest("[data-mvl]"), l = mv && ivMv.lines[+mv.dataset.mvl], sp = ivMvByName(t.value, ivMv.grp);
@@ -6036,6 +6070,7 @@ function ivWire(){
     if (t.id==="ivCSave") return ivCountSave();
     if (t.id==="ivMvSave") return ivMvSave();
     if (t.id==="ivMvAdd"){ ivMv.lines.push(ivMvLine()); return renderInv(); }
+    const mc = t.closest("[data-mvcat]"); if (mc){ ivMv.cat = ivMv.cat===mc.dataset.mvcat ? "" : mc.dataset.mvcat; return renderInv(); }
     const md = t.closest("[data-mvdel]"); if (md){ ivMv.lines.splice(+md.dataset.mvdel, 1); if (!ivMv.lines.length) ivMv.lines.push(ivMvLine()); return renderInv(); }
     if (t.id==="ivReload") return ivLoad().then(renderInv);
     if (t.id==="ivAlertNew"){ const name = prompt("¿Para qué producto? (escribe el nombre o el código)"); if (!name) return;
@@ -6182,6 +6217,21 @@ function parseKg(t){
   return Math.round(n*10)/10;
 }
 let mkFarms = null, mkCur = null;   // mkCur = planilla abierta {key, ses, ...draft}
+let mkGoto = null;   // desde Registros: {farm, herd, pen, date} → abre esa planilla con lo que está en Mykau
+async function mkOpenSaved(g){
+  if (!navigator.onLine) return toast("Para editar una planilla subida necesitas señal");
+  const key = draftKey(g.farm, g.pen, g.date), ob = jget("mkOutbox", []), loc = jget(key, null);
+  if (loc && (ob.includes(key) || loc.dirty) && !confirm("Este celular tiene cambios SIN SUBIR de esa planilla. ¿Reemplazarlos por lo que está en Mykau?")) return openSheet(key, "am", loc);
+  const { data, error } = await sb.from("cow_milk").select("cow_id,am_kg,pm_kg,note").eq("herd", g.herd).eq("pen", g.pen).eq("test_date", g.date).limit(2000);
+  if (error) return toast("No se pudo cargar: " + error.message);
+  const lot = await loadLot(g.farm, g.pen, g.date) || { cows:[], prev:{} };
+  const d = { farm:g.farm, pen:g.pen, herd:g.herd, date:g.date, cows:[...new Set([...lot.cows, ...(data||[]).map(r=>r.cow_id)])].sort(byNum),
+    prev:lot.prev, am:{}, pm:{}, note:{}, orig:(data||[]).map(r=>r.cow_id), created:Date.now() };
+  (data||[]).forEach(r=>{ if (r.am_kg!=null) d.am[r.cow_id] = +r.am_kg; if (r.pm_kg!=null) d.pm[r.cow_id] = +r.pm_kg; if (r.note) d.note[r.cow_id] = r.note; });
+  jset(key, d); jset("mkOutbox", ob.filter(k=>k!==key)); updNet();
+  openSheet(key, Object.keys(d.am).length || !Object.keys(d.pm).length ? "am" : "pm", d);
+  toast("Planilla cargada: corrige y toca Guardar");
+}
 
 async function initMilk(){
   updNet();
@@ -6207,6 +6257,7 @@ async function initMilk(){
     fillPens();
   }
   renderDrafts();
+  if (mkGoto){ const g = mkGoto; mkGoto = null; await mkOpenSaved(g); }
   function fillPens(){
     const f = mkFarms.find(x=>x.id===+$("mkFarm").value);
     $("mkPen").innerHTML = seg("mkPenR", f.pens.map(p=>[p,p]), jget("mkLast", {}).pen);
@@ -6294,7 +6345,8 @@ function renderSheet(){
   const d = mkCur, s = d.ses, other = s==="am" ? "pm" : "am";
   $("mkSheet").innerHTML = `<div class="card mk" style="padding-bottom:0">
     <div style="display:flex;justify-content:space-between;align-items:center">
-      <div><b style="font-size:17px">${esc(d.herd)} · ${esc(d.pen)}</b><div class="sub">${fmt(d.date)} · ordeño de la <b>${SES[s].toLowerCase()}</b></div></div>
+      <div><b style="font-size:17px">${esc(d.herd)} · ${esc(d.pen)}</b><div class="sub">${fmt(d.date)} · ordeño de la <b>${SES[s].toLowerCase()}</b>
+        · <button class="lnk" id="mkSwap">pasar a la ${SES[other].toLowerCase()}</button></div></div>
       <button class="lnk" id="mkBack">Cerrar</button></div>
     <div class="sub" style="margin:6px 0">Escribe <b>168</b> y queda 16.8. Amarillo = muy distinto al control anterior.</div>
     <table><tr><th>Vaca</th><th>Anterior</th><th>${SES[s]} kg</th><th>${SES[other]}</th><th>Nota</th></tr>
@@ -6361,6 +6413,7 @@ $("mkSheet").addEventListener("click", async e=>{
   const alt = e.target.closest(".mkalt");
   if (alt){ e.preventDefault(); const inp = alt.parentElement.querySelector("input.kg"), v = +alt.dataset.v;
     inp.value = v; mkCur[mkCur.ses][inp.dataset.id] = v; saveCur(); sumSheet(); markKg(inp); return; }
+  if (e.target.id==="mkSwap"){ mkCur.ses = mkCur.ses==="am" ? "pm" : "am"; renderSheet(); return; }
   if (e.target.id==="mkBack"){ mkCur = null; $("mkSheet").classList.add("hidden"); $("mkSetup").classList.remove("hidden"); renderDrafts(); return; }
   if (e.target.id==="mkAdd"){
     const id = $("mkAddId").value.trim().toUpperCase(); if (!id) return;
@@ -6393,9 +6446,10 @@ async function flushMilk(){
   let sent = 0;
   for (const key of ob){
     const d = jget(key, null); if (!d) continue;
-    const rows = d.cows.filter(id=>d.am[id]!=null || d.pm[id]!=null || d.note[id])
-      .map(id=>({ cow_id:id, test_date:d.date, ...(d.am[id]!=null ? { am_kg:d.am[id] } : {}), ...(d.pm[id]!=null ? { pm_kg:d.pm[id] } : {}),
-                  ...(d.note[id] ? { note:d.note[id] } : {}), herd:d.herd, ...(mkPenCol ? { pen:d.pen } : {}), source:"app" }));
+    const was = new Set(d.orig || []);   // planilla abierta desde Mykau para corregir
+    const rows = d.cows.filter(id=>d.am[id]!=null || d.pm[id]!=null || d.note[id] || was.has(id))
+      .map(id=>({ cow_id:id, test_date:d.date, ...(d.am[id]!=null || was.has(id) ? { am_kg:d.am[id] ?? null } : {}), ...(d.pm[id]!=null || was.has(id) ? { pm_kg:d.pm[id] ?? null } : {}),
+                  ...(d.note[id] || was.has(id) ? { note:d.note[id] || null } : {}), herd:d.herd, ...(mkPenCol ? { pen:d.pen } : {}), source:"app" }));
     // un envío por grupo de columnas (si una fila no trae la mañana, no se le pone vacía a la que ya estaba)
     const groups = {}; rows.forEach(r=>(groups[Object.keys(r).sort().join()] ||= []).push(r));
     let error = null;
