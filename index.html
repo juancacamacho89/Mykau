@@ -292,7 +292,7 @@ details.lac td{padding:6px 8px}
         </svg></span><b>Mastitis</b></a>
         <a class="appicon hidden" href="#finanzas" data-perm="finanzas_ver"><span class="ic" style="--g1:#ffe08a;--g2:#b8860b">💰</span><b>Finanzas</b></a>
         <a class="appicon hidden" href="#inventario" data-perm="inventario_ver insumos_mov_alimento insumos_mov_medicamento"><span class="ic" style="--g1:#c3b5ff;--g2:#5b45c9">📦</span><b>Insumos</b><i class="badge hidden" id="badgeInv"></i></a>
-        <a class="appicon hidden" href="#salud" data-perm="salud_ver salud_tratar"><span class="ic" style="--g1:#5fd0a5;--g2:#178a62">🩺</span><b>Salud</b><i class="badge hidden" id="badgeSalud"></i></a>
+        <a class="appicon hidden" href="#salud" data-perm="salud_ver salud_tratar salud_reportar"><span class="ic" style="--g1:#5fd0a5;--g2:#178a62">🩺</span><b>Salud</b><i class="badge hidden" id="badgeSalud"></i></a>
         <a class="appicon" href="#leche" data-perm="pesaje_registrar"><span class="ic" style="--g1:#7cc4ff;--g2:#2f6fd6"><svg viewBox="0 0 48 48" aria-hidden="true">
           <path d="M7 8h34a3 3 0 0 1 3 3v7c0 8-9 13-20 13S4 26 4 18v-7a3 3 0 0 1 3-3z" fill="#fff"/>
           <path d="M7 8h34a3 3 0 0 1 3 3v2H4v-2a3 3 0 0 1 3-3z" fill="#d7e8ff"/>
@@ -646,7 +646,7 @@ const PERM_FALLBACK = { vacas_repro:"vacas_ver", calidad_ver:"reporte_editar",
   vacas_secado:"vacas_parto", vacas_salida:"vacas_parto", terneras_registrar:"reporte_editar", listas_ver:"vacas_repro", generador_ver:"listas_ver",
   toros_ver:"reporte_editar", toros_registrar:"reporte_editar", racion_ver:"reporte_editar", racion_registrar:"reporte_editar",
   ronda_registrar:"diaria_registrar", ronda_ver:"diaria_registrar", chequeo_tratamientos:"chequeo", mastitis_registrar:"salud_tratar",
-  vacas_salud:"vacas_ver", vacas_peso:"vacas_ver", vacas_datos:"vacas_ver" };   // funciones nuevas: mientras no estén en el perfil
+  vacas_salud:"vacas_ver", vacas_peso:"vacas_ver", vacas_datos:"vacas_ver", inicio_antibiotico:"terneras_vigilar", salud_reportar:"salud_tratar" };   // funciones nuevas: mientras no estén en el perfil
 // si el perfil no tiene la función, se usa la de la que depende (en cadena: generador → listas → reproducción…)
 const permOf = (k, n = 0) => perms[k] || (PERM_FALLBACK[k] && n < 5 ? permOf(PERM_FALLBACK[k], n + 1) : null);
 const INV_PROFILES = ["Administrador", "Admin Principal", "Gerente", "Maria"];
@@ -665,9 +665,9 @@ const noSex = r => r == null || isMain() ? r : String(r).replace(/^(cargad[ao])\
 async function loadRole(){
   if (!navigator.onLine) return;
   const email = (await sb.auth.getUser().catch(()=>({data:{}}))).data?.user?.email?.toLowerCase();
-  const { data, error } = await sb.from("app_users").select("profile,app_profiles(perms)").eq("email", email).maybeSingle();
+  const { data, error } = await sb.from("app_users").select("name,profile,app_profiles(perms)").eq("email", email).maybeSingle();
   if (!error && data?.app_profiles){
-    perms = data.app_profiles.perms || {}; myProfile = data.profile;
+    perms = data.app_profiles.perms || {}; myProfile = data.profile; store.set("myName", data.name || "");
   } else {
     // sin perfil asignado (o la tabla aún no existe): administrador de la finca ve todo; los demás solo consultan vacas
     const { data:fa } = await sb.from("user_farm_access").select("role");
@@ -745,7 +745,7 @@ function setTab(tab){
 // pantallas y el permiso que las abre (si no lo tiene, vuelve al inicio)
 const TAB_PERM = { terneras:"terneras_historial terneras_vigilar terneras_registrar", traslados:"traslados", leche:"pesaje_registrar",
   diaria:"diaria_registrar diaria_totales diaria_resumen", reporte:"reporte_ver produccion_ver pastos_ver calidad_ver", registros:"registros_ver", chequeo:"chequeo chequeo_tratamientos",
-  mastitis:"mastitis_historial mastitis_vigilar mastitis_registrar", salud:"salud_ver salud_tratar", pastos:"pastos_ver pastos_registrar", pesot:"pesot_registrar", listas:"listas_ver", generador:"generador_ver", inventario:"inventario_ver insumos_mov_alimento insumos_mov_medicamento", finanzas:"finanzas_ver", toros:"toros_ver toros_registrar", racion:"racion_ver racion_registrar", ronda:"ronda_registrar ronda_ver", rapido:"vacas_servicio vacas_celo vacas_secado salud_tratar traslados vacas_salida", vaca:"vacas_ver" };
+  mastitis:"mastitis_historial mastitis_vigilar mastitis_registrar", salud:"salud_ver salud_tratar salud_reportar", pastos:"pastos_ver pastos_registrar", pesot:"pesot_registrar", listas:"listas_ver", generador:"generador_ver", inventario:"inventario_ver insumos_mov_alimento insumos_mov_medicamento", finanzas:"finanzas_ver", toros:"toros_ver toros_registrar", racion:"racion_ver racion_registrar", ronda:"ronda_registrar ronda_ver", rapido:"vacas_servicio vacas_celo vacas_secado salud_tratar traslados vacas_salida", vaca:"vacas_ver" };
 function route(){
   const h = decodeURIComponent(location.hash.slice(1));
   const tk = Object.keys(TAB_PERM).find(k=>h.startsWith(k));
@@ -797,9 +797,12 @@ function renderHome(){
 // leche de antibiótico (Leche diaria): la de la tarde de ayer y la de la mañana de hoy va para las terneras
 async function homeAbx(){
   const box = $("homeAbx"); if (!box) return;
-  if (!["terneras_historial","terneras_vigilar","pesot_registrar"].some(canSee) || !navigator.onLine){ box.innerHTML = ""; return; }
+  if (!canSee("inicio_antibiotico") || !navigator.onLine){ box.innerHTML = ""; return; }
   const t0 = today(), y = addDays(t0, -1);
-  const { data } = await sb.from("daily_milk").select("farm_id,pen,rec_date,am_abx_l,pm_abx_l").in("rec_date", [y, t0]);
+  // todas las fincas (solo los litros de antibiótico), aunque el usuario no tenga acceso a la otra finca
+  let { data, error } = await sb.rpc("abx_milk", { p_from:y, p_to:t0 });
+  if (error) ({ data } = await sb.from("daily_milk").select("farm_id,pen,rec_date,am_abx_l,pm_abx_l").in("rec_date", [y, t0]));
+  else data = (data || []).map(r=>({ farm_id:r.farm_id, rec_date:r.rec_date, am_abx_l:r.am_l, pm_abx_l:r.pm_l }));
   const fs = [...new Set((data||[]).map(r=>r.farm_id))].sort((a,b)=>b - a);
   const rows = fs.map(f=>{ const xs = (data||[]).filter(r=>r.farm_id===f), pm = xs.filter(r=>r.rec_date===y).reduce((a,r)=>a + (+r.pm_abx_l||0), 0),
     am = xs.filter(r=>r.rec_date===t0).reduce((a,r)=>a + (+r.am_abx_l||0), 0);
@@ -1154,6 +1157,17 @@ function mastHtml(list, id){
 // y, si tiene días de retiro, la leche no va al tanque hasta el último día + retiro (lo calcula Supabase).
 const HS_ROUTES = ["IM","IV","SC","Intramamaria","Intrauterina","Oral","Tópica","Otra"];
 let hsCat = null, hsFarm = null, hsForm = null, hsReady = false;
+// Salud en 2 partes: 🚨 Reportar enfermo (operarios) · 🩺 Tratamientos (tablero, diagnóstico y corrección)
+const HS_SX = ["Tos","Fiebre","Bajó la leche","Decaída","No come","Caída"];
+let hsPart = store.get("hsPart") || "", hsRep = null;
+const hsParts = () => [...(canDo("salud_reportar") ? [["rep","🚨 Reportar enfermo"]] : []),
+                       ...(canSee("salud_ver") || canDo("salud_tratar") ? [["tx","🩺 Tratamientos"]] : [])];
+const hsMeds = () => (hsCat?.supplies||[]).filter(x=>!/material|reactivo|concentrado|sal mineral|semen|fertiliz|semilla|herbicida|forraje/i.test(x.category||""));
+const hsMedByName = v => { const t = String(v||"").trim().toLowerCase(); if (!t) return null;
+  return hsMeds().find(x=>x.name.toLowerCase()===t) || hsMeds().find(x=>x.code.toLowerCase()===t) || null; };
+const hsRepLine = () => ({ supply_code:"", typed:"", dose:null, unit:"", route:"IM", every_hours:24, days:1 });
+function newHsRep(){ hsRep = { client_id: crypto.randomUUID ? crypto.randomUUID() : String(Date.now()) + Math.random(), animal:"vaca", cow_id:"",
+  start_date:today(), sx:[], other:"", treated:false, items:[hsRepLine()], notes:"" }; }
 async function hsCatalog(){
   if (navigator.onLine){
     const [su, dx, pr] = await Promise.all([
@@ -1189,8 +1203,11 @@ async function loadHealth(){
   const t0 = today();
   let list = [];
   if (navigator.onLine){
-    const { data, error } = await sb.from("treatments_cow").select("id,cow_id,start_date,diagnosis,protocol,prescribed_by,notes,outcome,created_by,treatment_items(supply_code,dose,unit,route,every_hours,days,end_date,milk_until,meat_until)")
+    let { data, error } = await sb.from("treatments_cow").select("id,cow_id,start_date,diagnosis,protocol,prescribed_by,notes,outcome,created_by,symptoms,animal,diagnosed_at,treatment_items(supply_code,dose,unit,route,every_hours,days,end_date,milk_until,meat_until)")
       .eq("farm_id", hsFarm).gte("start_date", addDays(t0, -120)).order("start_date", { ascending:false });
+    if (error && /symptoms|animal|diagnosed_at/.test(error.message))   // falta correr SQL/salud_reportes.sql
+      ({ data, error } = await sb.from("treatments_cow").select("id,cow_id,start_date,diagnosis,protocol,prescribed_by,notes,outcome,created_by,treatment_items(supply_code,dose,unit,route,every_hours,days,end_date,milk_until,meat_until)")
+        .eq("farm_id", hsFarm).gte("start_date", addDays(t0, -120)).order("start_date", { ascending:false }));
     if (error){ $("hsBody").innerHTML = `<div class="card"><div class="empty">No se pudo cargar (¿falta correr SQL/crear_salud_inventario.sql?)</div></div>`; return; }
     list = data || []; jset(`hsList:${hsFarm}`, list);
   } else list = jget(`hsList:${hsFarm}`, []);
@@ -1199,26 +1216,30 @@ async function loadHealth(){
     treatment_items:o.items.map(i=>({ ...i, end_date:addDays(o.start_date, Math.max(1, i.days||1) - 1),
       milk_until:(()=>{ const w = hsSupply(i.supply_code)?.milk_withdrawal; return w ? addDays(addDays(o.start_date, Math.max(1, i.days||1) - 1), w) : null; })() })) }));
   list = list.filter(t=>!ckIsCheckTx(t));   // los del chequeo (antibiótico, vitaminas, PGF2, Ovsynch) se ven en Chequeo
+  const parts = hsParts(); if (!parts.some(p=>p[0]===hsPart)) hsPart = parts[0]?.[0] || "tx";
+  const partSel = parts.length > 1 ? `<div class="sheet" style="padding:0;background:none;max-height:none;margin-bottom:10px">${seg("hsPartR", parts, hsPart)}</div>` : "";
+  if (hsPart==="rep") return renderHsReport(list, partSel);
   const endOf = t => t.treatment_items.map(i=>i.end_date).sort().pop() || t.start_date;
   const milkOf = t => t.treatment_items.map(i=>i.milk_until).filter(Boolean).sort().pop();
   const active = list.filter(t=>endOf(t) >= t0 && t.start_date <= t0);   // los programados (Ovsynch) salen el día que tocan
-  const withdraw = list.filter(t=>milkOf(t) && milkOf(t) >= t0).sort((a,b)=>milkOf(a).localeCompare(milkOf(b)));
+  const withdraw = list.filter(t=>t.animal!=="ternera" && milkOf(t) && milkOf(t) >= t0).sort((a,b)=>milkOf(a).localeCompare(milkOf(b)));
   const done = list.filter(t=>endOf(t) < t0 && endOf(t) >= addDays(t0, -7));
   const b = $("badgeSalud"); if (b){ b.textContent = active.length || ""; b.classList.toggle("hidden", !active.length); }
   const meds = t => t.treatment_items.map(i=>`${esc(hsSupply(i.supply_code)?.name || i.supply_code)} ${i.dose ?? ""} ${esc(i.unit||"")} ${esc(i.route||"")}${i.days>1 ? ` × ${i.days} d` : ""}`).join(" · ");
   const dayN = t => { const n = Math.max(...t.treatment_items.map(i=>i.days||1)); return `día ${Math.min(n, days(t.start_date, t0) + 1)} de ${n}`; };
   const card = (t, extra) => `<div class="hscard" data-hs="${t.id||t.client_id}">
       <div style="display:flex;justify-content:space-between;align-items:baseline;gap:8px">
-        <div><span class="id" style="font-size:22px;font-weight:800">${esc(t.cow_id)}</span> <b>${esc(t.diagnosis||"")}</b></div>
+        <div>${t.animal==="ternera" ? `<span class="pill">ternera</span> ` : ""}<span class="id" style="font-size:22px;font-weight:800">${esc(t.cow_id)}</span> <b>${esc(t.diagnosis||"")}</b></div>
         <div class="sub" style="text-align:right">${fmt(t.start_date)}${t.pending ? " · ⏳ por subir" : ""}</div></div>
-      <div class="sub" style="margin-top:2px">${meds(t)}</div>
-      ${extra||""}</div>`;
-  $("hsBody").innerHTML = `
-    ${canDo("salud_tratar") ? `<button class="btn" id="hsNew" style="margin-bottom:12px;font-size:18px;padding:14px">${canDo("salud_diagnostico") ? "＋ Tratar vaca" : "＋ Reportar animal enfermo"}</button>` : ""}
+      <div class="sub" style="margin-top:2px">${meds(t) || "sin medicamento"}</div>
+      ${extra||""}
+      ${canDo("salud_diagnostico") && !t.pending && t.id && t.diagnosis!=="Sin diagnóstico" ? `<button class="lnk" data-hsedit="${t.id}" style="margin-top:4px">✏️ corregir</button>` : ""}</div>`;
+  $("hsBody").innerHTML = `${partSel}
+    ${canDo("salud_diagnostico") ? `<button class="btn" id="hsNew" style="margin-bottom:12px;font-size:18px;padding:14px">＋ Tratar vaca</button>` : ""}
     ${(()=>{ const nd = list.filter(t=>t.diagnosis==="Sin diagnóstico" && t.start_date >= addDays(t0, -30));
       return nd.length ? `<div class="card" style="border:2px solid var(--s2)"><b>🩺 Reportados sin diagnóstico (${nd.length})</b>
-        ${nd.map(t=>card(t, `<div class="sub">${esc(t.notes || "")}${t.prescribed_by ? ` · ${esc(t.prescribed_by)}` : ""}</div>
-          ${canDo("salud_diagnostico") && !t.pending ? `<select data-hsdxset="${t.id}" style="margin-top:6px"><option value="">— poner diagnóstico —</option>${(hsCat?.diagnoses||[]).map(d=>`<option>${esc(d)}</option>`).join("")}</select>` : ""}`)).join("")}</div>` : ""; })()}
+        ${nd.map(t=>card(t, `${t.symptoms ? `<div style="margin-top:2px"><b>${esc(t.symptoms)}</b></div>` : ""}<div class="sub">${esc(t.symptoms && t.notes && t.notes.startsWith(t.symptoms) ? t.notes.slice(t.symptoms.length).replace(/^ · /, "") : t.notes || "")}${t.prescribed_by ? ` · reportó ${esc(t.prescribed_by)}` : ""}</div>
+          ${canDo("salud_diagnostico") && !t.pending ? `<button class="btn" data-hsedit="${t.id}" style="margin-top:8px;padding:10px">🩺 Diagnosticar y revisar tratamiento</button>` : ""}`)).join("")}</div>` : ""; })()}
     <div class="card"><b>💉 En tratamiento (${active.length})</b>
       ${active.map(t=>card(t, `<div class="sub"><b style="color:var(--ink)">${dayN(t)}</b> · formuló ${esc(t.prescribed_by||"—")}</div>`)).join("") || `<div class="empty">Ninguna vaca en tratamiento</div>`}</div>
     <div class="card"><b>🚫 Leche fuera del tanque (${withdraw.length})</b>
@@ -1228,6 +1249,81 @@ async function loadHealth(){
         `<div class="chips sm ckpan" style="padding:0"><div class="chips sm">${["Curada","Recayó","Descarte","Murió"].map(o=>`<button data-hsout="${o}" data-id="${t.id}">${o}</button>`).join("")}</div></div>`)).join("") || `<div class="empty">—</div>`}</div>
     ${canSee("inventario_ver") ? `<button class="btn ghost" id="hsInv" style="margin-top:4px">📦 Ver inventario de ${esc(farmLabel({ herd: hsFarm===7 ? "ISLA" : "RC" }))}</button><div id="hsInvBox"></div>` : ""}`;
 }
+function renderHsReport(list, partSel){
+  if (!hsRep) newHsRep();
+  const r = hsRep, t0 = today(), opt = (v, t, sel) => `<option value="${esc(v)}" ${sel?"selected":""}>${esc(t)}</option>`;
+  const mine = list.filter(t=>(t.symptoms || t.diagnosis==="Sin diagnóstico") && t.start_date >= addDays(t0, -14));
+  const chip = (attr, v, on) => `<button class="${on ? "on" : ""}" ${attr}="${esc(v)}">${esc(v)}</button>`;
+  $("hsBody").innerHTML = `${partSel}<div class="card hsform">
+    <b style="font-size:18px">Reportar animal enfermo</b>
+    <div class="chips" style="margin-top:8px">${[["vaca","🐄 Vaca"],["ternera","🐮 Ternera"]].map(([v,t])=>`<button class="${r.animal===v?"on":""}" data-hrani="${v}">${t}</button>`).join("")}</div>
+    <label>N° de ${r.animal==="ternera" ? "ternera" : "vaca"}</label><input id="hrCow" inputmode="text" autocapitalize="characters" value="${esc(r.cow_id)}" style="font-size:26px;font-weight:800">
+    <label>Fecha</label><input type="date" id="hrDate" value="${r.start_date}" max="${t0}">
+    <label>¿Qué tiene? (toca todo lo que veas)</label>
+    <div class="chips">${HS_SX.map(x=>chip("data-hrsx", x, r.sx.includes(x))).join("")}${chip("data-hrsx", "Otro", r.sx.includes("Otro"))}</div>
+    ${r.sx.includes("Otro") ? `<input id="hrOther" value="${esc(r.other)}" placeholder="¿Qué más tiene?" style="margin-top:6px">` : ""}
+    <label>¿Le aplicó algún tratamiento?</label>
+    <div class="chips"><button class="${!r.treated?"on":""}" data-hrtx="0">No</button><button class="${r.treated?"on":""}" data-hrtx="1">Sí</button></div>
+    ${r.treated ? `<datalist id="hrMedList">${hsMeds().map(m=>`<option value="${esc(m.name)}">`).join("")}</datalist>
+      ${r.items.map((it, i)=>{ const sp = hsSupply(it.supply_code); return `<div class="hsitem" data-hrl="${i}">
+        <div class="row"><input data-hrk="name" list="hrMedList" value="${esc(sp?.name || it.typed || "")}" placeholder="escribe el medicamento" autocomplete="off" style="flex:1;min-width:0${it.typed && !sp ? ";border-color:var(--s4)" : ""}">
+          ${r.items.length > 1 ? `<button class="del" data-hrrm="${i}" title="Quitar">✕</button>` : ""}</div>
+        ${it.typed && !sp ? `<div class="sub" style="color:var(--s4)">No encontré «${esc(it.typed)}»: escoge de la lista</div>` : ""}
+        <div class="grid4"><div><span>Dosis</span><input data-hrk="dose" inputmode="decimal" value="${it.dose ?? ""}"></div>
+          <div><span>Unidad</span><input data-hrk="unit" value="${esc(it.unit||"")}"></div>
+          <div><span>Vía</span><select data-hrk="route">${HS_ROUTES.map(x=>opt(x, x, x===it.route)).join("")}</select></div>
+          <div><span>Días</span><input data-hrk="days" inputmode="numeric" value="${it.days ?? 1}"></div></div></div>`; }).join("")}
+      <button class="lnk" id="hrAdd" style="margin-top:6px">＋ otro medicamento</button>
+      <div class="sub">Lo aplicado se descuenta del inventario${r.animal==="vaca" ? " y, si tiene retiro, la leche sale del tanque" : ""}.</div>` : ""}
+    <label>Nota (opcional)</label><input id="hrNote" value="${esc(r.notes)}">
+    <div class="err" id="hrErr"></div>
+    <button class="btn" id="hrSave" style="margin-top:12px;font-size:18px;padding:14px">Enviar reporte</button>
+    <div class="sub" style="margin-top:6px">El veterinario lo revisa, pone el diagnóstico y, si hace falta, corrige el tratamiento.</div></div>
+    <div class="card"><b>Reportes de los últimos 14 días (${mine.length})</b>
+      ${mine.map(t=>`<div class="hscard"><div style="display:flex;justify-content:space-between;gap:8px">
+        <div>${t.animal==="ternera" ? `<span class="pill">ternera</span> ` : ""}<span class="id" style="font-size:20px;font-weight:800">${esc(t.cow_id)}</span> ${esc(t.symptoms || "")}</div>
+        <div class="sub" style="text-align:right">${fmt(t.start_date)}${t.pending ? " · ⏳ por subir" : ""}</div></div>
+        <div class="sub">${t.diagnosis==="Sin diagnóstico" ? "⏳ esperando diagnóstico" : `✅ ${esc(t.diagnosis)}`}${t.treatment_items?.length ? " · " + t.treatment_items.map(i=>esc(hsSupply(i.supply_code)?.name || i.supply_code)).join(", ") : ""}</div></div>`).join("")
+        || `<div class="empty">Ningún reporte</div>`}</div>`;
+}
+function hrReadInputs(){
+  if (!hsRep) return;
+  hsRep.cow_id = ($("hrCow")?.value || "").trim().toUpperCase(); hsRep.start_date = $("hrDate")?.value || today();
+  hsRep.notes = $("hrNote")?.value || ""; if ($("hrOther")) hsRep.other = $("hrOther").value.trim();
+}
+async function hrSave(){
+  hrReadInputs();
+  const r = hsRep, err = m => $("hrErr").textContent = m;
+  if (!r.cow_id) return err(`Escribe el número de la ${r.animal}.`);
+  if (!r.sx.length) return err("Toca al menos un síntoma.");
+  if (r.sx.includes("Otro") && !r.other) return err("Escribe qué más tiene.");
+  if (r.start_date > today()) return err("La fecha no puede ser futura.");
+  const items = r.treated ? r.items.filter(i=>i.supply_code || i.typed) : [];
+  if (items.some(i=>!i.supply_code)) return err(`No encontré «${items.find(i=>!i.supply_code).typed}»: escoge el medicamento de la lista.`);
+  if (items.some(i=>!(i.dose > 0))) return err("Escribe la dosis de cada medicamento.");
+  if (r.treated && !items.length) return err("Escribe el medicamento que le aplicó (o toca «No»).");
+  const symptoms = r.sx.map(x=>x==="Otro" ? r.other : x).join(", ");
+  const ob = jget("hsOutbox", []);
+  ob.push({ client_id:r.client_id, farm_id:hsFarm, cow_id:r.cow_id, start_date:r.start_date, diagnosis:"Sin diagnóstico", protocol:"",
+    prescribed_by: store.get("myName") || myProfile || "Operario", symptoms, animal:r.animal,
+    notes:[symptoms, r.notes.trim()].filter(Boolean).join(" · "),
+    items: items.map(({ typed, ...i })=>({ ...i, every_hours:i.every_hours || 24, days:i.days || 1 })) });
+  jset("hsOutbox", ob);
+  toast(`${r.cow_id}: reporte enviado ✓`); hsRep = null; await flushHealth(); loadHealth(); window.scrollTo({top:0});
+}
+$("hsBody").addEventListener("input", e=>{
+  const t = e.target, ln = t.closest("[data-hrl]"); if (!ln || !hsRep) return;
+  const it = hsRep.items[+ln.dataset.hrl], k = t.dataset.hrk;
+  if (k==="name"){ const sp = hsMedByName(t.value);
+    if (sp && sp.code !== it.supply_code){ hrReadInputs(); it.supply_code = sp.code; it.typed = ""; it.unit = sp.unit || it.unit; renderHsReport(hsListCache(), hsPartSel());
+      $("hsBody").querySelector(`[data-hrl="${ln.dataset.hrl}"] [data-hrk="dose"]`)?.focus(); }
+    else if (!sp){ it.supply_code = ""; it.typed = t.value; }
+    return; }
+  if (k) it[k] = ["dose","days"].includes(k) ? (t.value==="" ? null : +t.value.replace(",", ".")) : t.value;
+});
+const hsListCache = () => { const l = jget(`hsList:${hsFarm}`, []);
+  jget("hsOutbox", []).filter(o=>o.farm_id===hsFarm).forEach(o=>l.unshift({ ...o, pending:true, treatment_items:o.items || [] })); return l; };
+const hsPartSel = () => hsParts().length > 1 ? `<div class="sheet" style="padding:0;background:none;max-height:none;margin-bottom:10px">${seg("hsPartR", hsParts(), hsPart)}</div>` : "";
 const hsSupply = code => (hsCat?.supplies||[]).find(x=>x.code===code) || jget("hsCat", {supplies:[]}).supplies.find(x=>x.code===code);
 
 // buscar insumo: lo escrito filtra la lista de al lado (se reconstruye, porque iPhone no deja esconder opciones)
@@ -1262,8 +1358,10 @@ function renderHealthForm(){
         medCats = [...new Set(meds.map(m=>m.category||"Otro"))].sort((a,b)=>a.localeCompare(b));
   const opt = (v, t, sel) => `<option value="${esc(v)}" ${sel?"selected":""}>${esc(t)}</option>`;
   $("hsBody").innerHTML = `<div class="card hsform">
-    <div style="display:flex;justify-content:space-between;align-items:center"><b style="font-size:18px">Tratar vaca</b><button class="lnk" id="hsCancel">Cancelar</button></div>
-    <label>N° de vaca</label><input id="hsCow" inputmode="text" autocapitalize="characters" value="${esc(f.cow_id)}" style="font-size:26px;font-weight:800">
+    <div style="display:flex;justify-content:space-between;align-items:center"><b style="font-size:18px">${f.edit_id ? `Diagnóstico y tratamiento · ${esc(f.cow_id)}` : "Tratar vaca"}</b><button class="lnk" id="hsCancel">Cancelar</button></div>
+    ${f.edit_id ? `<div class="sub" style="margin-top:4px">${f.animal==="ternera" ? "🐮 Ternera · " : ""}${f.reported_symptoms ? `Reportó <b>${esc(f.reported_by || "—")}</b>: ${esc(f.reported_symptoms)}` : `Formuló ${esc(f.reported_by || "—")}`}
+      ${f.orig_items ? `<br>Lo que se aplicó: ${esc(f.orig_items)}` : ""}</div>` : ""}
+    <label>N° de ${f.animal==="ternera" ? "ternera" : "vaca"}</label><input id="hsCow" inputmode="text" autocapitalize="characters" value="${esc(f.cow_id)}" style="font-size:26px;font-weight:800">
     <label>Fecha</label><input type="date" id="hsDate" value="${f.start_date}" max="${today()}">
     ${!canDo("salud_diagnostico") ? `<label>¿Qué tiene? (lo que se ve)</label><input id="hsSymp" value="${esc(f.symptoms||"")}" placeholder="Ej: no come, fiebre, cojera, tos">
       <div class="sub">El diagnóstico lo pone el veterinario. Si ya le aplicaste algo, agrégalo abajo.</div>` : `
@@ -1284,7 +1382,8 @@ function renderHealthForm(){
     <label ${canDo("salud_diagnostico") ? "" : `style="display:none"`}>Formuló</label><div class="chips" ${canDo("salud_diagnostico") ? "" : `style="display:none"`}>${["Juan (veterinario)","Mayordomo","Otro"].map(x=>`<button class="${f.prescribed_by===x?"on":""}" data-hsby="${x}">${x}</button>`).join("")}</div>
     <label>Nota (opcional)</label><input id="hsNote" value="${esc(f.notes)}">
     <div class="err" id="hsErr"></div>
-    <button class="btn" id="hsSave" style="margin-top:12px;font-size:18px;padding:14px">Guardar (queda aplicado)</button>
+    <button class="btn" id="hsSave" style="margin-top:12px;font-size:18px;padding:14px">${f.edit_id ? "Guardar diagnóstico y tratamiento" : "Guardar (queda aplicado)"}</button>
+    ${f.edit_id ? `<div class="sub" style="margin-top:6px">Los medicamentos de esta lista reemplazan los que estaban; el inventario y el retiro de leche se recalculan.</div>` : ""}
   </div>`;
 }
 function hsReadInputs(){
@@ -1298,6 +1397,7 @@ $("hsBody").addEventListener("input", e=>{
   it[k] = ["dose","every_hours","days"].includes(k) ? (v==="" ? null : +v.replace(",", ".")) : v;
 });
 $("hsBody").addEventListener("change", async e=>{
+  if (e.target.name==="hsPartR"){ hsPart = e.target.value; store.set("hsPart", hsPart); hsForm = null; return loadHealth(); }
   const dx = e.target.closest("[data-hsdxset]");
   if (dx && dx.value){ const { error } = await sb.from("treatments_cow").update({ diagnosis:dx.value }).eq("id", +dx.dataset.hsdxset);
     if (error) return toast("No se pudo guardar: " + error.message); toast("Diagnóstico guardado ✓"); return loadHealth(); }
@@ -1309,12 +1409,34 @@ $("hsBody").addEventListener("click", async e=>{
   if (t.id==="hsNew"){ newHealthForm(); window.scrollTo({top:0}); return; }
   if (t.id==="hsCancel"){ hsForm = null; loadHealth(); return; }
   if (t.id==="hsInv"){ location.hash = "inventario"; return; }
+  // reporte de operario
+  if (hsRep && t.closest("[data-hrani],[data-hrsx],[data-hrtx],[data-hrrm],#hrAdd,#hrSave")){
+    hrReadInputs();
+    const a = t.closest("[data-hrani]"), sx = t.closest("[data-hrsx]"), tx = t.closest("[data-hrtx]"), rm = t.closest("[data-hrrm]");
+    if (a) hsRep.animal = a.dataset.hrani;
+    else if (sx){ const v = sx.dataset.hrsx; hsRep.sx = hsRep.sx.includes(v) ? hsRep.sx.filter(x=>x!==v) : [...hsRep.sx, v]; }
+    else if (tx) hsRep.treated = tx.dataset.hrtx==="1";
+    else if (rm) hsRep.items.splice(+rm.dataset.hrrm, 1);
+    else if (t.id==="hrAdd") hsRep.items.push(hsRepLine());
+    else if (t.id==="hrSave") return hrSave();
+    return renderHsReport(hsListCache(), hsPartSel());
+  }
+  // veterinario: diagnosticar / corregir uno guardado
+  const ed = t.closest("[data-hsedit]");
+  if (ed){ const x = jget(`hsList:${hsFarm}`, []).find(y=>y.id===+ed.dataset.hsedit); if (!x) return;
+    const nm = i => `${hsSupply(i.supply_code)?.name || i.supply_code} ${i.dose ?? ""} ${i.unit || ""}${i.days > 1 ? ` × ${i.days} d` : ""}`;
+    hsForm = { edit_id:x.id, client_id:null, farm_id:hsFarm, cow_id:x.cow_id, start_date:x.start_date, animal:x.animal || "vaca",
+      diagnosis: x.diagnosis==="Sin diagnóstico" ? "" : x.diagnosis, protocol:x.protocol || "", reported_by:x.prescribed_by, reported_symptoms:x.symptoms || (x.diagnosis==="Sin diagnóstico" ? x.notes : ""),
+      orig_items:(x.treatment_items||[]).map(nm).join(" · "),
+      prescribed_by: x.diagnosis==="Sin diagnóstico" ? "Juan (veterinario)" : (x.prescribed_by || "Juan (veterinario)"), notes:x.notes || "", symptoms:"",
+      items:(x.treatment_items||[]).map(i=>({ supply_code:i.supply_code, dose:i.dose, unit:i.unit, route:i.route || "IM", every_hours:i.every_hours ?? 24, days:i.days ?? 1 })) };
+    renderHealthForm(); window.scrollTo({top:0}); return; }
   const out = t.closest("[data-hsout]");
   if (out){ const { error } = await sb.from("treatments_cow").update({ outcome:out.dataset.hsout, outcome_date:today() }).eq("id", +out.dataset.id);
     if (error) return toast("No se pudo guardar: " + error.message); toast("Resultado guardado ✓"); loadHealth(); return; }
   if (!hsForm) return;
   hsReadInputs();
-  const dx = t.closest("[data-hsdx]"); if (dx){ hsForm.diagnosis = dx.dataset.hsdx; hsForm.protocol = ""; hsForm.items = []; renderHealthForm(); return; }
+  const dx = t.closest("[data-hsdx]"); if (dx){ hsForm.diagnosis = dx.dataset.hsdx; hsForm.protocol = ""; if (!hsForm.edit_id) hsForm.items = []; renderHealthForm(); return; }
   const pr = t.closest("[data-hspr]");
   if (pr){ hsForm.protocol = pr.dataset.hspr;
     hsForm.items = pr.dataset.hspr ? (hsCat.protocols||[]).filter(p=>p.name===pr.dataset.hspr).map(p=>({ supply_code:p.supply_code, dose:p.dose, unit:p.unit, route:p.route || "IM", every_hours:p.every_hours ?? 24, days:p.days ?? 1 }))
@@ -1330,9 +1452,21 @@ $("hsBody").addEventListener("click", async e=>{
     if (vet && !f.diagnosis) return err("Escoge el diagnóstico.");
     if (!vet){ if (!f.symptoms) return err("Escribe qué tiene el animal."); f.diagnosis = "Sin diagnóstico";
       f.notes = [f.symptoms, f.notes].filter(Boolean).join(" · "); f.prescribed_by = f.prescribed_by || "Mayordomo"; }
-    if (vet && !items.length) return err("Agrega al menos un medicamento.");
+    if (vet && !items.length && !f.edit_id) return err("Agrega al menos un medicamento.");
     if (items.some(i=>!(i.dose > 0))) return err("Revisa la dosis de cada medicamento.");
     if (f.start_date > today()) return err("La fecha no puede ser futura.");
+    if (f.edit_id){   // corregir uno ya guardado: necesita señal
+      if (!navigator.onLine) return err("Para corregir necesitas señal.");
+      $("hsSave").disabled = true;
+      const u = await sb.from("treatments_cow").update({ cow_id:f.cow_id, start_date:f.start_date, diagnosis:f.diagnosis, protocol:f.protocol || null,
+        prescribed_by:f.prescribed_by, notes:f.notes || null, diagnosed_at:new Date().toISOString() }).eq("id", f.edit_id).select("id");
+      if (u.error || !u.data?.length){ $("hsSave").disabled = false; return err("No se pudo guardar: " + (u.error?.message || "sin permiso para corregirlo")); }
+      const d = await sb.from("treatment_items").delete().eq("treatment_id", f.edit_id);
+      if (d.error){ $("hsSave").disabled = false; return err("No se pudieron cambiar los medicamentos: " + d.error.message); }
+      if (items.length){ const ins = await sb.from("treatment_items").insert(items.map(i=>({ treatment_id:f.edit_id, supply_code:i.supply_code, dose:i.dose, unit:i.unit, route:i.route, every_hours:i.every_hours || 24, days:i.days || 1 })));
+        if (ins.error){ $("hsSave").disabled = false; return err("Se guardó el diagnóstico, pero no los medicamentos: " + ins.error.message); } }
+      hsForm = null; toast(`${f.cow_id}: ${f.diagnosis} ✓`); loadHealth(); window.scrollTo({top:0}); return;
+    }
     const ob = jget("hsOutbox", []); ob.push({ ...f, items }); jset("hsOutbox", ob);
     hsForm = null; toast(`${f.cow_id}: tratamiento guardado ✓`); await flushHealth(); loadHealth(); window.scrollTo({top:0});
   }
@@ -1346,12 +1480,13 @@ async function flushHealth(){
   for (const o of ob){
     const { items, ...t } = o;
     let { data, error } = await sb.from("treatments_cow").upsert({ client_id:t.client_id, farm_id:t.farm_id, cow_id:t.cow_id, start_date:t.start_date,
-      diagnosis:t.diagnosis, protocol:t.protocol || null, prescribed_by:t.prescribed_by, notes:t.notes || null }, { onConflict:"client_id", ignoreDuplicates:true }).select("id");
+      diagnosis:t.diagnosis, protocol:t.protocol || null, prescribed_by:t.prescribed_by, notes:t.notes || null,
+      ...(t.symptoms ? { symptoms:t.symptoms, animal:t.animal || "vaca" } : {}) }, { onConflict:"client_id", ignoreDuplicates:true }).select("id");
     if (!error && !data?.length) ({ data, error } = await sb.from("treatments_cow").select("id").eq("client_id", t.client_id));
     if (error || !data?.length){ left.push(o); console.warn("salud", error?.message); continue; }
     const id = data[0].id;
     const { data:has } = await sb.from("treatment_items").select("id").eq("treatment_id", id).limit(1);
-    if (!has?.length){
+    if (!has?.length && items.length){
       const r = await sb.from("treatment_items").insert(items.map(i=>({ treatment_id:id, supply_code:i.supply_code, dose:i.dose, unit:i.unit, route:i.route, every_hours:i.every_hours || 24, days:i.days || 1 })));
       if (r.error){ left.push(o); console.warn("salud items", r.error.message); continue; }
     }
