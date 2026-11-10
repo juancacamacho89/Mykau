@@ -1398,6 +1398,23 @@ const psCanMove = () => isMain() || myProfile==="Gerente" || psAdminFinca();
 const psCanLabor = () => isMain() || ["Gerente", "Maria", "Admin pastos"].includes(myProfile);
 const psCanWork = () => psCanMove() || psCanLabor();
 let psFarm = null, psReady = false, psPredio = "", psSort = "num", psList = [], psLots = [], psSheet = null;
+// "Ver": descanso (pastoreo) o una labor → días desde la última vez que se le hizo a cada potrero
+let psLab = "", psLast = {};   // psLast[paddock_id] = última fecha de la labor escogida
+const PS_LAB_ALIAS = { RENOVADA:["RENOVADA","RENOVADO"] };
+async function psLoadLast(act){
+  const key = `psLast:${psFarm}:${act}`;
+  if (navigator.onLine){
+    const r = await psAll(()=>sb.from("paddock_works").select("paddock_id,work_date").eq("farm_id", psFarm).in("activity", PS_LAB_ALIAS[act] || [act]).order("id"));
+    if (!r.error){
+      const merged = Object.fromEntries(psList.filter(x=>x.merged_into).map(x=>[x.id, x.merged_into])), last = {};
+      (r.data || []).forEach(w=>{ const id = merged[w.paddock_id] || w.paddock_id; if (!last[id] || w.work_date > last[id]) last[id] = w.work_date; });
+      jset(key, last);
+    }
+  }
+  psLast = jget(key, {});
+}
+const psLabDays = p => psLast[p.id] ? days(psLast[p.id], today()) : null;
+const psLabColor = p => { const d = psLabDays(p); return d==null ? "--line" : d <= 30 ? "--s0" : d <= 90 ? "--s2" : "--s4"; };
 const psName = p => `${p.predio==="RECODO" ? "" : p.predio.split(" ").map(w=>w[0]).join("") + " "}${p.number}`;
 const psHa = p => p.area_m2 ? (p.area_m2/10000).toLocaleString("es-CO", { maximumFractionDigits:2 }) + " ha" : "";
 // descanso: 0 = ocupado HOY (lo dice Supabase); si no, días desde que salió (mínimo 1)
@@ -1442,18 +1459,22 @@ async function loadPastos(){
   $("psBody").innerHTML = `<div class="empty">Cargando…</div>`;
   const err = await psLoadData();
   if (err && !psList.length){ $("psBody").innerHTML = `<div class="card"><div class="empty">No se pudo cargar (¿falta correr SQL/crear_potreros.sql?)</div></div>`; return; }
+  if (psLab) await psLoadLast(psLab);
   renderPastos();
 }
 function renderPastos(){
   const pens = (jget("mkFarms", []).find(f=>f.id===psFarm)?.pens) || [];
   const act = psList.filter(p=>p.active && !p.merged_into);
   const predios = [...new Set(act.map(p=>p.predio))].sort((a,b)=>a==="RECODO" ? -1 : b==="RECODO" ? 1 : a.localeCompare(b));
+  const val = p => psLab ? psLabDays(p) : psRest(p);
   const shown = act.filter(p=>!psPredio || p.predio===psPredio)
-    .sort(psSort==="rest" ? (a,b)=>(psRest(b)??-1) - (psRest(a)??-1) : (a,b)=>a.predio.localeCompare(b.predio) || byNumTxt(a.number, b.number));
+    .sort(psSort==="rest" ? (a,b)=>(val(b) ?? (psLab ? 1e9 : -1)) - (val(a) ?? (psLab ? 1e9 : -1)) : (a,b)=>a.predio.localeCompare(b.predio) || byNumTxt(a.number, b.number));
   const ready = act.filter(p=>(psRest(p)??0) >= PS_TARGET).length, busy = act.filter(p=>psRest(p) === 0).length;
   const ha = act.reduce((a,p)=>a + (+p.area_m2||0), 0)/10000;
   const lots = psLots.slice().sort((a,b)=>(pens.includes(b.grp) - pens.includes(a.grp)) || b.exit_date.localeCompare(a.exit_date));
-  const tile = p => { const r = psRest(p);
+  const tile = p => { const r = psRest(p), L = psLabDays(p);
+    if (psLab) return `<button class="pstile" data-ps="${p.id}" style="--c:var(${psLabColor(p)})" title="${L==null ? "Sin registro" : "Última: " + fmt(psLast[p.id])}"><b>${esc(psName(p))}</b>
+      <span>${L==null ? "nunca" : L + " d"}</span></button>`;
     return `<button class="pstile" data-ps="${p.id}" style="--c:var(${psColor(p)})"><b>${esc(psName(p))}</b>
       <span>${r==null ? "—" : r === 0 ? "ocupado" : r + " d"}</span></button>`; };
   // la productividad está en Reportes → Pastos
@@ -1471,11 +1492,16 @@ function renderPastos(){
       ${pens.length ? `<div class="sub" style="margin-top:6px">Los lotes de leche (${pens.map(esc).join(", ")}) se mueven desde <a href="#diaria">Leche diaria</a>.</div>` : ""}</details>
     <div class="card"><b>🌾 Potreros</b>
       <div class="chips sm ckpan" style="padding:0"><div class="chips sm">${["", ...predios].map(p=>`<button class="${psPredio===p?"on":""}" data-pspr="${esc(p)}">${p ? esc(p) : "Todos"}</button>`).join("")}</div></div>
-      <div class="chips sm ckpan" style="padding:0"><div class="chips sm"><button class="${psSort==="num"?"on":""}" data-pssort="num">Por número</button><button class="${psSort==="rest"?"on":""}" data-pssort="rest">Más descanso primero</button></div></div>
+      <div class="row" style="align-items:center;gap:8px;margin-top:6px"><span class="sub" style="flex:none">Ver días desde</span>
+        <select id="psLabSel" style="flex:1">${[["", "Pastoreo (descanso)"], ...PS_ACTS.map(a=>[a, (PS_ICON[a] ? PS_ICON[a] + " " : "") + a])].map(([v, t])=>`<option value="${v}" ${psLab===v ? "selected" : ""}>${esc(t)}</option>`).join("")}</select></div>
+      ${psLab ? `<div class="sub" style="margin-top:4px">Días desde la última <b>${esc(psLab)}</b> de cada potrero · ${act.filter(p=>psLast[p.id]).length} de ${act.length} con registro</div>` : ""}
+      <div class="chips sm ckpan" style="padding:0"><div class="chips sm"><button class="${psSort==="num"?"on":""}" data-pssort="num">Por número</button><button class="${psSort==="rest"?"on":""}" data-pssort="rest">${psLab ? "Más días primero" : "Más descanso primero"}</button></div></div>
       ${psPredio || psSort==="rest" ? `<div class="psgrid">${shown.map(tile).join("")}</div>`
         : predios.map(pr=>`<div class="ckpen">${esc(pr)}</div><div class="psgrid">${shown.filter(p=>p.predio===pr).map(tile).join("")}</div>`).join("")}
-      <div class="legend" style="margin-top:10px"><span><i style="background:var(--milk)"></i>ocupado</span><span><i style="background:var(--s4)"></i>&lt; ${Math.round(PS_TARGET*0.6)} d</span>
-        <span><i style="background:var(--s2)"></i>&lt; ${PS_TARGET} d</span><span><i style="background:var(--s0)"></i>listo (≥ ${PS_TARGET} d)</span></div></div>
+      ${psLab ? `<div class="legend" style="margin-top:10px"><span><i style="background:var(--s0)"></i>≤ 30 d</span><span><i style="background:var(--s2)"></i>31–90 d</span>
+        <span><i style="background:var(--s4)"></i>&gt; 90 d</span><span><i style="background:var(--line)"></i>nunca</span></div>` :
+      `<div class="legend" style="margin-top:10px"><span><i style="background:var(--milk)"></i>ocupado</span><span><i style="background:var(--s4)"></i>&lt; ${Math.round(PS_TARGET*0.6)} d</span>
+        <span><i style="background:var(--s2)"></i>&lt; ${PS_TARGET} d</span><span><i style="background:var(--s0)"></i>listo (≥ ${PS_TARGET} d)</span></div>`}</div>
     <div class="card" id="psMapBox"><b>🗺️ Mapa</b><div class="sub">Cargando…</div></div>`;
   renderMap($("psMapBox"));
 }
@@ -1708,7 +1734,8 @@ async function flushPastos(){
   jset("psOutbox", left); psFlushing = false; updPastosNet();
   if (ob.length > left.length) psData = {};
 }
-$("psBody").addEventListener("change", e=>{ if (e.target.name==="psTabR"){ psTab = e.target.value; renderPastos(); } });
+$("psBody").addEventListener("change", async e=>{ if (e.target.name==="psTabR"){ psTab = e.target.value; renderPastos(); }
+  if (e.target.id==="psLabSel"){ psLab = e.target.value; if (psLab) await psLoadLast(psLab); renderPastos(); } });
 $("psBody").addEventListener("click", async e=>{
   const t = e.target, q = attr => t.closest(`[${attr}]`)?.getAttribute(attr);
   if (t.closest(".leaflet-container") && !t.closest("a")) return;
