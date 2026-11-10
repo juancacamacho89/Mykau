@@ -3495,7 +3495,7 @@ function renderRacion(){
 }
 // PDF como el de n8n: una hoja por lote, bloques [ID  KG  COLOR], total kg y bultos
 async function rcPdf(onlyChanges){
-  const xs = rcCompute().filter(x=>(!rcState.pen || x.c.pen===rcState.pen) && (!onlyChanges || x.cambio));
+  const all = rcCompute().filter(x=>!rcState.pen || x.c.pen===rcState.pen), xs = all.filter(x=>!onlyChanges || x.cambio);
   if (!xs.length) return toast(onlyChanges ? "No hay cambios de collar" : "No hay vacas");
   let JsPDF; try{ JsPDF = await lsLoadJsPdf(); }catch(e){ return toast("Se necesita señal la primera vez para armar el PDF"); }
   const doc = new JsPDF({ unit:"mm", format:"a4", compress:true }), M = 8, NB = 3, CW = (210 - 2*M)/NB, W = [CW*0.32, CW*0.22, CW*0.46];
@@ -3516,9 +3516,14 @@ async function rcPdf(onlyChanges){
       doc.text(String(x.fin), x0 + W[0] + W[1]/2, y0 + RH*0.72, { align:"center" });
       doc.setFontSize(Math.min(10, RH*1.5)); doc.text(name, x0 + W[0] + W[1] + W[2]/2, y0 + RH*0.72, { align:"center" });
     });
-    const tot = sub.reduce((a,x)=>a + x.fin, 0);
+    const tot = sub.reduce((a,x)=>a + x.fin, 0), bu = kg => (Math.round(kg/40*2)/2).toFixed(1), yT = M + 12 + per*RH + 9;
     doc.setFont("helvetica", "bold"); doc.setFontSize(14);
-    doc.text(`TOTAL: ${tot.toFixed(1)} kg     BULTOS: ${(Math.round(tot/40*2)/2).toFixed(1)}${onlyChanges ? `     (${sub.length} cambios)` : ""}`, M, M + 12 + per*RH + 9);
+    if (!onlyChanges) doc.text(`TOTAL: ${tot.toFixed(1)} kg     BULTOS: ${bu(tot)}`, M, yT);
+    else {   // los cambios y lo que consume todo el lote (lo que se lleva cada día)
+      const lot = all.filter(x=>x.c.pen===p), lt = lot.reduce((a,x)=>a + x.fin, 0);
+      doc.setFontSize(12); doc.text(`CAMBIOS: ${tot.toFixed(1)} kg     BULTOS: ${bu(tot)}     (${sub.length} vacas)`, M, yT);
+      doc.setFontSize(14); doc.text(`TOTAL HATO (todo el lote): ${lt.toFixed(1)} kg     BULTOS/DIA: ${bu(lt)}     (${lot.length} vacas)`, M, yT + 8);
+    }
   });
   const name = `${onlyChanges ? "Cambios_collares" : "Suplementacion"}_${today()}${rcState.pen ? "_" + (LS_PEN_NAME[rcState.pen] || rcState.pen) : ""}.pdf`;
   const file = new File([doc.output("blob")], name, { type:"application/pdf" });
@@ -5209,7 +5214,7 @@ async function openCalving(ev){
 
 // ── Eventos programados (hoja de vida): descarte al final de la lactancia, EXREP, secado anticipado… ──
 // Quedan pendientes hasta que se registra el evento (salida, secado, examen reproductivo) y ahí se dan por hechos.
-const PL_TYPES = [["descarte","🚪 Descarte"],["secado","🌙 Secar"]];
+const PL_TYPES = [["descarte","🚪 Descarte"],["secado","🌙 Secar"],["exrep","🔬 EXREP"]];
 const PL_NAMES = { descarte:"🚪 Descarte", secado:"🌙 Secar", exrep:"🔬 EXREP", otro:"📌 Otro", inseminar:"💉 Inseminar" };   // los viejos se siguen mostrando
 const PL_DONE_EV = { descarte:["exit"], secado:["dry_off"], exrep:["repro_exam","ultrasound","preg_check"], inseminar:["service"] };
 const plCan = () => isAdmin || canDo("chequeo") || canDo("vacas_secado");
@@ -5248,7 +5253,7 @@ function plOpen(){
     <h3>Programar · vaca ${esc(c.id)}</h3>
     <label>Qué</label>${seg("pltype", PL_TYPES, "descarte")}
     <label>Fecha</label><input type="date" name="date" value="${sug("descarte")}" min="${today()}" required>
-    <div class="sub" id="plHint">${dryAt ? `Secado esperado: ${fmt(dryAt)}` : ""}</div>
+    <div class="sub" id="plHint">${dryAt ? `Secado esperado: ${fmt(dryAt)} · ` : ""}Al guardar, la vaca queda de una vez en estado DESCARTE.</div>
     <label>Motivo / nota (opcional)</label><input name="note" maxlength="200" placeholder="ej. baja producción, mastitis crónica">
     <div class="err" id="regErr"></div>
     <div class="btns"><button type="button" class="btn ghost" data-close>Cancelar</button><button class="btn">Guardar</button></div>
@@ -5256,14 +5261,18 @@ function plOpen(){
   document.body.appendChild(bg);
   const f = bg.querySelector("form");
   bg.addEventListener("click", e=>{ if (e.target===bg || e.target.closest("[data-close]")) bg.remove(); });
-  f.addEventListener("change", e=>{ if (e.target.name==="pltype"){ f.date.value = sug(e.target.value);
+  const hint = { descarte:`${dryAt ? `Secado esperado: ${fmt(dryAt)} · ` : ""}Al guardar, la vaca queda de una vez en estado DESCARTE.`,
+    secado:dryAt ? `Secado esperado: ${fmt(dryAt)}` : "", exrep:"Sale en la lista del Chequeo reproductivo para examen (EXREP)." };
+  f.addEventListener("change", e=>{ if (e.target.name==="pltype"){ f.date.value = sug(e.target.value); $("plHint").textContent = hint[e.target.value] || "";
     } });
   f.addEventListener("submit", async e=>{
     e.preventDefault();
     const row = { cow_id:c.id, farm_id:c.farm_id, plan_type:f.pltype.value, due_date:f.date.value, note:f.note.value.trim() || null };
     const { error } = await sb.from("cow_plans").insert(row);
     if (error) return ($("regErr").textContent = /row-level|permission/i.test(error.message) ? "No tienes permiso para programar en esta finca." : "No se pudo guardar: " + error.message);
-    bg.remove(); toast("Programado ✓"); cowPlans(lastCowData);
+    bg.remove();
+    if (row.plan_type==="descarte"){ toast("Descarte programado ✓ · la vaca queda en DESCARTE"); loadCow(c.id); }
+    else { toast("Programado ✓"); cowPlans(lastCowData); }
   });
 }
 document.addEventListener("click", e=>{
