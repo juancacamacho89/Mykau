@@ -103,6 +103,7 @@ svg text{fill:var(--muted);font-size:11px}
 .mk tr.off td{opacity:.5}
 .mkalt{margin-left:4px;border:1px solid var(--s2);background:#e3b32233;color:var(--ink);border-radius:8px;padding:6px 6px;font-weight:800;font-size:13px;cursor:pointer}
 .dm h4{margin:14px 0 2px;font-size:14px;color:var(--accent)}
+.dm input.dmpend,.dm select.dmpend{border-color:var(--s2);border-style:dashed}
 .dm .grid{display:grid;grid-template-columns:repeat(2,1fr);gap:8px}
 .dm .grid label{font-size:12px;color:var(--muted);font-weight:600}
 .dm .grid input{padding:10px;font-size:18px;font-weight:700}
@@ -388,6 +389,7 @@ details.lac td{padding:6px 8px}
         <div class="brand"><button class="back" data-home aria-label="Inicio">‹</button><div><h1>Leche diaria</h1><div class="sub" id="dmNet"></div></div></div>
         <button class="link logout">Salir</button>
       </header>
+      <div id="dmPend"></div>
       <div class="card">
         <div class="row"><select id="dmFarm"></select><input type="date" id="dmDate" style="flex:1"></div>
         <div id="dmPen" class="sheet" style="padding:0;background:none;max-height:none;margin-top:8px"></div>
@@ -3053,7 +3055,7 @@ function rqDryInfo(c){
   const tot = m => m ? (m[3]!=null ? +m[3] : (+m[1] || 0) + (+m[2] || 0)) : null;
   const preg = /(^|\/)PR(\/|$)/.test(c.status || ""), sv = D.sv[c.id] && (!c.last_calving || D.sv[c.id].d > c.last_calving) ? D.sv[c.id] : null;
   const dry = preg && sv ? addDays(sv.d, LS_GEST - LS_DRY) : null;
-  const lastKg = tot(last), low = lastKg!=null && lastKg < (rq.lowKg || 10);
+  const lastKg = tot(last), low = lastKg!=null && lastKg < (rq.lowKg || 13);
   return { ms:ms.slice(-2), last, lastKg, low, preg, sv, dry, gest: preg && sv ? days(sv.d, today()) : null, plan:D.plans[c.id], tot };
 }
 const rqDel = c => c.last_calving ? days(c.last_calving, today()) : null;
@@ -3085,7 +3087,7 @@ function renderRapido0(){
         <button class="btn ghost" id="rqPasteGo" style="margin-top:6px">Marcar esos números</button><div class="sub" id="rqPasteMsg"></div></details>
       ${rq.type==="dry_off" ? (()=>{ const np = Object.keys(rqDryD?.plans || {}).filter(id=>rqCows.some(c=>c.id===id)).length, pl = rqCanPlan();
         return `<div class="chips sm ckpan" style="padding:0;margin-top:6px"><div class="chips sm">${[["","Todas"],["lac","En leche"],["prog",`🌙 Programadas (${np})`], ...(pl ? [["low","Bajitas"]] : [])].map(([k,t])=>`<button class="${(rq.dryF||"")===k ? "on" : ""}" data-rqdf="${k}">${t}</button>`).join("")}</div></div>
-          ${pl ? `<div class="row" style="align-items:center;gap:6px;margin-top:6px"><span class="sub" style="flex:none">Bajita: menos de</span><select id="rqLowKg" style="flex:0 0 90px">${[6,8,10,12,14,16].map(k=>`<option value="${k}" ${(rq.lowKg||10)===k ? "selected" : ""}>${k} kg</option>`).join("")}</select><span class="sub" style="flex:none">en el último pesaje</span></div>` : ""}
+          ${pl ? `<div class="row" style="align-items:center;gap:6px;margin-top:6px"><span class="sub" style="flex:none">Bajita: menos de</span><select id="rqLowKg" style="flex:0 0 90px">${[8,10,12,13,14,16].map(k=>`<option value="${k}" ${(rq.lowKg||13)===k ? "selected" : ""}>${k} kg</option>`).join("")}</select><span class="sub" style="flex:none">en el último pesaje</span></div>` : ""}
           ${np ? `<button class="btn ghost" data-rqmarkplan="1" style="margin-top:6px">🌙 Marcar ${np===1 ? "la programada" : "las " + np + " programadas"}</button>` : ""}
           ${pl ? `<div class="sub" style="margin-top:4px">En rojo: programadas para secar y bajitas. Toca el número para ver preñez y secado esperado.</div>` : ""}`; })() : ""}
       <div id="rqList" style="max-height:${rq.type==="dry_off" ? 60 : 46}vh;overflow:auto;margin-top:8px;border-top:1px solid var(--line)">${rqListHtml(shown)}</div></div>
@@ -6730,6 +6732,9 @@ const DM_FIELDS = [
 const DM_L = ["am_tank_l","pm_tank_l","staff_l","am_calves_l","pm_calves_l","am_abx_l","pm_abx_l"];
 const dmTotal = r => DM_L.reduce((a,k)=>a + (+r[k]||0), 0);
 const dmKey = (farm, pen, date) => `dm:${farm}|${pen}|${date}`;
+// se puede guardar por partes (ej. el antibiótico temprano, el tanque y el concentrado después): queda pendiente lo que falte
+const DM_REQ = [["am_tank_l","tanque mañana"],["pm_tank_l","tanque tarde"],["concentrate_bags","concentrado"]];
+const dmMissing = r => DM_REQ.filter(([k])=>r[k]==null || r[k]==="").map(([, t])=>t);
 let dmCur = null, dmReady = false, dmGoto = null;   // dmGoto: abrir ese lote y fecha (desde Registros o el resumen)
 function dmApplyGoto(){
   const g = dmGoto; if (!g) return false; dmGoto = null;
@@ -6787,11 +6792,11 @@ async function initDaily(){
     const last = jget("dmLast", {}); if (last.farm && fs.some(f=>f.id===last.farm)) $("dmFarm").value = last.farm;
     $("dmDate").value = today(); $("dmDate").max = today();
     const pens = ()=>{ const f = fs.find(x=>x.id===+$("dmFarm").value);
-      $("dmPen").innerHTML = seg("dmPenR", f.pens.map(p=>[p,p]), jget("dmLast", {}).pen); openDaily(); loadDailySummary(); };
+      $("dmPen").innerHTML = seg("dmPenR", f.pens.map(p=>[p,p]), jget("dmLast", {}).pen); openDaily(); loadDailySummary(); loadDailyPending(); };
     $("dmFarm").onchange = pens; $("dmDate").onchange = openDaily;
     $("dmPen").addEventListener("change", openDaily);
     if (!dmApplyGoto()) pens();
-  } else if (!dmApplyGoto()) loadDailySummary();
+  } else if (!dmApplyGoto()){ loadDailySummary(); loadDailyPending(); }
 }
 
 // abre la planilla del lote y día: primero lo guardado en el celular, si no lo que haya en Supabase
@@ -6823,12 +6828,15 @@ async function openDaily(){
 function renderDaily(){
   const r = dmCur;
   $("dmForm").innerHTML = `<div class="dm">
-    ${DM_FIELDS.map(([id, title, fs])=>`<h4>${title}</h4><div class="grid">${fs.map(([k, lab, t])=>`<div><label>${lab}${k==="cows"&&r.cowsAuto?" · de la app":""}</label>
-      ${t==="paddock" ? dmPadSelect(k, r) : `<input data-k="${k}" ${t==="text" ? `autocapitalize="characters"` : `inputmode="decimal"`} value="${esc(r[k]??"")}">`}</div>`).join("")}</div>`).join("")}
+    ${r.saved && dmMissing(r).length ? `<div class="warn" style="margin-top:8px">⏳ Guardado por partes · falta: <b>${dmMissing(r).join(", ")}</b></div>` : ""}
+    ${DM_FIELDS.map(([id, title, fs])=>`<h4>${title}</h4><div class="grid">${fs.map(([k, lab, t])=>{ const pend = DM_REQ.some(([q])=>q===k) && (r[k]==null || r[k]==="");
+      return `<div><label>${lab}${k==="cows"&&r.cowsAuto?" · de la app":""}${pend ? ` <span style="color:var(--s2)">⏳</span>` : ""}</label>
+      ${t==="paddock" ? dmPadSelect(k, r) : `<input data-k="${k}" ${t==="text" ? `autocapitalize="characters"` : `inputmode="decimal"`} value="${esc(r[k]??"")}" ${pend ? `class="dmpend" placeholder="pendiente"` : ""}>`}</div>`; }).join("")}</div>`).join("")}
     <label class="sub" style="display:block;margin-top:10px">Nota</label><input data-k="note" value="${esc(r.note??"")}">
     <div class="dmtot" id="dmTot"></div>
     <div class="err" id="dmErr"></div>
     <button class="btn" id="dmSave" style="margin-top:10px">Guardar</button>
+    <div class="sub" style="margin-top:4px">Puedes guardar lo que tengas (ej. solo el antibiótico) y completar el resto más tarde: lo que falta queda ⏳ pendiente.</div>
     ${r.saved && (isAdmin || (me && r.saved.by===me)) ? `<div class="hscard" style="margin-top:12px"><b>Corregir este registro</b>
       <div class="sub">Ya está guardado para el ${fmt(r.rec_date)}. Si la fecha quedó mal, muévelo; o bórralo.</div>
       <div class="row" style="gap:8px;margin-top:8px;align-items:center"><input type="date" id="dmMoveDate" max="${today()}" value="${r.rec_date}" style="flex:1;min-width:0">
@@ -6874,10 +6882,13 @@ $("dmForm").addEventListener("click", async e=>{
   }
   if (e.target.id!=="dmSave") return;
   const r = dmCur;
-  if (r.am_tank_l==null && r.pm_tank_l==null) return $("dmErr").textContent = "Falta la leche al tanque.";
+  const has = DM_FIELDS.some(([,,fs])=>fs.some(([k])=>k!=="cows" && r[k]!=null && r[k]!==""));
+  if (!has) return $("dmErr").textContent = "Escribe al menos un dato (tanque, antibiótico, concentrado…).";
   $("dmErr").textContent = "";
   const ob = jget("dmOutbox", []); if (!ob.includes(r.key)) { ob.push(r.key); jset("dmOutbox", ob); }
-  await flushDaily(); loadDailySummary();
+  const miss = dmMissing(r);
+  await flushDaily(); loadDailySummary(); loadDailyPending();
+  if (navigator.onLine && !jget("dmOutbox", []).includes(r.key)){ if (miss.length) toast(`Guardado ✓ · queda pendiente: ${miss.join(", ")}`); dmCur = null; openDaily(); }
 });
 let dmFlushing = false;
 async function flushDaily(){
@@ -6906,11 +6917,27 @@ $("dmSummary").addEventListener("click", e=>{
   const [pen, date] = b.dataset.dmgo.split("|");
   dmGoto = { farm:+$("dmFarm").value, pen, date }; dmApplyGoto(); window.scrollTo({ top:0, behavior:"smooth" });
 });
+// planillas guardadas por partes: lo que falta, para completarlo (tocar abre ese lote y día)
+async function loadDailyPending(){
+  const box = $("dmPend"); if (!box) return;
+  if (!navigator.onLine || !$("dmFarm").value){ box.innerHTML = ""; return; }
+  const farm = +$("dmFarm").value;
+  const { data } = await sb.from("daily_milk").select("pen,rec_date,am_tank_l,pm_tank_l,concentrate_bags,am_abx_l,pm_abx_l").eq("farm_id", farm)
+    .gte("rec_date", addDays(today(), -6)).order("rec_date", { ascending:false });
+  const pend = (data || []).filter(r=>dmMissing(r).length);
+  box.innerHTML = pend.length ? `<div class="card" style="border:2px solid var(--s2)"><b>⏳ Por completar (${pend.length})</b>
+    ${pend.map(r=>`<button class="lnk" data-dmgo="${esc(r.pen)}|${r.rec_date}" style="display:block;text-align:left;margin-top:6px"><b>${esc(r.pen)}</b> · ${fmt(r.rec_date)} — falta ${dmMissing(r).join(", ")}</button>`).join("")}</div>` : "";
+}
+$("dmPend").addEventListener("click", e=>{
+  const b = e.target.closest("[data-dmgo]"); if (!b) return;
+  const [pen, date] = b.dataset.dmgo.split("|");
+  dmGoto = { farm:+$("dmFarm").value, pen, date }; dmApplyGoto(); window.scrollTo({ top:0, behavior:"smooth" });
+});
 // Resumen (solo administrador): últimos 14 días por lote y total de la finca
 async function loadDailySummary(){
   if (!canSee("diaria_resumen") || !navigator.onLine){ $("dmSummary").innerHTML = ""; return; }
   const farm = +$("dmFarm").value, since = new Date(Date.now()-14*864e5).toISOString().slice(0,10);
-  const { data, error } = await sb.from("daily_milk").select("pen,rec_date,total_l,cows,concentrate_bags,kau_bags,silage_bags")
+  const { data, error } = await sb.from("daily_milk").select("pen,rec_date,total_l,cows,concentrate_bags,kau_bags,silage_bags,am_tank_l,pm_tank_l")
     .eq("farm_id", farm).gte("rec_date", since).order("rec_date", { ascending:false });
   if (error || !data?.length){ $("dmSummary").innerHTML = ""; return; }
   const pens = [...new Set(data.map(r=>r.pen))].sort(byNum), dates = [...new Set(data.map(r=>r.rec_date))];
@@ -6918,7 +6945,7 @@ async function loadDailySummary(){
   $("dmSummary").innerHTML = `<div class="card"><b>Resumen 14 días</b><div class="sub">Litros totales por lote · L/vaca de la finca · toca un número para corregirlo</div>
     <div style="overflow-x:auto"><table style="font-size:13px;margin-top:6px"><tr><th>Fecha</th>${pens.map(p=>`<th>${esc(p)}</th>`).join("")}<th>Total</th><th>L/vaca</th></tr>
     ${dates.map(d=>{ const rs = data.filter(r=>r.rec_date===d), t = rs.reduce((a,r)=>a + +r.total_l, 0), c = rs.reduce((a,r)=>a + (r.cows||0), 0);
-      return `<tr><td>${fmt(d)}</td>${pens.map(p=>`<td>${cell(d,p) ? `<button class="lnk" data-dmgo="${esc(p)}|${d}">${Math.round(cell(d,p).total_l).toLocaleString("es-CO")}</button>` : "—"}</td>`).join("")}
+      return `<tr><td>${fmt(d)}</td>${pens.map(p=>`<td>${cell(d,p) ? `<button class="lnk" data-dmgo="${esc(p)}|${d}">${Math.round(cell(d,p).total_l).toLocaleString("es-CO")}${dmMissing(cell(d,p)).length ? " ⏳" : ""}</button>` : "—"}</td>`).join("")}
         <td><b>${Math.round(t).toLocaleString("es-CO")}</b></td><td>${c ? (t/c).toFixed(1) : "—"}</td></tr>`; }).join("")}
     </table></div></div>`;
 }
