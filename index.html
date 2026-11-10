@@ -537,6 +537,7 @@ details.lac td{padding:6px 8px}
       </div>
       <div id="prWrap" class="hidden"></div>
       <div id="rpPastos" class="hidden"></div>
+      <div id="rpEval" class="hidden"></div>
       <!-- calidad de leche: análisis del tanque por finca -->
       <div id="rpCalidad" class="hidden">
       <div class="card">
@@ -2625,7 +2626,7 @@ function prDraw(){
 // ── Reportes: contenedor (Reproducción · Producción · Pastos) ──
 let rptTab = null;
 function initReportes(){
-  const tabs = [["repro","Reproducción","reporte_ver"],["prod","Producción","produccion_ver"],["calidad","Calidad","calidad_ver"],["pastos","Pastos","pastos_ver"]].filter(t=>canSee(t[2]));
+  const tabs = [["repro","Reproducción","reporte_ver"],["eval","IA y toros","reporte_ver"],["prod","Producción","produccion_ver"],["calidad","Calidad","calidad_ver"],["pastos","Pastos","pastos_ver"]].filter(t=>canSee(t[2]));
   if (!tabs.length) return;
   if (!rptTab || !tabs.some(t=>t[0]===rptTab)) rptTab = jget("rptTab", tabs[0][0]);
   if (!tabs.some(t=>t[0]===rptTab)) rptTab = tabs[0][0];
@@ -2634,6 +2635,8 @@ function initReportes(){
   $("prWrap").classList.toggle("hidden", rptTab!=="prod");
   $("rpPastos").classList.toggle("hidden", rptTab!=="pastos");
   $("rpCalidad").classList.toggle("hidden", rptTab!=="calidad");
+  $("rpEval").classList.toggle("hidden", rptTab!=="eval");
+  if (rptTab==="eval") evInit();
   if (rptTab==="calidad") initQuality();
   if (rptTab==="repro") initReport();
   if (rptTab==="prod") renderProduccion($("prWrap"));
@@ -2652,6 +2655,120 @@ async function renderPastosReport(box){
   body.onclick = e=>{ const p = e.target.closest("[data-rppr]"); if (p){ psPredio = p.dataset.rppr; renderPastosReport(box); return; }
     const k = e.target.closest("[data-ps]"); if (k && canSee("pastos_ver")){ location.hash = "pastos/" + k.dataset.ps; window.scrollTo({top:0}); } };
   renderProd($("rpPsProd"));
+}
+
+// ═══════════════════════ REPORTES · INSEMINADORES Y TOROS ═══════════════
+// Concepción de cada servicio (se mira lo que pasó después en esa vaca):
+//   preñada    = diagnóstico positivo (eco "Positivo" o palpación "Cargada…") desde el día 20 y antes del siguiente servicio,
+//                o parto 240–300 días después
+//   no preñada = otro servicio, o diagnóstico negativo / vacía, antes de quedar preñada
+//   pendiente  = todavía sin diagnóstico (no cuenta en el %)
+//   dos servicios con 3 días o menos de diferencia cuentan como uno (el último)
+// Sexo de las crías: partos del periodo (H / M, vivas o muertas) por el toro del parto.
+const EV_TYPES = [["","Todos"],["ia","Inseminación (celo)"],["ov","Ovsynch (IATF)"],["toro","Toro"]];
+const evType = c => /toro/i.test(c || "") && !/insem/i.test(c || "") ? "toro" : /ovsynch/i.test(c || "") ? "ov" : "ia";
+let evState = null, evCache = {};
+function evInit(){
+  evState ||= { farm:String(jget("evFarm", "")), from:addDays(today(), -365), to:today(), type:"", minS:10 };
+  const s = evState, box = $("rpEval");
+  box.innerHTML = `<div class="card"><div class="sheet" style="padding:0;background:none;max-height:none">${seg("evF", [["","Ambas fincas"],["1","El Recodo"],["7","La Isla"]], s.farm)}</div>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:8px">
+      <div><div class="sub">Servicios / partos desde</div><input type="date" id="evFrom" value="${s.from}" max="${today()}" style="min-width:0"></div>
+      <div><div class="sub">Hasta</div><input type="date" id="evTo" value="${s.to}" max="${today()}" style="min-width:0"></div></div>
+    <div class="chips sm ckpan" style="padding:0;margin-top:8px"><div class="chips sm">${[["365","12 meses"],["180","6 meses"],["90","3 meses"]].map(([d,t])=>`<button data-evq="${d}">${t}</button>`).join("")}</div></div>
+    <div class="sub" style="margin-top:8px">Tipo de servicio</div>
+    <div class="chips sm ckpan" style="padding:0"><div class="chips sm">${EV_TYPES.map(([k,t])=>`<button class="${s.type===k ? "on" : ""}" data-evt="${k}">${t}</button>`).join("")}</div></div></div>
+    <div id="evBody"><div class="card"><div class="empty">Cargando…</div></div></div>`;
+  box.onchange = e => { const t = e.target;
+    if (t.name==="evF"){ s.farm = t.value; jset("evFarm", s.farm); }
+    if (t.id==="evFrom" && t.value) s.from = t.value;
+    if (t.id==="evTo" && t.value) s.to = t.value;
+    if (t.id==="evMin"){ s.minS = +t.value || 0; return evRender(); }
+    evInit(); };
+  box.onclick = e => { const q = e.target.closest("[data-evq]"), ty = e.target.closest("[data-evt]");
+    if (q){ s.to = today(); s.from = addDays(today(), -+q.dataset.evq); return evInit(); }
+    if (ty){ s.type = ty.dataset.evt; return evInit(); } };
+  evLoad();
+}
+async function evLoad(){
+  const s = evState, key = [s.farm, s.from, s.to].join("|");
+  if (!evCache[key]){
+    if (!navigator.onLine){ $("evBody").innerHTML = `<div class="card"><div class="empty">Este reporte necesita señal.</div></div>`; return; }
+    const until = [addDays(s.to, 300), today()].sort()[0];
+    const q = () => { let x = sb.from("cow_events").select("id,cow_id,event_date,event_type,result,bull,operator,category,details,cows!inner(farm_id)")
+      .in("event_type", ["service","ultrasound","preg_check","calving"]).gte("event_date", s.from).lte("event_date", until).order("id");
+      return s.farm ? x.eq("cows.farm_id", +s.farm) : x; };
+    const [ev, bu] = await Promise.all([psAll(q), sb.from("bulls").select("code,name,sexed")]);
+    if (ev.error){ $("evBody").innerHTML = `<div class="card"><div class="empty">No se pudo cargar: ${esc(ev.error.message)}</div></div>`; return; }
+    evCache[key] = { ev:ev.data, bulls:Object.fromEntries((bu.data || []).map(b=>[b.code, b])) };
+  }
+  if (evState===s && key===[s.farm, s.from, s.to].join("|")) evRender();
+}
+function evCompute(d){
+  const s = evState, byCow = {};
+  d.ev.forEach(e=>(byCow[e.cow_id] ||= []).push(e));
+  const pos = e => (e.event_type==="ultrasound" && e.result==="Positivo") || (e.event_type==="preg_check" && /^(cargada|positivo)/i.test(e.result || ""));
+  const neg = e => /^(negativo|vac)/i.test(e.result || "");
+  const svc = [];
+  Object.values(byCow).forEach(xs=>{
+    xs.sort((a, b)=>a.event_date.localeCompare(b.event_date) || (a.event_type==="service") - (b.event_type==="service") || a.id - b.id);
+    xs.forEach((e, i)=>{
+      if (e.event_type!=="service" || e.event_date < s.from || e.event_date > s.to) return;
+      let res = null;
+      for (const n of xs.slice(i + 1)){
+        const gap = days(e.event_date, n.event_date);
+        if (n.event_type==="service"){ res = gap <= 3 ? "dup" : "no"; break; }
+        if (n.event_type==="calving"){ res = gap >= 240 && gap <= 300 ? "si" : "no"; break; }
+        if (gap < 20) continue;
+        if (pos(n)){ res = "si"; break; }
+        if (neg(n)){ res = "no"; break; }
+      }
+      if (res!=="dup") svc.push({ ...e, res, type:evType(e.category) });
+    });
+  });
+  const calv = d.ev.filter(e=>e.event_type==="calving" && e.event_date >= s.from && e.event_date <= s.to);
+  return { svc: svc.filter(x=>!s.type || x.type===s.type), calv };
+}
+function evRender(){
+  const s = evState, d = evCache[[s.farm, s.from, s.to].join("|")]; if (!d) return;
+  const { svc, calv } = evCompute(d), bull = c => d.bulls[c];
+  const pc = (a, b) => b ? Math.round(a / b * 1000) / 10 : null;
+  const col = v => v==null ? "--line" : v >= 40 ? "--s0" : v >= 30 ? "--s2" : "--s4";
+  const bar = (v, c) => v==null ? `<span class="sub">—</span>` : `<div style="display:flex;align-items:center;gap:6px;justify-content:flex-end"><b style="color:var(${c})">${String(v).replace(".", ",")}%</b>
+    <span style="display:inline-block;width:60px;height:8px;border-radius:4px;background:var(--line);overflow:hidden"><i style="display:block;height:100%;width:${Math.min(100, v)}%;background:var(${c})"></i></span></div>`;
+  const group = (rows, k) => { const g = {}; rows.forEach(x=>{ const id = x[k] || "—", o = g[id] ||= { id, n:0, si:0, no:0, pend:0 };
+    o.n++; if (x.res==="si") o.si++; else if (x.res==="no") o.no++; else o.pend++; }); return Object.values(g).sort((a, b)=>b.n - a.n); };
+  const tot = rows => rows.reduce((a, o)=>({ n:a.n + o.n, si:a.si + o.si, no:a.no + o.no, pend:a.pend + o.pend }), { n:0, si:0, no:0, pend:0 });
+  const table = (rows, label, name) => { const T = tot(rows);
+    return `<div style="overflow-x:auto"><table class="ivt" style="font-size:13px;margin-top:6px;width:100%"><tr><th>${label}</th><th style="text-align:right">Serv.</th><th style="text-align:right">Diag.</th><th style="text-align:right">Preñ.</th><th style="text-align:right">Concepción</th></tr>
+      ${rows.map(o=>`<tr><td>${name(o.id)}${o.pend ? `<div class="sub">${o.pend} sin diagnóstico</div>` : ""}</td><td style="text-align:right">${o.n}</td><td style="text-align:right">${o.si + o.no}</td>
+        <td style="text-align:right">${o.si}</td><td>${bar(pc(o.si, o.si + o.no), col(pc(o.si, o.si + o.no)))}</td></tr>`).join("")}
+      <tr style="font-weight:800"><td>Total</td><td style="text-align:right">${T.n}</td><td style="text-align:right">${T.si + T.no}</td><td style="text-align:right">${T.si}</td><td>${bar(pc(T.si, T.si + T.no), col(pc(T.si, T.si + T.no)))}</td></tr></table></div>`; };
+  const bName = c => { const b = bull(c); return c==="—" ? "Sin toro" : `<b>${esc(c)}</b> <span class="sub">${esc(b?.name || "")}</span>${b?.sexed ? ` <span class="tag">sexado</span>` : ""}`; };
+  const ins = group(svc, "operator"), bulls = group(svc, "bull"), bShow = bulls.filter(o=>o.n >= s.minS);
+  // sexo de las crías por toro
+  const sx = {};
+  calv.forEach(e=>{ const o = sx[e.bull || "—"] ||= { id:e.bull || "—", h:0, m:0, ab:0 };
+    const calves = e.details?.calves;
+    if (Array.isArray(calves) && calves.length) calves.forEach(c=>c.sex==="H" ? o.h++ : c.sex==="M" ? o.m++ : 0);
+    else if (/^H/i.test(e.category || "")) o.h++; else if (/^M/i.test(e.category || "")) o.m++; else if (/abort/i.test(e.category || "")) o.ab++; });
+  const sxRows = Object.values(sx).filter(o=>o.h + o.m).sort((a, b)=>(b.h + b.m) - (a.h + a.m)), sxT = sxRows.reduce((a, o)=>({ h:a.h + o.h, m:a.m + o.m }), { h:0, m:0 });
+  const hcol = (v, sexed) => v==null ? "--line" : sexed ? (v >= 85 ? "--s0" : v >= 70 ? "--s2" : "--s4") : "--c3";
+  $("evBody").innerHTML = `
+    <div class="card"><b>👨‍🌾 Inseminadores · tasa de concepción</b>
+      <div class="sub">Servicios del ${fmt(s.from)} al ${fmt(s.to)}${s.type ? " · " + EV_TYPES.find(t=>t[0]===s.type)[1] : ""}. Concepción = preñadas ÷ diagnosticadas.</div>
+      ${ins.length ? table(ins, "Inseminador", id=>id==="—" ? "Sin inseminador" : `<b>${esc(id)}</b>`) : `<div class="empty">Sin servicios en esas fechas</div>`}</div>
+    <div class="card"><b>🐂 Toros · preñez por servicio</b>
+      <div class="row" style="align-items:center;gap:8px;margin-top:4px"><span class="sub" style="flex:none">Mostrar toros con al menos</span>
+        <select id="evMin" style="flex:0 0 90px">${[1,5,10,20,50].map(n=>`<option value="${n}" ${s.minS===n ? "selected" : ""}>${n}</option>`).join("")}</select><span class="sub" style="flex:none">servicios</span></div>
+      ${bShow.length ? table(bShow, "Toro", bName) : `<div class="empty">Ningún toro con ${s.minS} servicios o más</div>`}
+      ${bulls.length > bShow.length ? `<div class="sub" style="margin-top:4px">${bulls.length - bShow.length} toros con menos servicios no se muestran (sí cuentan en el total de inseminadores).</div>` : ""}</div>
+    <div class="card"><b>♀♂ Sexo de las crías por toro</b>
+      <div class="sub">Partos del ${fmt(s.from)} al ${fmt(s.to)} (vivas y muertas). En semen sexado se espera ~90% hembras.</div>
+      ${sxRows.length ? `<div style="overflow-x:auto"><table class="ivt" style="font-size:13px;margin-top:6px;width:100%"><tr><th>Toro</th><th style="text-align:right">Crías</th><th style="text-align:right">♀</th><th style="text-align:right">♂</th><th style="text-align:right">% hembras</th></tr>
+        ${sxRows.map(o=>{ const v = pc(o.h, o.h + o.m); return `<tr><td>${bName(o.id)}</td><td style="text-align:right">${o.h + o.m}</td><td style="text-align:right">${o.h}</td><td style="text-align:right">${o.m}</td><td>${bar(v, hcol(v, bull(o.id)?.sexed))}</td></tr>`; }).join("")}
+        <tr style="font-weight:800"><td>Total</td><td style="text-align:right">${sxT.h + sxT.m}</td><td style="text-align:right">${sxT.h}</td><td style="text-align:right">${sxT.m}</td><td>${bar(pc(sxT.h, sxT.h + sxT.m), "--c3")}</td></tr></table></div>`
+        : `<div class="empty">Sin partos en esas fechas</div>`}</div>`;
 }
 
 // ═══════════════════════ PESAJE DE TERNERAS Y NOVILLAS ═══════════════
@@ -5829,7 +5946,7 @@ function ivMvHtml(){
         : "Lo que sale y no queda en un tratamiento de Salud (los tratamientos descuentan solos): se dañó, se venció, préstamo…"}</div>
       <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">
         <div><label>Fecha</label><input id="ivMvDate" type="date" value="${m.date || today()}" max="${today()}" style="min-width:0"></div>
-        ${inn || tr ? "" : `<div><label>${alim ? "Lote" : "Para qué"}</label><input id="ivMvLot" value="${esc(m.lot)}" list="ivMvLots" placeholder="${alim ? "ej. PROXIMAS" : "ej. se venció"}" style="min-width:0"></div>`}</div>
+        ${inn || tr || alim ? "" : `<div><label>${alim ? "Lote" : "Para qué"}</label><input id="ivMvLot" value="${esc(m.lot)}" list="ivMvLots" placeholder="${alim ? "ej. PROXIMAS" : "ej. se venció"}" style="min-width:0"></div>`}</div>
       <datalist id="ivMvLots">${alim ? lots.map(l=>`<option value="${esc(l)}">`).join("") : ""}</datalist>
       <label>Categoría</label><div class="chips sm ckpan" style="padding:0"><div class="chips sm">${cats.map(c=>`<button class="${m.cat===c ? "on" : ""}" data-mvcat="${esc(c)}">${esc(c)}</button>`).join("")}</div></div>
       <label>Productos${m.cat ? ` · ${esc(m.cat)}` : ""}</label>${m.lines.map(line).join("")}
@@ -5850,8 +5967,7 @@ async function ivMvSave0(){
   if (lines.some(l=>!l.code)) return err(lines.some(l=>l.typed) ? `No encontré «${lines.find(l=>!l.code && l.typed).typed}»: escoge el producto de la lista.` : "Falta escoger el producto en una línea.");
   if (lines.some(l=>!(+String(l.qty).replace(",", ".") > 0))) return err("Escribe una cantidad mayor que cero en cada producto.");
   const others = ivFarms.filter(f=>f.id!==ivState.farm), tr = m.mode==="traslado" && others.length, inn = m.mode==="entrada";
-  if (alim && !tr && !inn && !m.lot.trim()) return err("Escribe a qué lote van.");
-  const date = m.date || today(), txt = (inn ? [m.note.trim()] : [m.lot.trim(), m.note.trim()]).filter(Boolean).join(" · ") || null;
+  const date = m.date || today(), txt = (inn || alim ? [m.note.trim()] : [m.lot.trim(), m.note.trim()]).filter(Boolean).join(" · ") || null;
   const rows = lines.map(l=>{ const sp = ivSup(l.code), u = ivMvUnit(l, sp), p = u==="unit" ? null : ivPres(sp)[+u.slice(1)], v = +String(l.qty).replace(",", "."), pk = !!p;
     return { entry_date:date, farm_id:ivState.farm, supply_code:l.code, kind:"salida", packs:pk ? v : null, presentation:pk ? p.name : null, pack_size:pk ? p.size : null,
       qty:-Math.round((pk ? v * p.size : v)*1000)/1000, notes:txt, source:"app" }; });
