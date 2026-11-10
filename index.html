@@ -3002,12 +3002,22 @@ async function rqExec(){
     if (close.length && !confirm(`⚠️ Tienen un servicio muy cerca:\n${close.map(c=>`${c.id}: ${near[c.id].map(svTxt).join(" / ")}`).join("\n")}\n\n¿Registrar el servicio a estas también?`)) return err("No se guardó.");
     cows = cows.filter(c=>!same.includes(c));
     if (!cows.length) return err("Todas ya tenían servicio ese día: no se registró nada.");
+    // vacas que venían preñadas: si se confirma, muerte embrionaria ese día
+    const pg = cows.filter(c=>/(^|\/)PR(\/|$)/.test(c.status || ""));
+    if (pg.length && !confirm(`⚠️ Venían PREÑADAS: ${pg.map(c=>c.id).join(", ")}.\n\nAl confirmar se les registra una MUERTE EMBRIONARIA el ${fmt(date)} y luego el servicio.\n\n¿Confirmar?`)) return err("No se guardó.");
+    if (pg.length){
+      const { error:e0 } = await sb.from("cow_events").insert(pg.map(c=>embryoRow(c.id, date, null)));
+      if (e0) return err("No se pudo registrar la muerte embrionaria: " + e0.message);
+    }
     rows = cows.map(c=>({ ...base, cow_id:c.id, event_type:"service", bull:bullOf(c), operator:d.op || null, category:d.cat || "Inseminación",
       details:{ straws: strawsOf(c), ...(rq.opts?.tanks?.length ? { tank: d.tank || svTank(c.pen, rq.opts.tanks) } : {}) } }));
     label = `Inseminación · ` + codes.map(b=>{ const xs = cows.filter(c=>bullOf(c)===b), n = xs.reduce((a,c)=>a + strawsOf(c), 0);
       return `${b}: ${xs.length} vaca${xs.length===1 ? "" : "s"}${n!==xs.length ? ` (${n} pajillas)` : ""}`; }).join(" · ");
   }
-  if (rq.type==="heat"){ rows = cows.map(c=>({ ...base, cow_id:c.id, event_type:"heat", category:d.cat || null })); label = "Celo"; }
+  if (rq.type==="heat"){
+    const pg = cows.filter(c=>/(^|\/)PR(\/|$)/.test(c.status || ""));
+    if (pg.length && !confirm(`⚠️ Venían PREÑADAS: ${pg.map(c=>c.id).join(", ")}.\n\n¿Registrar el celo igual?`)) return err("No se guardó.");
+    rows = cows.map(c=>({ ...base, cow_id:c.id, event_type:"heat", category:d.cat || null })); label = "Celo"; }
   if (rq.type==="dry_off"){
     if (!d.pen) return err("Escoge el grupo de secas.");
     rows = cows.map(c=>({ ...base, cow_id:c.id, event_type:"dry_off", details:{ dest_pen:d.pen } })); label = `Secado → ${d.pen}`;
@@ -4885,6 +4895,23 @@ const farmFlip = (cur, v, all) => { const s = new Set(farmOn(cur, all)); s.has(v
 const seg = (name, opts, val) => `<div class="seg">${opts.map(([v,t])=>
   `<label><input type="radio" name="${name}" value="${esc(v)}" ${v===val?"checked":""}><span>${esc(t)}</span></label>`).join("")}</div>`;
 
+function pregOn(c, events, date){
+  const ev = (events || []).filter(e=>e.event_date <= date).sort((a, b)=>a.event_date.localeCompare(b.event_date) || (a.id || 0) - (b.id || 0));
+  const sv = ev.filter(e=>e.event_type==="service").pop();
+  if (sv){
+    const after = ev.filter(e=>e.event_date > sv.event_date || (e.event_date===sv.event_date && e.id > sv.id));
+    const pos = after.filter(isPositive).pop();
+    const lost = pos && after.some(e=>(e.event_date > pos.event_date) && (["embryo_loss","abortion","calving"].includes(e.event_type) || ((e.event_type==="ultrasound" || e.event_type==="preg_check") && /^(negativ|vac)/i.test(e.result || ""))));
+    if (pos && !lost) return { sv, pos, g:days(sv.event_date, date) };
+    if (pos || after.length) return null;
+  }
+  return /(^|\/)PR(\/|$)/.test(c?.status || "") && !events?.length ? { sv:null, pos:null, g:null } : null;
+}
+const pregTxt = p => p.pos ? `${EV[p.pos.event_type] || "diagnóstico"} ${p.pos.category ? p.pos.category + " " : ""}${noSex(p.pos.result) || ""} del ${fmt(p.pos.event_date)} · servida ${fmt(p.sv.event_date)} (${p.g} días)` : "figura preñada en Interherd";
+// servicio a una vaca preñada: muerte embrionaria ese mismo día (antes del servicio)
+const embryoRow = (cowId, date, p) => ({ cow_id:cowId, event_date:date, event_type:"embryo_loss", source:"app", sync_status:"pending",
+  category: p?.pos?.category || (p?.pos?.event_type==="ultrasound" ? "ECO1" : p?.pos ? "DPR" : null),
+  comments:`Muerte embrionaria: la inseminaron estando preñada (${pregTxt(p || {})})` });
 // servicios que ya tiene la vaca entre 3 días antes y 3 después (lo que hay en Supabase en este momento + lo cargado)
 async function svNear(ids, date, skipId){
   const lo = addDays(date, -3), hi = addDays(date, 3), out = {};
@@ -4955,6 +4982,12 @@ async function openReg(type, ev){
     isSv = tipo!=="Celo"; type = isSv ? "service" : "heat";
     if (ev && ev.event_type!==type) return err(`Este registro es un ${ev.event_type==="heat" ? "celo" : "servicio"}: bórralo y regístralo de nuevo como ${isSv ? "servicio" : "celo"}.`);
     if (d.events.some(x=>x.event_type===type && x.event_date===date && x.id!==ev?.id)) return err(`Ya hay un ${isSv?"servicio":"celo"} registrado ese día.${isSv ? " Si hay que cambiar el toro o las pajillas, edita ese servicio." : ""}`);
+    let preg = null;
+    if (!ev){
+      preg = pregOn(c, d.events, date);
+      if (preg && !isSv && !confirm(`⚠️ La vaca ${c.id} venía PREÑADA (${pregTxt(preg)}).\n\n¿Registrar el celo igual?`)) return err("No se guardó.");
+      if (preg && isSv && !confirm(`⚠️ La vaca ${c.id} venía PREÑADA (${pregTxt(preg)}).\n\nSi la inseminaron es porque perdió la preñez: al confirmar se registra también una MUERTE EMBRIONARIA el ${fmt(date)}.\n\n¿Confirmar el servicio?`)) return err("No se guardó.");
+    }
     if (isSv){
       const near = (await svNear([c.id], date, ev?.id))[c.id] || [];
       const same = near.filter(x=>x.event_date===date);
@@ -4974,9 +5007,14 @@ async function openReg(type, ev){
         if (!ex) return err(`El toro ${row.bull} no existe en Interherd. Revisa el código.`);
       }
     }
+    if (preg && isSv){   // primero la muerte embrionaria (queda antes del servicio)
+      const { error:e0 } = await sb.from("cow_events").insert(embryoRow(c.id, date, preg));
+      if (e0) return err("No se pudo registrar la muerte embrionaria: " + e0.message);
+    }
     const { error } = ev ? await sb.from("cow_events").update(editRow(row)).eq("id", ev.id)
                          : await sb.from("cow_events").insert(row);
     if (error) return err(/row-level|permission/i.test(error.message) ? "No tienes permiso para registrar en esta finca." : "No se pudo guardar: " + error.message);
+    if (preg && isSv) toast(`Muerte embrionaria registrada a la ${c.id} ✓`);
     if (isSv){ store.set("ultimoToro"+c.farm_id, row.bull); store.set("ultimoOperador"+c.farm_id, row.operator);
       if (!o.ops.includes(row.operator)) o.ops.push(row.operator);
       if (!o.bulls.some(b=>b.code===row.bull)) o.bulls.push({ code:row.bull }); }
@@ -6928,18 +6966,22 @@ function renderReport(){
       <div class="rpk">
         ${kp(lastOf("herd_size") ?? "—", "Tamaño del hato")}
         ${kp(lastOf("iep") ?? "—", "Intervalo entre partos")}
-        ${kp(pc(lastOf("pct_pregnant")), "% hato preñado")}
-        ${kp(lastOf("del") ?? "—", "Días en leche")}
-        ${kp(`${L.eco_pos_cows??0} <span style="font-size:13px">/ ${L.cuotaVacas!=null ? Math.round(L.cuotaVacas) : "—"}</span>`, "ECO+ vacas / cuota")}
         ${kp(`${L.embryo_losses??0} · ${L.abortions??0}`, "Muertes emb. · abortos")}
-        ${kp(n1(lastOf("avg_milk")), "Promedio leche (kg)")}
         ${kp(pc(lastOf("cull_rate")), "Tasa de descarte")}
+        ${kp(`${L.eco_pos_cows??0} <span style="font-size:13px">/ ${L.cuotaVacas!=null ? Math.round(L.cuotaVacas) : "—"}</span>`, "ECO+ vacas / cuota")}
+        ${kp(`${pc(lastOf("pct_pregnant"))} · ${lastOf("del") ?? "—"}`, "% hato preñado · DEL")}
+        ${kp(n1(lastOf("avg_milk")), "Promedio leche (kg)")}
+        ${kp(`${pc(lastOf("tc_cows"))} · ${pc(lastOf("tp_cows"))}`, "TC · TP vacas")}
       </div>
+      ${L.rate_detail?.ciclo ? `<div class="sub" style="margin-top:6px">Tasas del ciclo de servicios ${fmt(L.rate_detail.ciclo[0])}–${fmt(L.rate_detail.ciclo[1])} (ya confirmado por ecografía):
+        vacas ${L.rate_detail.vacas.prenadas}/${L.rate_detail.vacas.elegibles} elegibles preñadas, ${L.rate_detail.vacas.servicios_prenaron}/${L.rate_detail.vacas.servicios} servicios preñaron ·
+        novillas en servicio TC ${pc(L.tc_heifers)} · TP ${pc(L.tp_heifers)} (${L.rate_detail.novillas.prenadas}/${L.rate_detail.novillas.elegibles}, ${L.rate_detail.novillas.servicios_prenaron}/${L.rate_detail.novillas.servicios}) · ECO+/ECO total vacas del día ${pc(L.salieron)}</div>` : ""}
       ${(L.iep==null || L.cull_rate==null) && canDo("reporte_editar") ? `<div class="dm" style="margin-top:10px"><div class="sub">Del generador de reportes de Interherd (chequeo ${fmt(L.check_date)}):</div>
         <div class="grid"><div><label>Intervalo entre partos previo</label><input id="rpIep" inputmode="numeric" value="${L.iep??""}"></div>
         <div><label>Tasa de descarte (ej. 0.17)</label><input id="rpDesc" inputmode="decimal" value="${L.cull_rate??""}"></div></div>
         <button class="btn" id="rpSave" data-id="${L.id}" style="margin-top:8px">Guardar</button></div>` : ""}
     </div>
+    <div class="card"><b>Tasa de preñez y de concepción</b><div class="sub">Vacas, ciclos de 21 días · promedio TP ${pc(avg("tp_cows"))} · TC ${pc(avg("tc_cows"))}</div><div class="rpchart" id="rpc8"></div></div>
     <div class="card"><b>ECO+ vacas vs cuota</b><div class="sub">Preñeces necesarias por chequeo para mantener el hato</div><div class="rpchart" id="rpc2"></div></div>
     <div class="card"><b>Mortalidad embrionaria</b><div class="sub">(ME + abortos) / (ME + abortos + ECO+) por chequeo · promedio ${pc(avg("me"))}</div><div class="rpchart" id="rpc1"></div></div>
     <div class="card"><b>Intervalo entre partos</b><div class="sub">Días · promedio ${avg("iep")!=null ? Math.round(avg("iep")) : "—"}</div><div class="rpchart" id="rpc5"></div></div>
@@ -6948,14 +6990,23 @@ function renderReport(){
     <div class="card"><b>Promedio de leche</b><div class="sub">Última leche/día de las vacas en ordeño (kg)</div><div class="rpchart" id="rpc3"></div></div>
     <div class="card"><b>Tasa de descarte</b><div class="sub">Promedio ${pc(avg("cull_rate"))}</div><div class="rpchart" id="rpc4"></div></div>
     <div class="card"><b>Chequeos (${rows.length})</b><div style="overflow-x:auto"><table style="font-size:12px;margin-top:6px">
-      <tr><th>Fecha</th><th>Hato</th><th>IEP</th><th>ME</th><th>Abort.</th><th>%ME</th><th>ECO+ V</th><th>ECO+ N</th><th>Cuota V</th><th>ECO T</th><th>% preñ.</th><th>Leche</th><th>DEL</th><th>Desc.</th></tr>
-      ${rows.slice().reverse().map(r=>`<tr><td>${fmt(r.check_date)}</td><td>${r.herd_size??"—"}</td><td>${r.iep??"—"}</td><td>${r.embryo_losses??"—"}</td><td>${r.abortions??"—"}</td>
-        <td>${pc(r.me)}</td><td>${r.eco_pos_cows??"—"}</td><td>${r.eco_pos_heifers??"—"}</td><td>${r.cuotaVacas!=null?Math.round(r.cuotaVacas):"—"}</td><td>${r.eco_total_cows??"—"}</td>
-        <td>${pc(r.pct_pregnant)}</td><td>${n1(r.avg_milk)}</td><td>${r.del??"—"}</td><td>${pc(r.cull_rate)}</td></tr>`).join("")}
+      <tr><th>Fecha</th><th title="Chequeos al año">Cheq/año</th><th title="Tamaño del hato">Hato</th><th title="Intervalo entre partos">IEP</th>
+        <th title="Cuota FC vacas">Cuota V</th><th title="Cuota FC novillas">Cuota N</th><th title="Cuota FC totales finca">Cuota T</th>
+        <th title="# muertes embrionarias">ME</th><th>% ME</th><th>Prom % ME</th><th>Abortos</th><th title="Tasa de descarte">Desc.</th><th>Prom desc.</th>
+        <th>ECO+ V</th><th>ECO+ N</th><th>ECO+ finca</th><th title="% hato preñado">% preñ.</th><th title="Promedio leche">Leche</th><th>ECO T V</th>
+        <th title="% vacas que salieron preñadas (ECO+ / ECO total)">% salieron preñ.</th><th title="Tasa de concepción vacas">TC</th><th title="Tasa de preñez vacas (21 d)">TP</th><th>DEL</th>
+        <th style="border-left:2px solid var(--line)" title="Tasa de concepción novillas en servicio">TC N</th><th title="Tasa de preñez novillas en servicio">TP N</th></tr>
+      ${rows.slice().reverse().map(r=>`<tr><td>${fmt(r.check_date)}</td><td>${r.checks_per_year??"—"}</td><td>${r.herd_size??"—"}</td><td>${r.iep??"—"}</td>
+        <td>${r.cuotaVacas!=null?Math.round(r.cuotaVacas):"—"}</td><td>${r.cuotaNov!=null?Math.round(r.cuotaNov):"—"}</td><td>${r.cuotaTotal!=null?Math.round(r.cuotaTotal):"—"}</td>
+        <td>${r.embryo_losses??"—"}</td><td>${pc(r.me)}</td><td>${pc(avg("me"))}</td><td>${r.abortions??"—"}</td><td>${pc(r.cull_rate)}</td><td>${pc(avg("cull_rate"))}</td>
+        <td>${r.eco_pos_cows??"—"}</td><td>${r.eco_pos_heifers??"—"}</td><td>${(r.eco_pos_cows||0) + (r.eco_pos_heifers||0)}</td><td>${pc(r.pct_pregnant)}</td><td>${n1(r.avg_milk)}</td><td>${r.eco_total_cows??"—"}</td>
+        <td>${pc(r.salieron)}</td><td>${pc(r.tc_cows)}</td><td>${pc(r.tp_cows)}</td><td>${r.del??"—"}</td>
+        <td style="border-left:2px solid var(--line)">${pc(r.tc_heifers)}</td><td>${pc(r.tp_heifers)}</td></tr>`).join("")}
     </table></div></div>`;
   const pts = k => rows.filter(r=>r[k]!=null).map(r=>[r.check_date, +r[k]]);
   const flat = (k, v) => v==null ? [] : rows.filter(r=>r[k]!=null).map(r=>[r.check_date, v]);
   multiLine($("rpc1"), [{ name:"% muertes emb.", pts:pts("me"), color:css("--s4") }, { name:"Promedio", pts:flat("me", avg("me")), color:css("--muted"), dash:true }], { pct:true });
+  multiLine($("rpc8"), [{ name:"Tasa de preñez", pts:pts("tp_cows"), color:css("--s0") }, { name:"Tasa de concepción", pts:pts("tc_cows"), color:css("--milk") }], { pct:true });
   multiLine($("rpc2"), [{ name:"ECO+ vacas", pts:pts("eco_pos_cows"), color:css("--s0") }, { name:"Cuota vacas", pts:pts("cuotaVacas"), color:css("--milk") }], {});
   multiLine($("rpc5"), [{ name:"Intervalo entre partos", pts:pts("iep"), color:css("--accent") }, { name:"Promedio", pts:flat("iep", avg("iep")), color:css("--muted"), dash:true }], {});
   // dos medidas con distinta unidad: dos gráficas alineadas en el tiempo (no un eje doble)
