@@ -291,7 +291,7 @@ details.lac td{padding:6px 8px}
           <circle cx="14" cy="23.6" r="1.6" fill="#fff" fill-opacity=".55"/><circle cx="31" cy="23.6" r="1.6" fill="#fff" fill-opacity=".55"/>
         </svg></span><b>Mastitis</b></a>
         <a class="appicon hidden" href="#finanzas" data-perm="finanzas_ver"><span class="ic" style="--g1:#ffe08a;--g2:#b8860b">💰</span><b>Finanzas</b></a>
-        <a class="appicon hidden" href="#inventario" data-perm="inventario_ver"><span class="ic" style="--g1:#c3b5ff;--g2:#5b45c9">📦</span><b>Inventario</b><i class="badge hidden" id="badgeInv"></i></a>
+        <a class="appicon hidden" href="#inventario" data-perm="inventario_ver insumos_mov_alimento insumos_mov_medicamento"><span class="ic" style="--g1:#c3b5ff;--g2:#5b45c9">📦</span><b>Insumos</b><i class="badge hidden" id="badgeInv"></i></a>
         <a class="appicon hidden" href="#salud" data-perm="salud_ver salud_tratar"><span class="ic" style="--g1:#5fd0a5;--g2:#178a62">🩺</span><b>Salud</b><i class="badge hidden" id="badgeSalud"></i></a>
         <a class="appicon" href="#leche" data-perm="pesaje_registrar"><span class="ic" style="--g1:#7cc4ff;--g2:#2f6fd6"><svg viewBox="0 0 48 48" aria-hidden="true">
           <path d="M7 8h34a3 3 0 0 1 3 3v7c0 8-9 13-20 13S4 26 4 18v-7a3 3 0 0 1 3-3z" fill="#fff"/>
@@ -442,7 +442,7 @@ details.lac td{padding:6px 8px}
     </section>
     <section id="tabInv" class="hidden">
       <header>
-        <div class="brand"><button class="back" data-home aria-label="Inicio">‹</button><div><h1>Inventario</h1><div class="sub">Existencias, pedidos, conteos y alertas</div></div></div>
+        <div class="brand"><button class="back" data-home aria-label="Inicio">‹</button><div><h1>Insumos</h1><div class="sub">Inventarios y movimientos</div></div></div>
         <button class="link logout">Salir</button>
       </header>
       <div id="ivBody"><div class="empty">Cargando…</div></div>
@@ -645,7 +645,8 @@ const PERM_FALLBACK = { vacas_repro:"vacas_ver", calidad_ver:"reporte_editar",
   pastos_ver:"reporte_editar", pastos_registrar:"reporte_editar", produccion_ver:"reporte_editar", registros_todos:"reporte_editar", pesot_registrar:"vacas_parto",
   vacas_secado:"vacas_parto", vacas_salida:"vacas_parto", terneras_registrar:"reporte_editar", listas_ver:"vacas_repro", generador_ver:"listas_ver",
   toros_ver:"reporte_editar", toros_registrar:"reporte_editar", racion_ver:"reporte_editar", racion_registrar:"reporte_editar",
-  ronda_registrar:"diaria_registrar", ronda_ver:"diaria_registrar", chequeo_tratamientos:"chequeo", mastitis_registrar:"salud_tratar" };   // funciones nuevas: mientras no estén en el perfil
+  ronda_registrar:"diaria_registrar", ronda_ver:"diaria_registrar", chequeo_tratamientos:"chequeo", mastitis_registrar:"salud_tratar",
+  vacas_salud:"vacas_ver", vacas_peso:"vacas_ver", vacas_datos:"vacas_ver" };   // funciones nuevas: mientras no estén en el perfil
 // si el perfil no tiene la función, se usa la de la que depende (en cadena: generador → listas → reproducción…)
 const permOf = (k, n = 0) => perms[k] || (PERM_FALLBACK[k] && n < 5 ? permOf(PERM_FALLBACK[k], n + 1) : null);
 const INV_PROFILES = ["Administrador", "Admin Principal", "Gerente", "Maria"];
@@ -744,7 +745,7 @@ function setTab(tab){
 // pantallas y el permiso que las abre (si no lo tiene, vuelve al inicio)
 const TAB_PERM = { terneras:"terneras_historial terneras_vigilar terneras_registrar", traslados:"traslados", leche:"pesaje_registrar",
   diaria:"diaria_registrar diaria_totales diaria_resumen", reporte:"reporte_ver produccion_ver pastos_ver calidad_ver", registros:"registros_ver", chequeo:"chequeo chequeo_tratamientos",
-  mastitis:"mastitis_historial mastitis_vigilar mastitis_registrar", salud:"salud_ver salud_tratar", pastos:"pastos_ver pastos_registrar", pesot:"pesot_registrar", listas:"listas_ver", generador:"generador_ver", inventario:"inventario_ver", finanzas:"finanzas_ver", toros:"toros_ver toros_registrar", racion:"racion_ver racion_registrar", ronda:"ronda_registrar ronda_ver", rapido:"vacas_servicio vacas_celo vacas_secado salud_tratar traslados vacas_salida", vaca:"vacas_ver" };
+  mastitis:"mastitis_historial mastitis_vigilar mastitis_registrar", salud:"salud_ver salud_tratar", pastos:"pastos_ver pastos_registrar", pesot:"pesot_registrar", listas:"listas_ver", generador:"generador_ver", inventario:"inventario_ver insumos_mov_alimento insumos_mov_medicamento", finanzas:"finanzas_ver", toros:"toros_ver toros_registrar", racion:"racion_ver racion_registrar", ronda:"ronda_registrar ronda_ver", rapido:"vacas_servicio vacas_celo vacas_secado salud_tratar traslados vacas_salida", vaca:"vacas_ver" };
 function route(){
   const h = decodeURIComponent(location.hash.slice(1));
   const tk = Object.keys(TAB_PERM).find(k=>h.startsWith(k));
@@ -982,24 +983,24 @@ function renderCow(d){
       <div style="min-width:0">
         <h2>${esc(c.id)}</h2>
         <div style="margin:4px 0" ${c.active && /(^|\/)Desc\.?(\/|$)/.test(c.status || "") && plCan() ? `data-uncull="${esc(c.id)}" title="Tocar para quitar el descarte"` : ""}>${c.active ? statusPill(canSee("vacas_repro") ? status : String(status||"").split("/").filter(x=>!/^(PR|Ser|Nc|Palp-|Ca)$/.test(x)).join("/"), curSv?.event_date, curPr?.event_date) : `<span class="pill" style="background:${css("--muted")}">Fuera del hato</span>`}${c.active && /(^|\/)Desc\.?(\/|$)/.test(c.status || "") && plCan() ? ` <button class="lnk" data-uncullbtn>quitar descarte</button>` : ""}${
-          (()=>{ const lq = lostQuarters(d.mast||[]); return lq.length ? `<span class="pill" style="background:${css("--s5")}" title="Cuarto perdido">⚠️ ${lq.map(q=>q.k.toUpperCase()).join(", ")} perdido${lq.length>1?"s":""}</span>` : ""; })()}</div>
-        <div class="sub">${[newPen ? (String(newPen).endsWith(c.pen||"~") ? `Grupo <b>${esc(c.pen)}</b> ⏳` : `Grupo ${esc(c.pen||"—")} → <b>${esc(newPen)}</b> ⏳`) : c.pen&&`Grupo ${esc(c.pen)}`, c.herd&&`Hato ${esc(c.herd)}`, esc(c.breed||""), esc(c.sex||"")].filter(Boolean).join(" · ")}</div>
+          (()=>{ const lq = canSee("vacas_salud") ? lostQuarters(d.mast||[]) : []; return lq.length ? `<span class="pill" style="background:${css("--s5")}" title="Cuarto perdido">⚠️ ${lq.map(q=>q.k.toUpperCase()).join(", ")} perdido${lq.length>1?"s":""}</span>` : ""; })()}</div>
+        <div class="sub">${!canSee("vacas_datos") ? "" : [newPen ? (String(newPen).endsWith(c.pen||"~") ? `Grupo <b>${esc(c.pen)}</b> ⏳` : `Grupo ${esc(c.pen||"—")} → <b>${esc(newPen)}</b> ⏳`) : c.pen&&`Grupo ${esc(c.pen)}`, c.herd&&`Hato ${esc(c.herd)}`, esc(c.breed||""), esc(c.sex||"")].filter(Boolean).join(" · ")}</div>
       </div>
     </div>
     ${exitTxt ? `<div class="exit">${exitTxt}</div>` : ""}
     <div id="cowRetiro"></div>
     ${appOutBox(events)}
-    <div class="kpis">
-      <div class="kpi"><b>${age(c.birth_date)}</b><span>Edad · nació ${fmt(c.birth_date)}</span></div>
+    ${canSee("vacas_datos") || canSee("vacas_leche") ? `<div class="kpis">
+      ${canSee("vacas_datos") ? `<div class="kpi"><b>${age(c.birth_date)}</b><span>Edad · nació ${fmt(c.birth_date)}</span></div>
       <div class="kpi"><b>${c.lactation_num!=null || appCv ? lacNum(c, events) : "—"}</b><span>Partos</span></div>
-      <div class="kpi"><b>${del!=null ? del+" d" : fmt(lastCalv)}</b><span>${del!=null ? "En leche · parto "+fmt(lastCalv) : "Último parto"}</span></div>
-      <div class="kpi"><b>${lastMilk ? (+lastMilk.total_kg).toFixed(1)+" kg" : "—"}</b><span>Última leche${lastMilk?" · "+fmt(lastMilk.test_date):""}</span></div>
-    </div>
-    <div class="gene">
+      <div class="kpi"><b>${del!=null ? del+" d" : fmt(lastCalv)}</b><span>${del!=null ? "En leche · parto "+fmt(lastCalv) : "Último parto"}</span></div>` : ""}
+      ${canSee("vacas_leche") ? `<div class="kpi"><b>${lastMilk ? (+lastMilk.total_kg).toFixed(1)+" kg" : "—"}</b><span>Última leche${lastMilk?" · "+fmt(lastMilk.test_date):""}</span></div>` : ""}
+    </div>` : ""}
+    ${canSee("vacas_datos") ? `<div class="gene">
       <span>Padre</span><div>${bullTxt(c.sire, bulls)}</div>
       <span>Madre</span><div>${c.dam ? `<button class="lnk" data-cow="${esc(c.dam)}">${esc(c.dam)}</button>` : "—"}</div>
       <span>Abuelo mat.</span><div>${bullTxt(c.maternal_grandsire, bulls)}</div>
-    </div>
+    </div>` : ""}
     ${calf && canSee("terneras_historial") ? `<div class="calf-note">🫁 <b>De ternera:</b> ${exams.length} ecografía${exams.length===1?"":"s"} · score máx ${exams.length?badge(Math.max(...exams.map(e=>+e.score))):"—"}
       · ${calfTx.length ? esc(calfTx.map(short).join(" → ")) : "sin antibióticos"}
       <div><button class="lnk" data-calf="${esc(calf.calf_id)}" data-farm="${esc(calf.farm_id)}">Ver historial de ternera →</button></div></div>` : ""}
@@ -1023,12 +1024,12 @@ function renderCow(d){
   </div>` : ""}
 
   <div id="cowPlans"></div>
-  ${cowHealthHtml(d)}
-  ${canSee("mastitis_historial") ? mastHtml(d.mast||[], c.id) : ""}
+  ${canSee("vacas_salud") ? cowHealthHtml(d) : ""}
+  ${canSee("vacas_salud") && canSee("mastitis_historial") ? mastHtml(d.mast||[], c.id) : ""}
 
-  ${kids.length ? `<div class="card"><b>Crías (${kids.length})</b><div class="list">${kids.map(k=>`<button class="chip" data-cow="${esc(k.id)}">${esc(k.id)} <span class="sub">${fmt(k.birth_date)}${k.active?"":" · "+esc(k.exit_type||"salió")}</span></button>`).join("")}</div></div>` : ""}
+  ${kids.length && canSee("vacas_datos") ? `<div class="card"><b>Crías (${kids.length})</b><div class="list">${kids.map(k=>`<button class="chip" data-cow="${esc(k.id)}">${esc(k.id)} <span class="sub">${fmt(k.birth_date)}${k.active?"":" · "+esc(k.exit_type||"salió")}</span></button>`).join("")}</div></div>` : ""}
 
-  ${weights.length ? `<div class="card"><b>Peso</b><div id="weightChart"></div>
+  ${weights.length && canSee("vacas_peso") ? `<div class="card"><b>Peso</b><div id="weightChart"></div>
     <div class="sub">Último: ${weights[weights.length-1].weight_kg} kg el ${fmt(weights[weights.length-1].event_date)}${weights[weights.length-1].body_condition?` · CC ${weights[weights.length-1].body_condition}`:""}</div>
     </div>` : ""}
 
@@ -1037,7 +1038,7 @@ function renderCow(d){
   lastCowData = d; milkPick = null; wPick = null; drawCowCharts();
   cowPlans(d);
   if (rgEditAfter){ const ev = d.events.find(v=>v.id===rgEditAfter); rgEditAfter = null; if (ev) setTimeout(()=>openReg(ev.event_type, ev), 60); }
-  if (canSee("salud_ver")) cowWithdrawal(c.id);
+  if (canSee("salud_ver") && canSee("vacas_salud")) cowWithdrawal(c.id);
 }
 
 // eventos programados (aún sin ejecutar), como en Interherd, contados desde el servicio que la preñó:
@@ -2108,7 +2109,7 @@ async function loadRegistros(){
       title:SK[x.kind] || "Semen", detail:`Toro ${x.bull_code} · ${x.straws} pajillas${x.from_tank ? " · " + x.from_tank : ""}${x.to_tank ? " → " + x.to_tank : ""}`, status:"app" }));
     (pl.data || []).forEach(x=>add({ kind:"plan", icon:"📅", when:x.created_at, date:x.due_date, farm:x.farm_id, who:x.created_by, cow:x.cow_id,
       title:"Programado · " + (PL_NAMES[x.plan_type] || x.plan_type).replace(/^\S+\s/, ""), detail:[x.note, x.status==="done" ? "hecho" : ""].filter(Boolean).join(" · "), status:"app" }));
-    const IK = { entrada:"Inventario · entrada", ajuste:"Inventario · conteo", salida:"Inventario · salida", traslado:"Inventario · traslado" };
+    const IK = { entrada:"Insumos · entrada", ajuste:"Insumos · conteo", salida:"Insumos · salida", traslado:"Insumos · traslado" };
     const ivg = {}; (se.data || []).forEach(x=>{ if (x.kind==="traslado" && +x.qty > 0) return;   // el traslado se muestra una vez (la salida)
       const k = x.created_at.slice(0, 16) + "|" + x.farm_id + "|" + x.kind; (ivg[k] ||= { ...x, items:[] }).items.push(`${x.supplies?.name || x.supply_code} ${Math.abs(+x.qty).toLocaleString("es-CO")} ${x.supplies?.unit || ""}`.trim()); });
     Object.values(ivg).forEach(x=>add({ kind:"inv", icon:"📦", when:x.created_at, date:x.entry_date, farm:x.farm_id, who:x.created_by,
@@ -3824,7 +3825,7 @@ function lsView(all){
   const s = lsState, tk = [...new Set(String(s.q || "").toUpperCase().split(/[\s,;]+/).filter(Boolean))];
   const rows = lsPick(all, s.list).filter(x=>(!s.pen || (x.c.pen||"—")===s.pen)
     && (!tk.length || (tk.length > 1 ? tk.includes(x.c.id) : x.c.id.includes(tk[0]))));
-  return s.ord==="num" ? rows.slice().sort((a,b)=>byNum(a.c.id, b.c.id)) : rows;
+  return s.ord==="num" || (s.list==="chequeo" && myProfile!=="Admin Principal") ? rows.slice().sort((a,b)=>byNum(a.c.id, b.c.id)) : rows;
 }   // ckDate: mañana (se pone al abrir)
 // ═══════════════════════ GENERADOR DE LISTAS ═══════════════
 // Toda la información de cada vaca en una tabla: se filtra (finca, vacas/novillas, estado, grupo) y se escogen
@@ -4167,7 +4168,7 @@ function renderListas(){
       ${s.list==="chequeo" ? `<div class="row" style="align-items:center;margin-top:8px"><span class="sub" style="flex:none">Fecha del chequeo</span><input type="date" id="lsCkDate" value="${s.ckDate}"></div>
         <div class="list">${["EXREP","ECO1","ECO2","REPETIR","DPR","DP5","DPSEC"].map(k=>{ const n = rows.filter(x=>x.ck.cat===k).length; return n ? `<span class="chip"><span class="ckcat" style="background:var(${CK_COLOR[k]})">${k}</span>${n}</span>` : ""; }).join("")}</div>` : ""}
       ${pens.length > 1 ? chips([["", "Todos los lotes"], ...pens.map(p=>[p, esc(p)])], s.pen, "data-lsp") : ""}
-      ${chips([["num","Por número"],["prio", s.list==="chequeo" ? "Por lote y etapa" : "Por urgencia"]], s.ord, "data-lso")}
+      ${myProfile==="Admin Principal" || s.list!=="chequeo" ? chips([["num","Por número"],["prio", s.list==="chequeo" ? "Por lote y etapa" : "Por urgencia"]], s.ord, "data-lso") : ""}
       <input id="lsQ" placeholder="Buscar número (o varios: 1001 1007)" value="${esc(s.q || "")}" autocapitalize="characters" autocomplete="off" style="margin-top:8px">
       <div class="row" style="margin-top:8px;align-items:center"><button class="chip" data-lsall="1">Todos</button><button class="chip" data-lsall="0">Ninguno</button>
         <span class="sub" id="lsCount" style="flex:1;text-align:right">${rows.filter(x=>s.sel.has(x.c.id)).length} marcadas</span></div>
@@ -5382,6 +5383,13 @@ async function ivLoad(){
   if (!navigator.onLine){ ivData = { err:"El inventario necesita señal." }; return; }
   $("ivBody").innerHTML = `<div class="card"><div class="empty">Cargando…</div></div>`;
   const f = ivState.farm;
+  if (!canSee("inventario_ver")){   // solo Movimientos: productos y salidas, sin existencias
+    const [su, mv] = await Promise.all([psAll(()=>sb.from("supplies").select("*").order("name")),
+      sb.from("supply_entries").select("id,entry_date,kind,supply_code,packs,qty,presentation,pack_size,notes,created_by,created_at,transfer_ref")
+        .eq("farm_id", f).eq("kind", "salida").order("entry_date", { ascending:false }).order("id", { ascending:false }).limit(200)]);
+    ivData = su.error ? { err:"No se pudieron cargar los productos." } : { supplies:su.data || [], stock:[], moves:mv.data || [], alerts:[], feed:[] };
+    return;
+  }
   const fd = await sb.from("feed_status").select("*").eq("farm_id", f);   // si no existe la vista (falta el SQL) sigue sin esto
   const [su, st, mv, al] = await Promise.all([
     psAll(()=>sb.from("supplies").select("*").order("name")),
@@ -5401,10 +5409,14 @@ async function ivBadge(){
 function renderInv(){
   const s = ivState, d = ivData, reg = ivCan();
   if (!d || d.err){ $("ivBody").innerHTML = `<div class="card"><div class="empty">${esc(d?.err || "Cargando…")}</div></div>`; return; }
+  const parts = [...(canSee("inventario_ver") ? [["inv","📦 Inventarios"]] : []), ...(ivMvGroups().length ? [["mov","🔁 Movimientos"]] : [])];
+  if (!parts.some(x=>x[0]===s.part)) s.part = parts[0]?.[0] || "inv";
+  const box = x => `<div class="sheet" style="padding:0;background:none;max-height:none;margin-bottom:10px;overflow:visible">${x}</div>`;
+  let h = parts.length > 1 ? box(seg("ivP", parts, s.part)) : "";
+  h += ivFarms.length > 1 ? box(seg("ivF", ivFarms.map(f=>[String(f.id), farmLabel(f)]), String(s.farm))) : "";
+  if (s.part==="mov"){ $("ivBody").innerHTML = h + ivMvHtml(); return; }
   const tabs = [["stock","Existencias"], ...(reg ? [["pedido","Pedido"],["conteo","Conteo"]] : []), ["prod","Productos"], ["alert","Alertas"]];
   if (!tabs.some(t=>t[0]===s.tab)) s.tab = "stock";
-  const box = x => `<div class="sheet" style="padding:0;background:none;max-height:none;margin-bottom:10px;overflow:visible">${x}</div>`;
-  let h = ivFarms.length > 1 ? box(seg("ivF", ivFarms.map(f=>[String(f.id), farmLabel(f)]), String(s.farm))) : "";
   h += box(`<div class="ivtabs">${seg("ivT", tabs, s.tab)}</div>`);
   h += s.tab==="stock" ? ivStockHtml() : s.tab==="pedido" ? ivOrderHtml() : s.tab==="conteo" ? ivCountHtml() : s.tab==="prod" ? ivProdHtml() : ivAlertHtml();
   $("ivBody").innerHTML = h;
@@ -5436,7 +5448,7 @@ function ivStockHtml(){
 }
 function ivMovesHtml(list){
   return `<table class="ivt" style="font-size:13px;margin-top:6px">${list.map(m=>{ const sp = ivSup(m.supply_code);
-    const del = ivCan() && (isMain() || m.created_by===me);
+    const del = (ivCan() && (isMain() || m.created_by===me)) || (m.kind==="salida" && m.created_by===me && ivMvGroups().some(g=>ivInGrp(sp, g[0])));
     return `<tr${del ? ` data-swdel="supply_entries|${m.id}"` : ""}><td>${fmt(m.entry_date)}</td><td>${IV_KIND[m.kind || "entrada"] || m.kind}</td>
       <td><b>${esc(sp?.name || m.supply_code)}</b><div class="sub">${m.packs ? `${ivN(m.packs)} × ${esc(m.presentation || "")} · ` : ""}${[m.supplier, m.invoice, m.notes].filter(Boolean).map(esc).join(" · ")}</div></td>
       <td style="text-align:right;white-space:nowrap${+m.qty < 0 ? ";color:var(--s3)" : ""}">${+m.qty > 0 && m.kind!=="entrada" ? "+" : ""}${ivN(m.qty)} ${esc(sp?.unit || "")}</td></tr>`; }).join("")
@@ -5575,6 +5587,64 @@ async function ivCountSave0(){
   if (error) return err(/row-level|permission/i.test(error.message) ? "No tienes permiso para registrar en esta finca." : "No se pudo guardar: " + error.message);
   toast(ivCnt.mode==="conteo" ? "Conteo guardado ✓" : "Salida guardada ✓");
   ivCnt = { mode:ivCnt.mode, code:"", unit:"pack", qty:"", date:null, note:"" }; await ivLoad(); renderInv(); ivBadge();
+}
+// ── Movimientos: salidas de alimento (ganaderos…) y de medicamentos (Maria, Gerente, Admin Principal) ──
+// Quién: funciones "Registrar movimientos de alimento / de medicamentos" del Excel de perfiles (y SQL/insumos_movimientos.sql).
+const IV_FEEDCATS = ["Concentrado","Sal mineralizada","Forraje conservado"];
+const IV_MEDCATS = ["Antibiótico","Antiinflamatorio / analgésico","Hormona","Antiparasitario","Vacuna","Vitamina / mineral","Suero / fluidos",
+  "Anestésico / sedante","Digestivo / hepático","Tópico / cascos","Desinfectante / sellador","Reactivo / diagnóstico","Otro medicamento","Material veterinario"];
+const ivMvGroups = () => [canDo("insumos_mov_alimento") && ["alim","🌾 Alimento"], canDo("insumos_mov_medicamento") && ["med","💊 Medicamentos"]].filter(Boolean);
+const ivInGrp = (sp, g) => !!sp && (g==="alim" ? IV_FEEDCATS : IV_MEDCATS).includes(sp.category);
+const ivMvLine = () => ({ code:"", unit:"pack", qty:"" });
+let ivMv = { grp:"", date:null, lot:"", note:"", lines:[ivMvLine()] };
+function ivMvHtml(){
+  const gs = ivMvGroups(), m = ivMv;
+  if (!gs.length) return `<div class="card"><div class="empty">Tu perfil no registra movimientos.</div></div>`;
+  if (!gs.some(g=>g[0]===m.grp)) m.grp = gs[0][0];
+  const L = ivData.supplies.filter(x=>x.active!==false && ivInGrp(x, m.grp)).sort((a, b)=>a.name.localeCompare(b.name)), alim = m.grp==="alim";
+  const lots = [...new Set([...jget(`psField:${ivState.farm}`, []), ...jget(`rnData:${ivState.farm}`, { lots:[] }).lots.map(l=>l.name)])];
+  const line = (l, i) => { const sp = ivSup(l.code), p = ivPres(sp)[0], hasP = p && p.size !== 1;
+    return `<div data-mvl="${i}" style="display:grid;grid-template-columns:1.6fr 0.7fr 1fr auto;gap:6px;margin-top:6px;align-items:center">
+      <select data-mvk="code" style="min-width:0"><option value="">— producto —</option>${L.map(x=>`<option value="${esc(x.code)}" ${x.code===l.code ? "selected" : ""}>${esc(x.name)}</option>`).join("")}</select>
+      <input data-mvk="qty" type="number" inputmode="decimal" min="0" step="any" value="${esc(l.qty)}" placeholder="cant." style="min-width:0">
+      <select data-mvk="unit" style="min-width:0">${hasP ? `<option value="pack" ${l.unit==="pack" ? "selected" : ""}>${esc(p.name)}</option>` : ""}
+        <option value="unit" ${l.unit==="unit" || !hasP ? "selected" : ""}>${esc(sp?.unit || "unidad")}</option></select>
+      <button class="lnk" data-mvdel="${i}" style="color:var(--s4)" aria-label="Quitar">✕</button></div>`; };
+  const recent = ivData.moves.filter(x=>x.kind==="salida" && ivInGrp(ivSup(x.supply_code), m.grp)).slice(0, 30);
+  return `<div class="card sheet hsform" style="max-height:none"><b>Salida · ${esc(farmLabel(ivFarms.find(f=>f.id===ivState.farm) || {}))}</b>
+      ${gs.length > 1 ? seg("ivMG", gs, m.grp) : ""}
+      <div class="sub" style="margin-top:6px">${alim ? "Bultos que se llevan a cada lote (próximas, novillas, terneras, KAU multipropósito…). El concentrado de las vacas en ordeño se sigue descontando de la Leche diaria."
+        : "Lo que sale y no queda en un tratamiento de Salud (los tratamientos descuentan solos): se dañó, se venció, préstamo…"}</div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">
+        <div><label>Fecha</label><input id="ivMvDate" type="date" value="${m.date || today()}" max="${today()}" style="min-width:0"></div>
+        <div><label>${alim ? "Lote" : "Para qué"}</label><input id="ivMvLot" value="${esc(m.lot)}" list="ivMvLots" placeholder="${alim ? "ej. PROXIMAS" : "ej. se venció"}" style="min-width:0"></div></div>
+      <datalist id="ivMvLots">${alim ? lots.map(l=>`<option value="${esc(l)}">`).join("") : ""}</datalist>
+      <label>Productos</label>${m.lines.map(line).join("")}
+      <div class="addbar" style="margin-top:8px"><button id="ivMvAdd">＋ Otro producto</button></div>
+      <label>Nota (opcional)</label><input id="ivMvNote" value="${esc(m.note)}" maxlength="200">
+      <div class="err" id="ivErr"></div>
+      <button class="btn" id="ivMvSave" style="margin-top:12px">Guardar salida</button></div>
+    <div class="card"><b>Últimas salidas de ${alim ? "alimento" : "medicamentos"}</b>${ivMovesHtml(recent)}</div>`;
+}
+async function ivMvSave(){
+  if (ivBusy) return; ivBusy = true;
+  try { await ivMvSave0(); } finally { ivBusy = false; }
+}
+async function ivMvSave0(){
+  const err = t => ($("ivErr").textContent = t), m = ivMv, alim = m.grp==="alim";
+  const lines = m.lines.filter(l=>l.code || l.qty!=="");
+  if (!lines.length) return err("Escoge el producto y la cantidad.");
+  if (lines.some(l=>!l.code)) return err("Falta escoger el producto en una línea.");
+  if (lines.some(l=>!(+String(l.qty).replace(",", ".") > 0))) return err("Escribe una cantidad mayor que cero en cada producto.");
+  if (alim && !m.lot.trim()) return err("Escribe a qué lote van.");
+  const date = m.date || today(), txt = [m.lot.trim(), m.note.trim()].filter(Boolean).join(" · ") || null;
+  const rows = lines.map(l=>{ const sp = ivSup(l.code), p = ivPres(sp)[0], v = +String(l.qty).replace(",", "."), pk = l.unit==="pack" && p && p.size!==1;
+    return { entry_date:date, farm_id:ivState.farm, supply_code:l.code, kind:"salida", packs:pk ? v : null, presentation:pk ? p.name : null, pack_size:pk ? p.size : null,
+      qty:-Math.round((pk ? v * p.size : v)*1000)/1000, notes:txt, source:"app" }; });
+  const { error } = await sb.from("supply_entries").insert(rows);
+  if (error) return err(/row-level|permission/i.test(error.message) ? "No tienes permiso para registrar esa salida en esta finca." : "No se pudo guardar: " + error.message);
+  toast(`Salida guardada ✓ (${rows.length} producto${rows.length===1 ? "" : "s"})`);
+  ivMv = { grp:m.grp, date:m.date, lot:"", note:"", lines:[ivMvLine()] }; await ivLoad(); renderInv(); ivBadge();
 }
 // ── Productos ──
 function ivProdHtml(){
@@ -5726,6 +5796,13 @@ function ivWire(){
   body.addEventListener("change", e=>{
     const t = e.target;
     if (t.name==="ivF"){ ivState.farm = +t.value; jset("ivLast", { farm:ivState.farm }); if (ivOrder) ivOrder.to = null; return ivLoad().then(renderInv); }
+    if (t.name==="ivP"){ ivState.part = t.value; return renderInv(); }
+    if (t.name==="ivMG"){ ivMv = { ...ivMv, grp:t.value, lines:[ivMvLine()] }; return renderInv(); }
+    if (t.id==="ivMvDate"){ ivMv.date = t.value; return; }
+    const mv = t.closest("[data-mvl]");
+    if (mv){ const l = ivMv.lines[+mv.dataset.mvl], k = t.dataset.mvk;
+      if (k==="code"){ l.code = t.value; l.unit = "pack"; return renderInv(); }
+      if (k==="unit"){ l.unit = t.value; return; } }
     if (t.name==="ivT"){ ivState.tab = t.value; ivState.q = "";
       if (t.value==="pedido" && !ivPedidoSeen && ivState.farm!==IV_ISLA && ivFarms.some(f=>f.id===IV_ISLA)){
         ivPedidoSeen = true; ivState.farm = IV_ISLA; ivOrder = null; return ivLoad().then(renderInv); }
@@ -5751,6 +5828,9 @@ function ivWire(){
     if (t.id==="ivOInv") ivOrder.invoice = t.value;
     if (t.id==="ivONote") ivOrder.notes = t.value;
     if (t.id==="ivCQty"){ ivCnt.qty = t.value; return ivCountCalc(); }
+    if (t.id==="ivMvLot"){ ivMv.lot = t.value; return; }
+    if (t.id==="ivMvNote"){ ivMv.note = t.value; return; }
+    if (t.dataset.mvk==="qty"){ const mv = t.closest("[data-mvl]"); if (mv) ivMv.lines[+mv.dataset.mvl].qty = t.value; return; }
     if (t.id==="ivCNote") ivCnt.note = t.value;
     const ln = t.closest("[data-ivl]");
     if (ln && ivOrder){ const l = ivOrder.lines[+ln.dataset.ivl], k = t.dataset.ivk;
@@ -5767,6 +5847,9 @@ function ivWire(){
     if (t.id==="ivNewProd") return ivProdForm(null);
     if (t.id==="ivOSave") return ivOrderSave();
     if (t.id==="ivCSave") return ivCountSave();
+    if (t.id==="ivMvSave") return ivMvSave();
+    if (t.id==="ivMvAdd"){ ivMv.lines.push(ivMvLine()); return renderInv(); }
+    const md = t.closest("[data-mvdel]"); if (md){ ivMv.lines.splice(+md.dataset.mvdel, 1); if (!ivMv.lines.length) ivMv.lines.push(ivMvLine()); return renderInv(); }
     if (t.id==="ivReload") return ivLoad().then(renderInv);
     if (t.id==="ivAlertNew"){ const name = prompt("¿Para qué producto? (escribe el nombre o el código)"); if (!name) return;
       const sp = ivByName(name) || ivData.supplies.find(x=>x.name.toLowerCase().includes(name.trim().toLowerCase()));
