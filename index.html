@@ -321,7 +321,7 @@ details.lac td{padding:6px 8px}
         </svg></span><b>Pesaje de leche</b><i class="badge hidden" id="badgeLeche"></i></a>
         <a class="appicon hidden" href="#pesot" data-perm="pesot_registrar"><span class="ic" style="--g1:#f6c48a;--g2:#c47a2c">⚖️</span><b>Pesaje terneras</b><i class="badge hidden" id="badgeTn"></i></a>
         <a class="appicon" href="#diaria" data-perm="diaria_registrar diaria_totales diaria_resumen"><span class="ic" style="--g1:#ffd36b;--g2:#e08a00">🥛</span><b>Leche diaria</b><i class="badge hidden" id="badgeDiaria"></i></a>
-        <a class="appicon hidden" href="#chequeo" data-perm="chequeo chequeo_tratamientos"><span class="ic" style="--g1:#6fd3f2;--g2:#1b7fa8"><svg viewBox="0 0 48 48" aria-hidden="true">
+        <a class="appicon hidden" href="#chequeo" data-perm="chequeo chequeo_tratamientos chequeo_resultados"><span class="ic" style="--g1:#6fd3f2;--g2:#1b7fa8"><svg viewBox="0 0 48 48" aria-hidden="true">
           <path d="M7 13C2 13 2 5 7 3" fill="none" stroke="#fff" stroke-width="2.6" stroke-linecap="round"/>
           <rect x="5" y="9" width="39" height="9" rx="4.5" fill="#fff"/><rect x="16" y="15.5" width="22" height="3.5" rx="1.5" fill="#bdebd9"/>
           <path d="M15 25q12 4 24 0" fill="none" stroke="#fff" stroke-width="3" stroke-linecap="round"/>
@@ -668,7 +668,7 @@ const PERM_FALLBACK = { vacas_repro:"vacas_ver", calidad_ver:"reporte_editar",
   pastos_ver:"reporte_editar", pastos_registrar:"reporte_editar", produccion_ver:"reporte_editar", registros_todos:"reporte_editar", pesot_registrar:"vacas_parto",
   vacas_secado:"vacas_parto", vacas_salida:"vacas_parto", terneras_registrar:"reporte_editar", listas_ver:"vacas_repro", generador_ver:"listas_ver",
   toros_ver:"reporte_editar", toros_registrar:"reporte_editar", racion_ver:"reporte_editar", racion_registrar:"reporte_editar",
-  ronda_registrar:"diaria_registrar", ronda_ver:"diaria_registrar", chequeo_tratamientos:"chequeo", mastitis_registrar:"salud_tratar",
+  ronda_registrar:"diaria_registrar", ronda_ver:"diaria_registrar", chequeo_tratamientos:"chequeo", chequeo_resultados:"chequeo_tratamientos", mastitis_registrar:"salud_tratar",
   vacas_salud:"vacas_ver", vacas_peso:"vacas_ver", vacas_datos:"vacas_ver", inicio_antibiotico:"terneras_vigilar", salud_reportar:"salud_tratar" };   // funciones nuevas: mientras no estén en el perfil
 // si el perfil no tiene la función, se usa la de la que depende (en cadena: generador → listas → reproducción…)
 const permOf = (k, n = 0) => perms[k] || (PERM_FALLBACK[k] && n < 5 ? permOf(PERM_FALLBACK[k], n + 1) : null);
@@ -767,7 +767,7 @@ function setTab(tab){
 }
 // pantallas y el permiso que las abre (si no lo tiene, vuelve al inicio)
 const TAB_PERM = { terneras:"terneras_historial terneras_vigilar terneras_registrar", traslados:"traslados", leche:"pesaje_registrar",
-  diaria:"diaria_registrar diaria_totales diaria_resumen", reporte:"reporte_ver produccion_ver pastos_ver calidad_ver", registros:"registros_ver", chequeo:"chequeo chequeo_tratamientos",
+  diaria:"diaria_registrar diaria_totales diaria_resumen", reporte:"reporte_ver produccion_ver pastos_ver calidad_ver", registros:"registros_ver", chequeo:"chequeo chequeo_tratamientos chequeo_resultados",
   mastitis:"mastitis_historial mastitis_vigilar mastitis_registrar", salud:"salud_ver salud_tratar salud_reportar", pastos:"pastos_ver pastos_registrar", pesot:"pesot_registrar", listas:"listas_ver", generador:"generador_ver", inventario:"inventario_ver insumos_mov_alimento insumos_mov_medicamento", finanzas:"finanzas_ver", toros:"toros_ver toros_registrar", racion:"racion_ver racion_registrar", ronda:"ronda_registrar ronda_ver", rapido:"vacas_servicio vacas_celo vacas_secado salud_tratar traslados vacas_salida", vaca:"vacas_ver" };
 function route(){
   const h = decodeURIComponent(location.hash.slice(1));
@@ -1729,7 +1729,8 @@ async function loadPaddock(id){
   const ids = [id, ...(olds||[]).map(o=>o.id)], label = Object.fromEntries((olds||[]).map(o=>[o.id, `antes ${o.predio.toLowerCase()} ${o.number}`]));
   const [oc, nd, wk, gz] = await Promise.all([
     sb.from("paddock_occupancy").select("paddock_id,grp,entry_date,exit_date,current,animals,aforo,milk_l,source").in("paddock_id", ids).order("entry_date").limit(5000),
-    sb.from("paddock_ndvi").select("obs_date,ndvi").eq("paddock_id", id).eq("haze", false).gte("obs_date", addDays(today(), -400)).order("obs_date"),
+    sb.from("paddock_ndvi").select("obs_date,ndvi,ndmi").eq("paddock_id", id).eq("haze", false).gte("obs_date", addDays(today(), -400)).order("obs_date")
+      .then(r=>r.error ? sb.from("paddock_ndvi").select("obs_date,ndvi").eq("paddock_id", id).eq("haze", false).gte("obs_date", addDays(today(), -400)).order("obs_date") : r),
     sb.from("paddock_works").select("id,paddock_id,work_date,activity,product,supply_code,qty,value,notes,source,created_by").in("paddock_id", ids).order("work_date", { ascending:false }).limit(3000),
     sb.from("grazing").select("id,grp,entry_date,source,created_by").in("paddock_id", ids).eq("source", "app").gte("entry_date", addDays(today(), -400)),
   ]);
@@ -1778,11 +1779,20 @@ async function loadPaddock(id){
         <div id="psNdviChart" style="margin-top:6px"></div>
         <div class="legend" style="margin-top:6px"><span><i style="background:var(--milk)"></i>con ganado</span><span><i style="background:var(--s0)"></i>línea punteada = 0,75 listo</span></div>
         <div class="sub" style="margin-top:4px">NDVI de Sentinel-2 (10 m): 0,3–0,5 recién pastoreado · 0,75 o más, pasto listo. Sin las fechas nubladas.</div></div>`; })() : ""}
+    ${nd.data?.some(x=>x.ndmi!=null) ? (()=>{ const o = nd.data.filter(x=>x.ndmi!=null).map(x=>({ d:x.obs_date, v:+x.ndmi })), lv = o[o.length-1], c = psNdmiCls(lv.v);
+      return `<div class="card"><b>💧 Humedad del pasto (satélite)</b>
+        <div class="row" style="align-items:baseline;gap:10px;margin-top:4px"><b style="font-size:26px;color:var(${c[1]})">${lv.v.toFixed(2)}</b>
+          <span class="sub">${c[2]} · imagen del ${fmt(lv.d)}${days(lv.d, today()) > 12 ? " (las nubes no dejan ver desde entonces)" : ""}</span></div>
+        <div id="psNdmiChart" style="margin-top:6px"></div>
+        <div class="legend" style="margin-top:6px">${PS_NDMI.map(x=>`<span><i style="background:var(${x[1]})"></i>${x[2]}</span>`).join("")}</div>
+        <div class="sub" style="margin-top:4px">NDMI de Sentinel-2 (20 m): mide el agua en las hojas. Baja cuando el pasto se seca (verano, falta de riego) y sube con lluvia o riego. La franja azul son los días con ganado.</div></div>`; })() : ""}
     <div class="card"><b>Historia</b>
       ${years.map((y, i)=>`<details class="lac" ${i===0 ? "open" : ""}><summary><b>${y}</b> · ${ev.filter(e=>e.d.startsWith(y) && e.kind==="PASTOREO").length} pastoreos · ${ev.filter(e=>e.d.startsWith(y) && e.kind!=="PASTOREO").length} labores</summary>
         <table>${ev.filter(e=>e.d.startsWith(y)).map(e=>`<tr${e.sw ? ` data-swdel="${e.sw}"` : ""}><td>${fmt(e.d)}</td><td>${PS_ICON[e.kind] || "🔧"}</td><td>${e.html}</td></tr>`).join("")}</table></details>`).join("")
         || `<div class="empty">Sin registros</div>`}</div>`;
   if (nd.data?.length && $("psNdviChart")) psNdviChart($("psNdviChart"), nd.data.map(x=>({ d:x.obs_date, v:+x.ndvi })), oc.data || []);
+  if ($("psNdmiChart")) psNdviChart($("psNdmiChart"), nd.data.filter(x=>x.ndmi!=null).map(x=>({ d:x.obs_date, v:+x.ndmi })), oc.data || [],
+    { lo:-0.2, hi:0.6, ref:PS_NDMI[1][0], cls:psNdmiCls, color:"--milk" });
 }
 
 // ── Formularios: labor · mover lote · aforo · lluvia (sin señal quedan en el celular) ──
@@ -2054,24 +2064,31 @@ let psMapObj = null, psMapDay = null, psMapMode = "rest", psNdvi = {};
 // verdor (NDVI de Sentinel-2): < 0,5 recién pastoreado · 0,5–0,65 recuperándose · 0,65–0,75 casi listo · ≥ 0,75 listo
 const PS_NDVI = [[0.75, "--s0", "listo"], [0.65, "--c3", "casi listo"], [0.5, "--s2", "recuperándose"], [-1, "--s4", "recién pastoreado"]];
 const psNdviCls = v => PS_NDVI.find(x=>v >= x[0]);
+// humedad (NDMI de Sentinel-2 = agua en las hojas). Calibrado con 13 meses (oct 2025–nov 2026) de las dos fincas:
+// mediana 0,41 · 25 % más bajo < 0,28 · 10 % más bajo < 0,17. Con estos cortes: ~52 % bien, ~19 % normal, ~15 % secándose, ~14 % seco.
+const PS_NDMI = [[0.4, "--milk", "bien de agua"], [0.3, "--c3", "normal"], [0.2, "--s2", "secándose"], [-1, "--s4", "seco / estrés"]];
+const psNdmiCls = v => PS_NDMI.find(x=>v >= x[0]);
 async function psLoadNdvi(farm){
   if (psNdvi[farm]) return psNdvi[farm];
-  const r = await psAll(()=>sb.from("paddock_ndvi").select("paddock_id,obs_date,ndvi").eq("farm_id", farm).eq("haze", false)
+  let r = await psAll(()=>sb.from("paddock_ndvi").select("paddock_id,obs_date,ndvi,ndmi").eq("farm_id", farm).eq("haze", false)
     .gte("obs_date", addDays(today(), -400)).order("obs_date"));
-  return psNdvi[farm] = r.error ? [] : r.data.map(x=>({ id:x.paddock_id, d:x.obs_date, v:+x.ndvi }));
+  if (r.error) r = await psAll(()=>sb.from("paddock_ndvi").select("paddock_id,obs_date,ndvi").eq("farm_id", farm).eq("haze", false)   // sin la columna ndmi todavía
+    .gte("obs_date", addDays(today(), -400)).order("obs_date"));
+  return psNdvi[farm] = r.error ? [] : r.data.map(x=>({ id:x.paddock_id, d:x.obs_date, v:+x.ndvi, m:x.ndmi==null ? null : +x.ndmi }));
 }
 // curva de verdor con franjas en los días de pastoreo
-function psNdviChart(box, obs, occ){
+function psNdviChart(box, obs, occ, o = {}){
+  const lo = o.lo ?? 0.2, hi = o.hi ?? 1, ref = o.ref ?? 0.75, cls = o.cls || psNdviCls, ln = o.color || "--s0";
   const W = Math.max(300, Math.round(box.clientWidth) || 600), H = 180, L = 30, R = 8, T = 10, B = 22;
   const t = d => new Date(d + "T12:00").getTime(), t0 = t(obs[0].d), t1 = Math.max(t(obs[obs.length-1].d), t0 + 864e5);
-  const X = ms => L + (ms - t0)/(t1 - t0)*(W - L - R), Y = v => T + (1 - (v - 0.2)/0.8)*(H - T - B);
+  const X = ms => L + (ms - t0)/(t1 - t0)*(W - L - R), Y = v => T + (1 - (Math.max(lo, Math.min(hi, v)) - lo)/(hi - lo))*(H - T - B);
   let g = "";
   occ.filter(o=>t(o.exit_date) >= t0).forEach(o=>{ const a = Math.max(t0, t(o.entry_date)), b = Math.min(t1, t(o.exit_date) + 864e5);
     g += `<rect x="${X(a)}" y="${T}" width="${Math.max(2, X(b) - X(a))}" height="${H - T - B}" fill="var(--milk)" fill-opacity=".3"/>`; });
-  [0.2, 0.4, 0.6, 0.8, 1].forEach(v=>{ g += `<line x1="${L}" x2="${W - R}" y1="${Y(v)}" y2="${Y(v)}" stroke="currentColor" stroke-opacity=".1"/><text x="${L - 4}" y="${Y(v) + 4}" text-anchor="end">${v.toFixed(1)}</text>`; });
-  g += `<line x1="${L}" x2="${W - R}" y1="${Y(0.75)}" y2="${Y(0.75)}" stroke="var(--s0)" stroke-dasharray="4 3" stroke-opacity=".7"/>`;
-  g += `<polyline points="${obs.map(o=>`${X(t(o.d))},${Y(o.v)}`).join(" ")}" fill="none" stroke="var(--s0)" stroke-width="2"/>`;
-  obs.forEach(o=>{ g += `<circle cx="${X(t(o.d))}" cy="${Y(o.v)}" r="2.6" fill="var(${psNdviCls(o.v)[1]})"><title>${fmt(o.d)} · ${o.v.toFixed(2)}</title></circle>`; });
+  for (let k = 0; k <= 4; k++){ const v = lo + (hi - lo)*k/4; g += `<line x1="${L}" x2="${W - R}" y1="${Y(v)}" y2="${Y(v)}" stroke="currentColor" stroke-opacity=".1"/><text x="${L - 4}" y="${Y(v) + 4}" text-anchor="end">${v.toFixed(1)}</text>`; }
+  g += `<line x1="${L}" x2="${W - R}" y1="${Y(ref)}" y2="${Y(ref)}" stroke="var(${ln})" stroke-dasharray="4 3" stroke-opacity=".7"/>`;
+  g += `<polyline points="${obs.map(p=>`${X(t(p.d))},${Y(p.v)}`).join(" ")}" fill="none" stroke="var(${ln})" stroke-width="2"/>`;
+  obs.forEach(p=>{ g += `<circle cx="${X(t(p.d))}" cy="${Y(p.v)}" r="2.6" fill="var(${cls(p.v)[1]})"><title>${fmt(p.d)} · ${p.v.toFixed(2)}</title></circle>`; });
   const mo = new Date(t0); mo.setDate(1); mo.setMonth(mo.getMonth() + 1);
   for (; mo.getTime() <= t1; mo.setMonth(mo.getMonth() + 2)) g += `<text x="${X(mo.getTime())}" y="${H - 6}" text-anchor="middle">${MES[mo.getMonth()]}</text>`;
   box.innerHTML = `<svg viewBox="0 0 ${W} ${H}" width="100%" style="color:var(--ink);display:block;font-size:11px">${g}</svg>`;
@@ -2093,7 +2110,7 @@ async function renderMap(box){
   box.innerHTML = `<b>🗺️ Mapa</b>
     <div class="row" style="align-items:center;margin:6px 0"><button class="btn ghost" data-psday="-1" style="flex:0 0 52px">‹</button>
       <input type="date" id="psDay" value="${psMapDay}" max="${today()}"><button class="btn ghost" data-psday="1" style="flex:0 0 52px">›</button></div>
-    <div class="sheet" style="padding:0;background:none;max-height:none;margin-bottom:6px">${seg("psMapM", [["rest","Días de descanso"],["ndvi","🛰️ Verdor (satélite)"]], psMapMode)}</div>
+    <div class="sheet" style="padding:0;background:none;max-height:none;margin-bottom:6px">${seg("psMapM", [["rest","Días de descanso"],["ndvi","🛰️ Verdor"],["ndmi","💧 Humedad"]], psMapMode)}</div>
     <div id="psMap" style="height:420px;border-radius:12px;overflow:hidden"></div>
     <div class="legend" id="psMapLeg" style="margin-top:8px"></div>
     <div class="sub" id="psDayTxt" style="margin-top:4px"></div>`;
@@ -2128,19 +2145,21 @@ async function renderMap(box){
     shapes.forEach(g=>{
       const p = psList.find(x=>x.id===g.id), lots = on[g.id], rest = lastOut[g.id] ? days(lastOut[g.id], D) : null;
       // verdor: la imagen más reciente hasta ese día (máx. 20 días antes)
-      const nv = psMapMode==="ndvi" ? nd.filter(x=>x.id===g.id && x.d <= D && days(x.d, D) <= 20).pop() : null;
-      const c = psMapMode==="ndvi" ? (nv ? psNdviCls(nv.v)[1] : "--line")
+      const sat = psMapMode==="ndvi" || psMapMode==="ndmi", hum = psMapMode==="ndmi";
+      const nv = sat ? nd.filter(x=>x.id===g.id && x.d <= D && days(x.d, D) <= 20 && (!hum || x.m!=null)).pop() : null;
+      const val = nv ? (hum ? nv.m : nv.v) : null;
+      const c = sat ? (nv ? (hum ? psNdmiCls(val) : psNdviCls(val))[1] : "--line")
         : lots ? "--milk" : rest==null ? "--line" : rest < PS_TARGET*0.6 ? "--s4" : rest < PS_TARGET ? "--s2" : "--s0";
       const poly = L.polygon(g.geom, { color: lots ? "#fff" : css(c), weight: lots ? 3 : 1.5, fillColor: css(c), fillOpacity: lots ? .25 : .4 }).addTo(layer);
-      poly.bindTooltip(`${esc(p.number)}${lots ? " · " + esc([...lots].join(" + ")) : ""}${nv ? " · " + nv.v.toFixed(2) : ""}`, { permanent:true, direction:"center", className:"psmaplbl" + (lots ? " on" : "") });
-      poly.bindPopup(`<b>${esc(p.predio)} ${esc(p.number)}</b><br>${lots ? "Con " + esc([...lots].join(" + ")) + (heads[g.id] ? ` · ${heads[g.id]} animales` : "") : rest==null ? "Sin pastoreos" : rest + " d de descanso"}${nv ? `<br>Verdor ${nv.v.toFixed(2)} (${psNdviCls(nv.v)[2]}, imagen ${fmt(nv.d)})` : ""}<br><a href="#pastos/${p.id}">Ver hoja de vida</a>`);
+      poly.bindTooltip(`${esc(p.number)}${lots ? " · " + esc([...lots].join(" + ")) : ""}${nv ? " · " + val.toFixed(2) : ""}`, { permanent:true, direction:"center", className:"psmaplbl" + (lots ? " on" : "") });
+      poly.bindPopup(`<b>${esc(p.predio)} ${esc(p.number)}</b><br>${lots ? "Con " + esc([...lots].join(" + ")) + (heads[g.id] ? ` · ${heads[g.id]} animales` : "") : rest==null ? "Sin pastoreos" : rest + " d de descanso"}${nv ? `<br>Verdor ${nv.v.toFixed(2)} (${psNdviCls(nv.v)[2]}, imagen ${fmt(nv.d)})${nv.m!=null ? `<br>Humedad ${nv.m.toFixed(2)} (${psNdmiCls(nv.m)[2]})` : ""}` : ""}<br><a href="#pastos/${p.id}">Ver hoja de vida</a>`);
       if (lots) psCowsIn(g, heads[g.id]).forEach(([pt, flip])=>L.marker(pt, { icon:L.divIcon({ className:"pscow", html:PS_COW(flip), iconSize:[26, 18], iconAnchor:[13, 9] }),
         interactive:false, keyboard:false }).addTo(layer));
     });
-    const lastImg = nd.filter(x=>x.d <= D).map(x=>x.d).pop();
-    $("psMapLeg").innerHTML = psMapMode==="ndvi"
-      ? PS_NDVI.map(x=>`<span><i style="background:var(${x[1]})"></i>${x[2]}</span>`).join("") + `<span><i style="background:var(--line)"></i>sin imagen (nubes)</span>`
-        + `<span class="sub" style="width:100%">${lastImg ? "Última imagen hasta ese día: " + fmt(lastImg) : nd.length ? "Sin imágenes hasta ese día" : "Aún no hay datos satelitales: corre ACTUALIZAR_SATELITE.bat"}</span>`
+    const hum = psMapMode==="ndmi", lastImg = nd.filter(x=>x.d <= D && (!hum || x.m!=null)).map(x=>x.d).pop();
+    $("psMapLeg").innerHTML = psMapMode==="ndvi" || hum
+      ? (hum ? PS_NDMI : PS_NDVI).map(x=>`<span><i style="background:var(${x[1]})"></i>${x[2]}</span>`).join("") + `<span><i style="background:var(--line)"></i>sin imagen (nubes)</span>`
+        + `<span class="sub" style="width:100%">${lastImg ? "Última imagen hasta ese día: " + fmt(lastImg) : nd.length ? "Sin imágenes hasta ese día" : "Aún no hay datos satelitales: corre ACTUALIZAR_SATELITE.bat"}${hum ? " · Humedad = NDMI (agua en las hojas)" : ""}</span>`
       : `<span><i style="background:var(--milk)"></i>con ganado ese día</span><span><i style="background:var(--s4)"></i>&lt; ${Math.round(PS_TARGET*0.6)} d</span>
         <span><i style="background:var(--s2)"></i>&lt; ${PS_TARGET} d</span><span><i style="background:var(--s0)"></i>listo</span>`;
     const busy = Object.entries(on).filter(([k])=>shapes.some(g=>g.id===+k));
@@ -4327,9 +4346,14 @@ $("rnBody").addEventListener("click", async e=>{
 // ═══════════════════════ LISTAS DE TRABAJO ═══════════════
 // Desde el último parto: concepción = último servicio de una vaca preñada; parto esperado = concepción + 283 d;
 // secado = parto esperado − 60 d. Se guarda la última descarga para ver sin señal.
-const LS_GEST = 282, LS_DRY = 60, LS_DPSEC = 220;   // como Interherd: parto = servicio + 282 d · secado = parto − 60 · DPSEC = servicio + 220
+const LS_GEST = 282, LS_DRY = 60, LS_DPSEC = 220;
+// RESINCRO (OVS2, Juan 11/11/2026): las que entran a Ovsynch se inseminan el día 10. Si a los 25 días de esa IA no han repetido
+// (otro servicio) ni tienen diagnóstico, se les pone el primer Gestar (día 0 del OVS2), 7 días antes del chequeo. A los 32 días va
+// la ECO1: si sale negativa sigue el OVS2 (PGF el día del chequeo). Si repiten en el camino, salen del protocolo.
+const RS_DAYS = 25, RS_WIN = 3, RS_DOSE = 3;   // como Interherd: parto = servicio + 282 d · secado = parto − 60 · DPSEC = servicio + 220
 const LS_LISTS = [
   ["chequeo", "🩺 Para chequeo", "Las que entran al chequeo reproductivo de esa fecha (mismo cálculo del módulo Chequeo): para marcarlas el día antes", ""],
+  ["resincro", "💉 OVS2", "Inseminadas a tiempo fijo (Ovsynch) hace 25 días que no han repetido ni tienen diagnóstico: primer Gestar del OVS2, 7 días antes del chequeo", "resincro"],
   ["secar", "🌙 Para secar", "Preñadas en lactancia con secado en los próximos 14 días (o ya pasado)", "dry_off"],
   ["parto", "🐄 Próximas a parto", "Parto esperado en los próximos 21 días (o ya pasado)", ""],
   ["sinserv", "⏳ Sin servir", "Informativa · en lactancia, vacías, más de 60 días de paridas y sin servicio (anestro)", "service"],
@@ -4540,8 +4564,10 @@ async function lsLoad(force){
       .gte("event_date", addDays(today(), -600)).in("event_type", ["service","calving","ultrasound","preg_check","repro_exam","embryo_loss","abortion","weight"]).order("event_date"));
     const lc = await sb.from("lacto_cows").select("cow_id,pen,list_date").eq("farm_id", farm);   // si falta la tabla, sin lacto
     const pl = await sb.from("cow_plans").select("cow_id,due_date,note,created_at").eq("farm_id", farm).eq("plan_type", "exrep").eq("status", "pending");
+    const rs = await sb.from("treatments_cow").select("cow_id,start_date").eq("farm_id", farm).eq("protocol", "Ovsynch").like("notes", "%resincro%").gte("start_date", addDays(today(), -60));
     if (!c.error && !e.error){ jset(key, { farm, at:Date.now(), cows:c.data, ev:e.data.map(x=>[x.cow_id, x.event_date, x.event_type, noSex(x.result), x.weight_kg, x.category]),
-      lacto: lc.error ? [] : lc.data, plans: pl.error ? [] : pl.data.map(x=>[x.cow_id, x.due_date, x.note, x.created_at.slice(0, 10)]) }); }
+      lacto: lc.error ? [] : lc.data, plans: pl.error ? [] : pl.data.map(x=>[x.cow_id, x.due_date, x.note, x.created_at.slice(0, 10)]),
+      rs: rs.error ? [] : rs.data.map(x=>[x.cow_id, x.start_date]) }); }
   }
   lsData = jget(key, null);
 }
@@ -4565,7 +4591,12 @@ function lsCompute(){
       if (pl) ck = { cat:"EXREP", prog:pl[1], note:pl[2], heifer:!(c.lactation_num > 0) && !C, del: C ? days(C, lsState.ckDate || D) : null }; }
     const ageM0 = c.birth_date ? days(c.birth_date, D)/30.44 : null;
     const doubt = !C && ageM0!=null && ageM0 < 12 ? svs.filter(e=>e.d >= c.birth_date) : [];   // servicio a una ternera: error de datos
-    return { c, C, ck, doubt, lacto: lsLactoSet().has(c.id), del: C ? days(C, D) : null, svs, sv, preg, lac, exp, dry, gest: preg && sv ? days(sv.d, D) : null,
+    // resincro: último servicio a tiempo fijo (Ovsynch), ~25 días antes del día del Gestar, sin otro servicio ni diagnóstico después
+    const G = lsState.rsDate || today();
+    const svG = svs.filter(e=>e.d <= G).pop();   // el servicio que había el día del Gestar
+    const rsDays = svG && /ovsynch/i.test(svG.c || "") && !(svG && ev.some(e=>e.d > svG.d && e.d <= G && ["ultrasound","preg_check","embryo_loss","abortion"].includes(e.t))) ? days(svG.d, G) : null;
+    const rs = rsDays!=null && Math.abs(rsDays - RS_DAYS) <= RS_WIN ? { d:rsDays, sv:svG.d, done:(lsData?.rs || []).find(([id, d])=>id===c.id && d > svG.d)?.[1] || null } : null;
+    return { c, C, ck, doubt, rs, lacto: lsLactoSet().has(c.id), del: C ? days(C, D) : null, svs, sv, preg, lac, exp, dry, gest: preg && sv ? days(sv.d, D) : null,
       ageM: c.birth_date ? days(c.birth_date, D)/30.44 : null, w: w ? +w.w : null, heifer: !(c.lactation_num > 0) && !C };
   });
 }
@@ -4649,13 +4680,13 @@ const lsLactoSet = () => (lsLactoCache?.src === lsData ? lsLactoCache : (lsLacto
 function lsPick(all, k){
   const D = today();
   const CKO = ["EXREP","ECO1","ECO2","REPETIR","DPR","DP5","DPSEC"];
-  const f = { chequeo: x=>!!x.ck, secar: x=>x.preg && x.lac && x.dry && x.dry <= addDays(D, 14) && !/^HO/i.test(x.c.pen || ""),
+  const f = { chequeo: x=>!!x.ck, resincro: x=>!!x.rs, secar: x=>x.preg && x.lac && x.dry && x.dry <= addDays(D, 14) && !/^HO/i.test(x.c.pen || ""),
     parto: x=>x.preg && x.exp && x.exp <= addDays(D, 21),
     sinserv: x=>x.lac && !x.preg && !x.svs.length && x.del > 60,
     repet: x=>!x.preg && x.svs.length >= 3,
     novillas: x=>x.heifer && !x.svs.length && !x.preg && x.ageM >= 16 && (x.w==null || x.w >= 380),
     abiertas: x=>x.lac && !x.preg && x.del > 150 }[k];
-  const sortBy = { chequeo:(a,b)=>byNum(a.c.pen||"", b.c.pen||"") || CKO.indexOf(a.ck.cat) - CKO.indexOf(b.ck.cat) || byNum(a.c.id, b.c.id),
+  const sortBy = { resincro:(a,b)=>byNum(a.c.pen||"", b.c.pen||"") || byNum(a.c.id, b.c.id), chequeo:(a,b)=>byNum(a.c.pen||"", b.c.pen||"") || CKO.indexOf(a.ck.cat) - CKO.indexOf(b.ck.cat) || byNum(a.c.id, b.c.id),
     secar:(a,b)=>a.dry.localeCompare(b.dry), parto:(a,b)=>a.exp.localeCompare(b.exp), sinserv:(a,b)=>b.del - a.del,
     repet:(a,b)=>b.svs.length - a.svs.length, novillas:(a,b)=>b.ageM - a.ageM, abiertas:(a,b)=>b.del - a.del }[k];
   return all.filter(f).sort(sortBy);
@@ -4667,6 +4698,8 @@ function lsDetail(x, k){
       + (q.prog ? `programado ${fmt(q.prog)}${q.note ? " · " + esc(q.note) : ""} · ` : "")
       + (q.cat==="EXREP" ? (q.heifer ? `novilla ${Math.floor(x.ageM||0)} m${x.w ? " · " + x.w + " kg" : ""}` : `${q.del} d de parida${q.ready===false ? " (antes de 50 d)" : ""}`) + (q.last?.r ? ` · últ. ${q.last.r}` : "")
          : q.g!=null ? `${q.g} d de servida (${fmt(q.sv.d)})` : ""); }
+  if (k==="resincro") return `IA Ovsynch ${fmt(x.rs.sv)} · <b>${x.rs.d} d</b> el ${fmt(lsState.rsDate || today())}${x.rs.d!==RS_DAYS ? ` <span style="color:var(--s3)">(lo ideal: ${RS_DAYS} d)</span>` : ""}`
+    + (x.rs.done ? ` · <span class="ok">✓ Gestar puesto ${fmt(x.rs.done)}</span>` : "");
   if (k==="secar") return `secar ${fmt(x.dry)} (${dd(x.dry)}) · ${x.gest} d preñada · parto ${fmt(x.exp)}`;
   if (k==="parto") return `parto ${fmt(x.exp)} (${dd(x.exp)}) · ${x.gest} d preñada`;
   if (k==="sinserv") return `${x.del} d de parida · sin servicio`;
@@ -4674,6 +4707,23 @@ function lsDetail(x, k){
   if (k==="novillas") return `${Math.floor(x.ageM)} meses${x.w ? ` · ${x.w} kg` : " · sin peso"}`;
   if (k==="abiertas") return `${x.del} d de parida · ${x.svs.length} servicio${x.svs.length===1?"":"s"}`;
   return "";
+}
+// resincro: primer Gestar del OVS2 a las marcadas (un tratamiento "Ovsynch" día 0 por vaca: descuenta del inventario ese día)
+async function lsResincro(){
+  const s = lsState, G = s.rsDate || today(), rows = lsView(lsCompute()).filter(x=>s.sel.has(x.c.id));
+  const todo = rows.filter(x=>!x.rs.done), skip = rows.length - todo.length;
+  if (!todo.length) return toast(rows.length ? "Esas vacas ya tienen el Gestar del OVS2" : "Marca las vacas primero");
+  if (!navigator.onLine) return toast("Necesitas señal para registrar el Gestar");
+  await hsCatalog(); const code = hsCatGet().supplies.find(m=>m.code==="GESTAR") ? "GESTAR" : OVS_GNRH[0];
+  if (!confirm(`Gestar ${RS_DOSE} mL el ${fmt(G)} a ${todo.length} vaca${todo.length===1 ? "" : "s"} (día 0 del OVS2)?${skip ? `\n${skip} ya lo tenían y no se repiten.` : ""}\n\n${todo.map(x=>x.c.id).join(", ")}`)) return;
+  const uid = () => crypto.randomUUID ? crypto.randomUUID() : String(Date.now()) + Math.random();
+  const tx = todo.map(x=>({ client_id:uid(), farm_id:s.farm, cow_id:x.c.id, start_date:G, diagnosis:"Ovsynch", protocol:"Ovsynch",
+    prescribed_by: isAdmin ? "Juan (veterinario)" : "Chequeo", notes:`Día 0 del OVS2 (resincro, IA Ovsynch ${fmt(x.rs.sv)})` }));
+  const { data:t, error } = await sb.from("treatments_cow").insert(tx).select("id");
+  if (error || !t?.length) return toast("No se pudo registrar: " + (error?.message || "sin permiso"));
+  const e2 = (await sb.from("treatment_items").insert(t.map(x=>({ treatment_id:x.id, supply_code:code, dose:RS_DOSE, unit:"mL", route:"IM", every_hours:24, days:1 })))).error;
+  if (e2) return toast("Se registró, pero sin el producto: " + e2.message);
+  toast(`Gestar del OVS2 registrado ✓ (${todo.length} vacas)`); s.sel = new Set(); await lsLoad(true); renderListas();
 }
 // tratamientos del chequeo que faltan por aplicar (desde hoy): por día, con totales de producto, y PDF / compartir
 let lsTxOpen = false, lsTxRows = null;
@@ -4726,65 +4776,130 @@ async function lsTxPdf(){
   if (navigator.canShare?.({ files:[file] })){ try{ await navigator.share({ files:[file], title:file.name }); return; }catch(e){ if (e.name==="AbortError") return; } }
   const a = document.createElement("a"); a.href = URL.createObjectURL(file); a.download = file.name; document.body.appendChild(a); a.click(); setTimeout(()=>{ URL.revokeObjectURL(a.href); a.remove(); }, 2000);
 }
-// ── Reporte del chequeo (como el de Interherd): por lote, EXREP · ECO · DPR · REABS, con filtros y PDF ──
-const LS_RP_F = [["","Todas"],["ovs","Ovsynch"],["tx","A tratar"],["vit","Vitaminas"],["bano","Baños"]];
+// ── Reporte del chequeo: filtros por hato, evento y tratamiento; Ovsynch y OVS2 como un solo protocolo
+//    (fechas, medicamento, dosis y números de las vacas); cada resultado con su tratamiento al frente. PDF tipo Interherd ──
+const LS_RP_F = [["","Todos"],["ovs","Sincronizadas"],["tx","Con tratamiento"],["vit","Vitaminas"],["bano","Baños"]];
 const LS_RP_SEC = [["EXREP","EXREP"],["ECO","ECO"],["DPR","DPR"],["REABS","REABS"]];
-let lsRp = { open:false, date:null, farm:null, rows:null, f:"" };
+const LS_RP_EV = ["EXREP","ECO1","ECO2","DPR","DP5","DPSEC","REABS"];
+const LS_PEN_N = { "R 1":"R1", "R 2":"R2", "R 3":"R3", JCAL:"Juncal", PARAI:"Paraíso", NI:"Novillas" };
+let lsRp = { open:false, date:null, farm:null, rows:null, f:"", pen:"", ev:"" };
 async function lsRpLoad(){
   const box = $("lsRp"); if (!box) return;
   if (!navigator.onLine){ box.innerHTML = `<div class="empty">Necesitas señal.</div>`; return; }
-  const farm = lsState.farm;
-  if (lsRp.farm!==farm){ lsRp.farm = farm; lsRp.date = null; }
-  if (!lsRp.date){   // el último chequeo de la finca
-    const { data } = await sb.from("repro_checks").select("check_date").eq("farm_id", farm).order("check_date", { ascending:false }).limit(1);
-    lsRp.date = data?.[0]?.check_date || today();
+  const farm = ckFarmSel();
+  if (lsRp.farm!==farm){ lsRp.farm = farm; lsRp.date = null; lsRp.dates = null; lsRp.pen = ""; lsRp.ev = ""; }
+  if (!lsRp.dates){   // todas las fechas de chequeo de la finca (la más reciente primero)
+    const { data } = await sb.from("repro_checks").select("check_date").eq("farm_id", farm).order("check_date", { ascending:false }).limit(1000);
+    lsRp.dates = (data || []).map(x=>x.check_date);
   }
-  const { data, error } = await psAll(()=>sb.from("cow_events").select("cow_id,event_type,result,category,days_value,comments,cows!inner(farm_id,pen)")
-    .eq("cows.farm_id", farm).eq("event_date", lsRp.date).in("event_type", ["repro_exam","ultrasound","preg_check","embryo_loss","abortion"]).order("id"));
-  if (error){ box.innerHTML = `<div class="empty">${esc(error.message)}</div>`; return; }
-  // una fila por vaca y sección (si tiene varios resultados de EXREP se juntan)
+  if (!lsRp.date) lsRp.date = lsRp.dates[0] || today();
+  const D = lsRp.date;
+  const [ev, tx, pl, sv] = await Promise.all([
+    psAll(()=>sb.from("cow_events").select("cow_id,event_type,result,category,days_value,comments,cows!inner(farm_id,pen)")
+      .eq("cows.farm_id", farm).eq("event_date", D).in("event_type", ["repro_exam","ultrasound","preg_check","embryo_loss","abortion"]).order("id")),
+    // tratamientos del chequeo (ese día) y Ovsynch / OVS2 que arrancan ese día (hasta el día 10)
+    sb.from("treatments_cow").select("cow_id,start_date,protocol,notes,treatment_items(supply_code,dose,unit)").eq("farm_id", farm)
+      .or("protocol.like.Chequeo*,protocol.eq.Ovsynch").gte("start_date", D).lte("start_date", addDays(D, 10)).order("start_date").limit(5000),
+    sb.from("cow_plans").select("cow_id,due_date,note").eq("farm_id", farm).eq("plan_type", "inseminar").gte("due_date", D).lte("due_date", addDays(D, 11)),
+    // servicios después del chequeo: la que se insemina antes de la fecha del Ovsynch / OVS2 sale del protocolo
+    sb.from("cow_events").select("cow_id,event_date,cows!inner(farm_id)").eq("cows.farm_id", farm).eq("event_type", "service").gt("event_date", D).lte("event_date", addDays(D, 11)).order("event_date")]);
+  if (ev.error){ box.innerHTML = `<div class="empty">${esc(ev.error.message)}</div>`; return; }
+  await hsCatalog(); const sup = c => hsSupply(c)?.name || c;
   const by = {};
-  (data || []).forEach(e=>{
+  (ev.data || []).forEach(e=>{
     const sec = e.event_type==="repro_exam" ? "EXREP" : e.event_type==="ultrasound" ? "ECO" : e.event_type==="preg_check" ? "DPR" : "REABS";
-    const r = by[sec + "|" + e.cow_id] ||= { sec, id:e.cow_id, pen:e.cows?.pen || "—", res:[], com:[], days:null, due:null };
+    const evn = sec==="ECO" ? (e.category==="ECO2" ? "ECO2" : "ECO1") : sec==="DPR" ? (/^DP(5|SEC)$/.test(e.category || "") ? e.category : "DPR") : sec;
+    const r = by[evn + "|" + e.cow_id] ||= { sec, ev:evn, id:e.cow_id, pen:e.cows?.pen || "—", res:[], com:[], days:null, due:null };
     const res = sec==="REABS" ? (e.event_type==="abortion" ? "Aborto" : "ME") : noSex(e.result) || "";
     if (res && !r.res.includes(res)) r.res.push(res);
-    const stage = (sec==="ECO" && e.category==="ECO2") || (sec==="DPR" && /^DP(5|SEC)$/.test(e.category || "")) ? e.category : "";
-    [stage, sec==="REABS" ? (e.comments || "").replace(/^Muerte embrionaria en |^Aborto en /, "") : e.comments].filter(Boolean).forEach(c=>{ if (!r.com.includes(c)) r.com.push(c); });
-    if (sec==="DPR" && +e.days_value > 0){ r.days = +e.days_value; r.due = addDays(addDays(lsRp.date, -r.days), LS_GEST); }
+    const c = sec==="REABS" ? (e.comments || "").replace(/^Muerte embrionaria |^Aborto /, "") : e.comments;
+    (c || "").split(" · ").map(x=>x.trim()).filter(x=>x && !/^(PGF2|Antibiótico|Vitaminas|Baño|OVSYNCH|OVS2)(, .*)?$/i.test(x)).forEach(x=>{ if (!r.com.includes(x)) r.com.push(x); });
+    if ((sec==="DPR" || sec==="ECO") && +e.days_value > 0){ r.days = +e.days_value; if (sec==="DPR") r.due = addDays(addDays(D, -r.days), LS_GEST); }
   });
+  // tratamientos: producto y dosis de lo del chequeo; el Ovsynch solo como etiqueta
+  const txOf = {}, ovsOf = {}, prot = {};
+  (tx.data || []).forEach(t=>{
+    if (t.protocol==="Ovsynch"){
+      const k = /OVS2/.test(t.notes || "") ? "OVS2" : "Ovsynch", n = +((t.notes || "").match(/Día (\d+)/) || [])[1];
+      ovsOf[t.cow_id] = k; const P = prot[k] ||= { k, steps:{}, cows:new Set() }; P.cows.add(t.cow_id);
+      (t.treatment_items || []).forEach(i=>{ const st = P.steps[t.start_date] ||= { d:t.start_date, n, items:{} };
+        const key = sup(i.supply_code) + "|" + (+i.dose || 0) + "|" + (i.unit || ""); st.items[key] = (st.items[key] || 0) + 1; });
+    } else if (t.start_date===D) (t.treatment_items || []).forEach(i=>(txOf[t.cow_id] ||= []).push(`${sup(i.supply_code)} ${(+i.dose || 0).toLocaleString("es-CO")} ${i.unit || ""}`.trim()));
+  });
+  const iaOf = Object.fromEntries((pl.data || []).map(p=>[p.cow_id, p.due_date]));
+  const svOf = {}; (sv.data || []).forEach(x=>{ svOf[x.cow_id] ||= x.event_date; });
   lsRp.rows = Object.values(by).map(r=>({ ...r, res:r.res.join(" + "), com:r.com.join(" · ") }));
-  // de qué es cada vaca (por cualquiera de sus filas): ovsynch, a tratar, vitaminas, baño
-  const tag = {}; lsRp.rows.forEach(r=>{ const t = tag[r.id] ||= {}, x = `${r.res} ${r.com}`;
-    if (/OVS/i.test(x)) t.ovs = true; if (/PGF|antibi|vitamin|baño|\bDIB\b/i.test(r.com)) t.tx = true;
-    if (/vitamin/i.test(r.com)) t.vit = true; if (/baño/i.test(r.com)) t.bano = true; });
+  // solo los protocolos de vacas de este chequeo
+  const inCheck = new Set(lsRp.rows.map(r=>r.id));
+  lsRp.early = {};
+  lsRp.protos = Object.values(prot).map(P=>{ const ia = [...new Set([...P.cows].map(c=>iaOf[c]).filter(Boolean))].sort()[0] || addDays(D, 10);
+      // inseminada antes del día de inseminar del protocolo: sale del Ovsynch / OVS2
+      const cows = [...P.cows].filter(c=>inCheck.has(c) && !(svOf[c] && svOf[c] < ia));
+      [...P.cows].filter(c=>svOf[c] && svOf[c] < ia).forEach(c=>{ lsRp.early[c] = svOf[c]; delete ovsOf[c]; });
+      return { k:P.k, cows, steps:Object.values(P.steps).sort((a, b)=>a.d.localeCompare(b.d)), ia }; })
+    .filter(P=>P.cows.length).sort((a, b)=>a.k==="Ovsynch" ? -1 : 1);
+  lsRp.tx = txOf; lsRp.ovs = ovsOf;
+  const tag = {}; lsRp.rows.forEach(r=>{ const t = tag[r.id] ||= {}, x = (txOf[r.id] || []).join(" ");
+    if (ovsOf[r.id] || /OVS/i.test(r.res)) t.ovs = true; if (txOf[r.id]) t.tx = true;
+    if (/belamyl|vitamin|catosal|ademin|complejo/i.test(x)) t.vit = true; if (/baño|desinfect|yodo|sellador/i.test(x)) t.bano = true; });
+  // vitaminas y baños también por la categoría del producto en el inventario
+  (tx.data || []).filter(t=>t.start_date===D && t.protocol!=="Ovsynch").forEach(t=>{ const g = tag[t.cow_id] ||= {};
+    if (/Vitaminas/.test(t.protocol)) g.vit = true; if (/Baño/.test(t.protocol)) g.bano = true; });
   lsRp.tag = tag;
   lsRpRender();
 }
-const lsRpView = () => (lsRp.rows || []).filter(r=>!lsRp.f || lsRp.tag[r.id]?.[lsRp.f]);
+const lsRpView = () => (lsRp.rows || []).filter(r=>(!lsRp.f || lsRp.tag[r.id]?.[lsRp.f]) && (!lsRp.pen || r.pen===lsRp.pen) && (!lsRp.ev || r.ev===lsRp.ev));
+const lsRpTone = (ev, res) => /^(Positivo|Cargada)/.test(res) ? "--s0" : /^(Negativo|Vacía|ME|Aborto)/.test(res) ? "--s4" : /^Dudoso/.test(res) ? "--s2"
+  : ev==="EXREP" && /SUCIA|METRITIS|PIOMETRA|RETE/.test(res) ? "--s3" : "--muted";
 function lsRpRender(){
   const box = $("lsRp"); if (!box) return;
-  const rows = lsRpView(), pens = [...new Set(rows.map(r=>r.pen))].sort(byNum), n = f => new Set((lsRp.rows || []).filter(r=>!f || lsRp.tag[r.id]?.[f]).map(r=>r.id)).size;
-  const tbl = (sec, rs) => `<div class="sub" style="margin-top:6px;color:var(--ink)"><b>${sec}</b> (${rs.length})</div>
-    <table class="ivt" style="font-size:13px"><tr><th>Animal</th><th>Resultado</th>${sec==="DPR" ? "<th>Días</th><th>F. parto</th>" : ""}<th>Comentarios</th></tr>
-    ${rs.map(r=>`<tr><td><button class="lnk" data-cow="${esc(r.id)}"><b>${esc(r.id)}</b></button></td><td>${esc(r.res)}</td>${sec==="DPR" ? `<td>${r.days ?? ""}</td><td>${r.due ? fmt(r.due) : ""}</td>` : ""}<td class="sub">${esc(r.com)}</td></tr>`).join("")}</table>`;
-  box.innerHTML = `<div class="row" style="align-items:center;margin-top:8px"><span class="sub" style="flex:none">Fecha del chequeo</span><input type="date" id="lsRpDate" value="${lsRp.date}" max="${today()}"></div>
-    <div class="chips sm ckpan" style="padding:0;margin-top:6px"><div class="chips sm">${LS_RP_F.map(([k, t])=>`<button class="${lsRp.f===k ? "on" : ""}" data-lsrpf="${k}">${t} (${n(k)})</button>`).join("")}</div></div>
-    ${rows.length ? pens.map(p=>{ const rp = rows.filter(r=>r.pen===p);
-      return `<details class="lac" ${pens.length < 3 ? "open" : ""}><summary><b>CHEQUEO ${esc(p)}</b> <span class="sub">${LS_RP_SEC.map(([k])=>{ const c = rp.filter(r=>r.sec===k).length; return c ? `${k} ${c}` : ""; }).filter(Boolean).join(" · ")}</span></summary>
-        ${LS_RP_SEC.map(([k])=>{ const rs = rp.filter(r=>r.sec===k).sort((a, b)=>byNum(a.id, b.id)); return rs.length ? tbl(k, rs) : ""; }).join("")}</details>`; }).join("")
-      + `<div class="row" style="gap:8px;margin-top:10px"><button class="btn ghost" id="lsRpPdf">📄 PDF</button></div>`
-      : `<div class="empty">${(lsRp.rows || []).length ? "Ninguna vaca con ese filtro" : `Sin resultados de chequeo el ${fmt(lsRp.date)}`}</div>`}`;
+  const all = lsRp.rows || [], base = all.filter(r=>!lsRp.f || lsRp.tag[r.id]?.[lsRp.f]);
+  const pens = [...new Set(all.map(r=>r.pen))].sort(byNum), inPen = base.filter(r=>!lsRp.pen || r.pen===lsRp.pen);
+  const rows = lsRpView(), cows = new Set(rows.map(r=>r.id)), nCow = f => new Set(all.filter(r=>!f || lsRp.tag[r.id]?.[f]).map(r=>r.id)).size;
+  const chip = (attr, v, cur, t) => `<button class="${cur===v ? "on" : ""}" ${attr}="${esc(v)}">${t}</button>`;
+  const kpi = (n, t) => `<div><b>${n}</b><span>${t}</span></div>`;
+  const preg = rows.filter(r=>/^(Positivo|Cargada)/.test(r.res)).length;
+  const fd = d => new Date(d + "T12:00").toLocaleDateString("es-CO", { weekday:"short", day:"numeric", month:"short" });
+  const protos = (lsRp.protos || []).map(P=>{ const mine = P.cows.filter(c=>cows.has(c)).sort(byNum); if (!mine.length) return "";
+    return `<div class="hscard" style="margin-top:10px"><div style="display:flex;justify-content:space-between;align-items:baseline;gap:8px">
+        <b style="font-size:16px">💉 ${P.k==="OVS2" ? "OVS2" : "Ovsynch"}</b><span class="sub">${mine.length} vaca${mine.length===1 ? "" : "s"}</span></div>
+      <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(112px,1fr));gap:6px;margin-top:8px">
+        ${P.steps.map(st=>`<div style="border:1px solid var(--line);border-radius:10px;padding:7px 9px"><div class="sub">${st.n!=null && !isNaN(st.n) ? `Día ${st.n} · ` : ""}${fd(st.d)}</div>
+          ${Object.keys(st.items).map(k=>{ const [n, dose, u] = k.split("|"); return `<b style="font-size:14px">${esc(n)} ${(+dose).toLocaleString("es-CO")} ${esc(u)}</b><div class="sub">${(+dose * mine.length).toLocaleString("es-CO")} ${esc(u)} en total</div>`; }).join("")}</div>`).join("")}
+        ${P.ia ? `<div style="border:1px solid var(--accent);border-radius:10px;padding:7px 9px;background:var(--soft)"><div class="sub">Día 10 · ${fd(P.ia)}</div><b style="font-size:14px;color:var(--accent)">Inseminar</b><div class="sub">${mine.length} vacas</div></div>` : ""}</div>
+      <div class="list" style="margin-top:8px">${mine.map(c=>`<button class="chip" data-cow="${esc(c)}"><b>${esc(c)}</b></button>`).join("")}</div></div>`; }).join("");
+  const evs = LS_RP_EV.filter(e=>rows.some(r=>r.ev===e));
+  const ds = [...new Set([lsRp.date, ...(lsRp.dates || [])])].sort().reverse();
+  const dl = d => new Date(d + "T12:00").toLocaleDateString("es-CO", { weekday:"short", day:"numeric", month:"short", year:"numeric" });
+  box.innerHTML = `<div class="row" style="align-items:center;margin-top:8px"><span class="sub" style="flex:none">Chequeo</span>
+      <select id="lsRpDate" style="flex:1">${ds.map((d, i)=>`<option value="${d}" ${d===lsRp.date ? "selected" : ""}>${dl(d)}${i===0 ? " · el último" : ""}</option>`).join("")}</select></div>
+    <div class="sub" style="margin-top:8px">Hato</div>
+    <div class="chips sm ckpan" style="padding:0"><div class="chips sm">${chip("data-lsrpp", "", lsRp.pen, "Todos")}${pens.map(p=>chip("data-lsrpp", p, lsRp.pen, `${esc(LS_PEN_N[p] || p)} (${new Set(base.filter(r=>r.pen===p).map(r=>r.id)).size})`)).join("")}</div></div>
+    <div class="sub" style="margin-top:4px">Evento</div>
+    <div class="chips sm ckpan" style="padding:0"><div class="chips sm">${chip("data-lsrpe", "", lsRp.ev, "Todos")}${LS_RP_EV.filter(e=>inPen.some(r=>r.ev===e)).map(e=>chip("data-lsrpe", e, lsRp.ev, `${e} ${inPen.filter(r=>r.ev===e).length}`)).join("")}</div></div>
+    <div class="sub" style="margin-top:4px">Tratamiento</div>
+    <div class="chips sm ckpan" style="padding:0"><div class="chips sm">${LS_RP_F.map(([k, t])=>chip("data-lsrpf", k, lsRp.f, `${t} (${nCow(k)})`)).join("")}</div></div>
+    ${all.length ? `<div class="rpk" style="margin-top:10px">${kpi(cows.size, "vacas revisadas")}${kpi(preg, "preñadas (ECO+ y cargadas)")}${kpi([...cows].filter(c=>lsRp.ovs[c]).length, "sincronizadas")}${kpi([...cows].filter(c=>lsRp.tx[c]).length, "con tratamiento")}</div>` : ""}
+    ${protos}
+    ${evs.map(e=>{ const rs = rows.filter(r=>r.ev===e).sort((a, b)=>byNum(a.id, b.id));
+      return `<div class="ckpen" style="margin-top:12px">${e} <span class="sub">(${rs.length})</span></div>
+        <table class="ivt" style="font-size:14px;width:100%"><tr><th style="width:64px">Vaca</th><th>Resultado</th><th>Tratamiento</th></tr>
+        ${rs.map(r=>{ const o = lsRp.ovs[r.id], tx = lsRp.tx[r.id] || [];
+          return `<tr><td><button class="lnk" data-cow="${esc(r.id)}"><b>${esc(r.id)}</b></button><div class="sub">${esc(LS_PEN_N[r.pen] || r.pen)}</div></td>
+            <td><span class="tag" style="margin:0;background:var(${lsRpTone(e, r.res)});color:#fff">${esc(r.res.replace(/ +(Ovsyn|OVS2)$/, ""))}</span>${r.days ? `<span class="sub"> · ${r.days} d</span>` : ""}${r.due ? `<div class="sub">parto ${fmt(r.due)}</div>` : ""}${r.com ? `<div class="sub">${esc(r.com)}</div>` : ""}</td>
+            <td>${o ? `<span class="tag" style="margin:0;background:var(--soft);color:var(--ink)">${o}</span>` : ""}${lsRp.early[r.id] ? `<div class="sub">💉 inseminada ${fmt(lsRp.early[r.id])} (sale del protocolo)</div>` : ""}${tx.map(x=>`<div style="font-size:13px">${esc(x)}</div>`).join("") || (o || lsRp.early[r.id] ? "" : `<span class="sub">—</span>`)}</td></tr>`; }).join("")}</table>`; }).join("")
+      || `<div class="empty">${all.length ? "Ninguna vaca con ese filtro" : `Sin resultados de chequeo el ${fmt(lsRp.date)}`}</div>`}
+    ${rows.length ? `<div class="row" style="gap:8px;margin-top:10px"><button class="btn ghost" id="lsRpPdf">📄 PDF</button></div>` : ""}`;
 }
 // PDF igual al de Interherd: una hoja por lote, dos columnas, EXREP · ECO · DPR · REABS
 async function lsRpPdf(){
   const rows = lsRpView(); if (!rows.length) return;
   let JsPDF; try{ JsPDF = await lsLoadJsPdf(); }catch(e){ return toast("Se necesita señal la primera vez para armar el PDF"); }
-  const farm = jget("mkFarms", []).find(f=>f.id===lsState.farm), fname = farm ? farmLabel(farm) : "", flt = LS_RP_F.find(x=>x[0]===lsRp.f)[1];
+  const farm = jget("mkFarms", []).find(f=>f.id===lsRp.farm), fname = farm ? farmLabel(farm) : "", flt = [LS_RP_F.find(x=>x[0]===lsRp.f)[1], lsRp.ev].filter(x=>x && x!=="Todos").join(" · ");
   const doc = new JsPDF({ unit:"mm", format:"a4" }), M = 12, CW = 90, GAP = 6, TOP = 26, BOT = 285, RH = 5.2;
   const now = new Date().toLocaleString("es-CO", { day:"2-digit", month:"2-digit", year:"numeric", hour:"2-digit", minute:"2-digit" });
   let page = 0, col = 0, y = TOP, pen = "";
-  const head = () => { page++; doc.setFont("helvetica", "bold"); doc.setFontSize(15); doc.setTextColor(0); doc.text(`CHEQUEO ${pen}${lsRp.f ? " · " + flt.toUpperCase() : ""}`, M, 14);
+  const head = () => { page++; doc.setFont("helvetica", "bold"); doc.setFontSize(15); doc.setTextColor(0); doc.text(`CHEQUEO ${pen}${flt ? " · " + flt.toUpperCase() : ""}`, M, 14);
     doc.setFont("helvetica", "normal"); doc.setFontSize(10); doc.text(`${lsRp.date.split("-").reverse().join("/")}${fname ? " · " + fname : ""}`, M, 19.5);
     doc.setFontSize(8); doc.text(`${now}  Página ${page}`, 210 - M, 12, { align:"right" }); doc.setLineWidth(0.4); doc.line(M, 22, 210 - M, 22); doc.setLineWidth(0.2); };
   const next = () => { if (col===0){ col = 1; y = TOP; } else { doc.addPage(); col = 0; y = TOP; head(); } };
@@ -4809,7 +4924,7 @@ async function lsRpPdf(){
       y += 4;
     }
   }
-  const file = new File([doc.output("blob")], `Chequeo ${fname} ${lsRp.date}${lsRp.f ? " " + flt : ""}.pdf`, { type:"application/pdf" });
+  const file = new File([doc.output("blob")], `Chequeo ${fname} ${lsRp.date}${flt ? " " + flt : ""}.pdf`, { type:"application/pdf" });
   if (navigator.canShare?.({ files:[file] })){ try{ await navigator.share({ files:[file], title:file.name }); return; }catch(e){ if (e.name==="AbortError") return; } }
   const a = document.createElement("a"); a.href = URL.createObjectURL(file); a.download = file.name; document.body.appendChild(a); a.click(); setTimeout(()=>{ URL.revokeObjectURL(a.href); a.remove(); }, 2000);
 }
@@ -4827,12 +4942,11 @@ function renderListas(){
     <div class="card"><div style="display:flex;justify-content:space-between;align-items:center;gap:8px"><b>💊 Tratamientos pendientes del chequeo</b>
         <button class="btn ghost" id="lsTxBtn" style="width:auto;padding:6px 12px">${lsTxOpen ? "Ocultar" : "Ver resumen"}</button></div>
       <div id="lsTx">${lsTxOpen ? `<div class="sub" style="margin-top:6px">Cargando…</div>` : `<div class="sub">Lo que falta por aplicar (antibiótico, vitaminas, PGF2, baño, Ovsynch) e inseminar, por día y vaca, con lo que hay que tener a mano.</div>`}</div></div>
-    <div class="card"><div style="display:flex;justify-content:space-between;align-items:center;gap:8px"><b>📋 Reporte del chequeo</b>
-        <button class="btn ghost" id="lsRpBtn" style="width:auto;padding:6px 12px">${lsRp.open ? "Ocultar" : "Ver reporte"}</button></div>
-      <div id="lsRp">${lsRp.open ? `<div class="sub" style="margin-top:6px">Cargando…</div>` : `<div class="sub">Resultados del chequeo por lote (EXREP, ECO, DPR, REABS), como el reporte de Interherd. Se puede filtrar por Ovsynch, a tratar, vitaminas o baños y sacar en PDF.</div>`}</div></div>
     <div class="card"><b>${L[1]} (${rows.length})</b><div class="sub">${L[2]}</div>
       ${s.list==="chequeo" && all.some(x=>x.doubt.length) ? `<div class="warn" style="margin-top:8px">⚠️ Servicios dudosos (terneras de menos de 12 meses con servicio; no entran al chequeo). Corrígelos en Interherd:
         ${all.filter(x=>x.doubt.length).map(x=>`<b>${esc(x.c.id)}</b> (${Math.floor(x.ageM)} m · servicio ${x.doubt.map(e=>fmt(e.d)).join(", ")})`).join(" · ")}</div>` : ""}
+      ${s.list==="resincro" ? `<div class="row" style="align-items:center;margin-top:8px"><span class="sub" style="flex:none">Día del Gestar</span><input type="date" id="lsRsDate" value="${s.rsDate || today()}"></div>
+        <div class="sub" style="margin-top:4px">Sale con ${RS_DAYS} días de la IA del Ovsynch (± ${RS_WIN}). Las que repitieron o ya tienen diagnóstico no salen. Gestar ${RS_DOSE} mL: se registra como día 0 del OVS2 y descuenta del inventario.</div>` : ""}
       ${s.list==="chequeo" ? `<div class="row" style="align-items:center;margin-top:8px"><span class="sub" style="flex:none">Fecha del chequeo</span><input type="date" id="lsCkDate" value="${s.ckDate}"></div>
         <div class="list">${["EXREP","ECO1","ECO2","REPETIR","DPR","DP5","DPSEC"].map(k=>{ const n = rows.filter(x=>x.ck.cat===k).length; return n ? `<span class="chip"><span class="ckcat" style="background:var(${CK_COLOR[k]})">${k}</span>${n}</span>` : ""; }).join("")}</div>` : ""}
       ${pens.length > 1 ? chips([["", "Todos los lotes"], ...pens.map(p=>[p, esc(p)])], s.pen, "data-lsp") : ""}
@@ -4844,9 +4958,9 @@ function renderListas(){
       ${rows.length ? `<div class="row" style="margin-top:12px;gap:8px">
         <button class="btn ghost" id="lsShare">📤 Compartir lista</button>
         ${s.list==="chequeo" ? `<button class="btn ghost" id="lsPdf">📄 PDF</button><button class="btn" id="lsPdfSend">✉️ Enviar PDF</button>` : ""}
-        ${L[3] && canDo(RQ_TYPES.find(t=>t[0]===L[3])?.[2]) ? `<button class="btn" id="lsRq">⚡ ${L[3]==="dry_off" ? "Secar" : "Servir"} marcadas</button>` : ""}</div>` : ""}
+        ${s.list==="resincro" && (canDo("chequeo") || canDo("salud_tratar")) ? `<button class="btn" id="lsRsGo">💉 Gestar a marcadas</button>` : ""}
+        ${L[3] && L[3]!=="resincro" && canDo(RQ_TYPES.find(t=>t[0]===L[3])?.[2]) ? `<button class="btn" id="lsRq">⚡ ${L[3]==="dry_off" ? "Secar" : "Servir"} marcadas</button>` : ""}</div>` : ""}
     </div>`;
-  if (lsRp.open) (lsRp.rows && lsRp.farm===s.farm ? lsRpRender() : lsRpLoad());
 }
 $("lsBody").addEventListener("click", async e=>{
   const t = e.target, q = a => t.closest(`[${a}]`)?.getAttribute(a), s = lsState;
@@ -4857,9 +4971,6 @@ $("lsBody").addEventListener("click", async e=>{
   if (t.id==="lsReload"){ await lsLoad(true); return renderListas(); }
   if (t.id==="lsTxBtn"){ lsTxOpen = !lsTxOpen; renderListas(); if (lsTxOpen) lsTxLoad(); return; }
   if (t.id==="lsTxPdf") return lsTxPdf();
-  if (t.id==="lsRpBtn"){ lsRp.open = !lsRp.open; return renderListas(); }
-  if (q("data-lsrpf")!=null){ lsRp.f = q("data-lsrpf"); return lsRpRender(); }
-  if (t.id==="lsRpPdf") return lsRpPdf();
   if (t.id==="lsTxShare"){ const txt = `Tratamientos pendientes del chequeo · ${fmt(today())}\n` + (lsTxRows || []).map(r=>`${fmt(r.d)} · ${r.cow} (${r.pen}) · ${r.ia ? "INSEMINAR" : r.what + ": " + r.items.map(i=>`${i.n} ${i.dose} ${i.unit}`).join(" + ")}`).join("\n");
     try{ if (navigator.share) await navigator.share({ text:txt }); else { await navigator.clipboard.writeText(txt); toast("Copiado: pégalo en WhatsApp"); } }catch(err){} return; }
   if (q("data-lsall")){ const on = q("data-lsall")==="1", all = lsView(lsCompute());
@@ -4874,6 +4985,7 @@ $("lsBody").addEventListener("click", async e=>{
     return;
   }
   if (t.id==="lsPdf" || t.id==="lsPdfSend"){ t.disabled = true; await lsCheckPdf(t.id==="lsPdfSend" ? "share" : "save"); t.disabled = false; return; }
+  if (t.id==="lsRsGo") return lsResincro();
   if (t.id==="lsRq"){
     const L = LS_LISTS.find(l=>l[0]===s.list), ids = [...s.sel];
     if (!ids.length) return toast("Marca las vacas primero");
@@ -4885,7 +4997,7 @@ $("lsBody").addEventListener("click", async e=>{
 $("lsBody").addEventListener("input", e=>{ if (e.target.id!=="lsQ") return; lsState.q = e.target.value; $("lsRows").innerHTML = lsRowsHtml(lsView(lsCompute())); });
 $("lsBody").addEventListener("change", e=>{
   if (e.target.id==="lsCkDate"){ lsState.ckDate = e.target.value || addDays(today(), 1); return renderListas(); }
-  if (e.target.id==="lsRpDate"){ lsRp.date = e.target.value || today(); lsRp.rows = null; $("lsRp").innerHTML = `<div class="sub" style="margin-top:6px">Cargando…</div>`; return lsRpLoad(); }
+  if (e.target.id==="lsRsDate"){ lsState.rsDate = e.target.value || today(); lsState.sel = new Set(); return renderListas(); }
   const c = e.target.closest("[data-lsc]"); if (!c) return;
   c.checked ? lsState.sel.add(c.dataset.lsc) : lsState.sel.delete(c.dataset.lsc);
   $("lsCount").textContent = `${[...document.querySelectorAll("[data-lsc]")].filter(x=>x.checked).length} marcadas`;
@@ -7734,7 +7846,10 @@ async function ckDownload(){
     // EXREP programados en la hoja de vida (si ya corrieron SQL/eventos_programados.sql)
     const pl = await sb.from("cow_plans").select("cow_id,due_date,note,created_at").eq("farm_id", farm).eq("plan_type", "exrep").eq("status", "pending");
     const plans = (pl.data || []).filter(x=>ids.has(x.cow_id)).map(x=>[x.cow_id, x.due_date, x.note, x.created_at.slice(0, 10)]);
-    const pack = { at:Date.now(), cows: cows.map(c=>[c.id, c.pen, c.status, c.birth_date, c.last_calving, c.lactation_num, c.sex]), ev, milk, plans };
+    // Gestar del resincro (día 0 del OVS2) de los últimos 20 días
+    const rsq = await sb.from("treatments_cow").select("cow_id,start_date").eq("farm_id", farm).eq("protocol", "Ovsynch").like("notes", "%resincro%").gte("start_date", addDays(today(), -20));
+    const rs = Object.fromEntries((rsq.data || []).map(x=>[x.cow_id, x.start_date]));
+    const pack = { at:Date.now(), cows: cows.map(c=>[c.id, c.pen, c.status, c.birth_date, c.last_calving, c.lactation_num, c.sex]), ev, milk, plans, rs };
     jset(`ckData:${farm}`, pack); jset("ckLast", { farm });
     toast(`Lista descargada: ${cows.length} vacas`);
   }catch(err){ toast("No se pudo descargar: " + (err.message||err)); }
@@ -7747,14 +7862,14 @@ function ckLoadData(farm){
   const cows = p.cows.map(([id,pen,status,bd,lc,ln,sex])=>({ id, pen, status, bd, lc, ln, sex,
     milk:(p.milk?.[id]||[]).slice().sort((a,b)=>a[0].localeCompare(b[0])) }));
   cows.forEach(c=>{ c.ev = (evBy[c.id]||[]).filter(e=>!c.bd || e.d >= c.bd).sort((a,b)=>a.d.localeCompare(b.d)); });
-  return { at:p.at, cows, plans:p.plans || [] };
+  return { at:p.at, cows, plans:p.plans || [], rs:p.rs || {} };
 }
 
 function ckShow(){
   const farm = ckFarmSel(), D = $("ckDate").value || today();
   ckData = ckLoadData(farm);
   if (!ckData){ $("ckInfo").textContent = canDo("chequeo") ? "Descarga la lista con señal antes de ir al corral." : "";
-    ckRes = {}; if (!canDo("chequeo") || ckMode==="tx") return ckRender(); $("ckBody").innerHTML = ""; return; }
+    ckRes = {}; if (!canDo("chequeo") || ckMode==="tx" || ckMode==="res") return ckRender(); $("ckBody").innerHTML = ""; return; }
   const age = Math.round((Date.now() - ckData.at)/36e5);
   $("ckInfo").innerHTML = `Lista descargada ${age < 1 ? "hace menos de 1 hora" : age < 48 ? `hace ${age} h` : `hace ${Math.round(age/24)} días`}${age > 72 ? ` · <span class="late">descárgala de nuevo</span>` : ""}`;
   ckRes = jget(ckKey(farm, D), {});
@@ -7791,27 +7906,38 @@ function ckInfoTxt(k){
 const ckModeBar = (doneN, total) => `<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
   <div class="chips sm ckpan" style="padding:0"><div class="chips sm" style="margin:0">
     ${canDo("chequeo") ? `<button class="${ckMode==="pad"?"on":""}" data-ckmode="pad">🔍 Buscar</button><button class="${ckMode==="list"?"on":""}" data-ckmode="list">☰ Lista</button>` : ""}
-    ${canSee("chequeo_tratamientos") ? `<button class="${ckMode==="tx"?"on":""}" data-ckmode="tx">💉 Tratamientos</button>` : ""}</div></div>
+    ${canSee("chequeo_tratamientos") ? `<button class="${ckMode==="tx"?"on":""}" data-ckmode="tx">💉 Tratamientos</button>` : ""}
+    ${canSee("chequeo_resultados") ? `<button class="${ckMode==="res"?"on":""}" data-ckmode="res">📋 Resultados</button>` : ""}</div></div>
   <div class="sub" style="text-align:right"><b style="color:var(--ink)">${doneN}/${total}</b> registradas</div></div>`;
 function ckRender(){
-  if (!canDo("chequeo")) ckMode = "tx";   // perfiles que solo ven los tratamientos
+  // perfiles que solo ven tratamientos y resultados (admin finca, inseminador)
+  if (!canDo("chequeo") && (ckMode==="pad" || ckMode==="list")) ckMode = canSee("chequeo_tratamientos") ? "tx" : "res";
+  if (ckMode==="res" && !canSee("chequeo_resultados")) ckMode = "tx";
   if (ckMode==="tx") return ckRenderTx();
+  if (ckMode==="res") return ckRenderRes();
   return ckMode==="pad" ? ckRenderPad() : ckRenderList();
 }
 // ── Tratamientos del chequeo: lo que hay que aplicar (antibiótico, vitaminas, PGF2, Ovsynch día a día) e inseminar ──
 const ckIsCheckTx = t => /^(Chequeo|Ovsynch)/.test(t.protocol || "");
+// resultados de los chequeos (todas las fechas): por hato y evento, con su tratamiento; Ovsynch y OVS2 como un solo protocolo
+function ckRenderRes(){
+  const n = ckData ? Object.values(ckRes || {}).filter(r=>r.res).length : 0;
+  $("ckBody").innerHTML = `<div class="card">${ckModeBar(n, ckData ? ckList().length : 0)}<div id="lsRp"><div class="sub" style="margin-top:6px">Cargando…</div></div></div>`;
+  if (!navigator.onLine){ $("lsRp").innerHTML = `<div class="empty">Los resultados necesitan señal.</div>`; return; }
+  lsRp.rows && lsRp.farm===ckFarmSel() ? lsRpRender() : lsRpLoad();
+}
 let ckTxData = null;
 async function ckRenderTx(){
   const farm = ckFarmSel(), t0 = today();
   const head = `<div class="card">${ckModeBar(Object.values(ckRes || {}).filter(r=>r.res).length, ckData ? ckList().length : 0)}<div id="ckTxBox"><div class="empty">Cargando…</div></div></div>`;
   $("ckBody").innerHTML = head;
   if (!navigator.onLine){ $("ckTxBox").innerHTML = `<div class="empty">Los tratamientos necesitan señal.</div>`; return; }
-  const [tx, pl, cw] = await Promise.all([
+  // sin el Ovsynch ni el OVS2: esos salen como un solo protocolo en Resultados (Juan, 11/11/2026)
+  const [tx, cw] = await Promise.all([
     sb.from("treatments_cow").select("id,cow_id,start_date,diagnosis,protocol,notes,treatment_items(supply_code,dose,unit,route)")
-      .eq("farm_id", farm).or("protocol.like.Chequeo*,protocol.eq.Ovsynch").gte("start_date", addDays(t0, -14)).lte("start_date", addDays(t0, 21)).order("start_date"),
-    sb.from("cow_plans").select("cow_id,due_date,note,status").eq("farm_id", farm).eq("plan_type", "inseminar").eq("status", "pending")
-      .gte("due_date", addDays(t0, -14)).lte("due_date", addDays(t0, 21)),
+      .eq("farm_id", farm).like("protocol", "Chequeo*").gte("start_date", addDays(t0, -14)).lte("start_date", addDays(t0, 21)).order("start_date"),
     sb.from("cows").select("id,pen").eq("farm_id", farm).eq("active", true)]);
+  const pl = { data:[] };
   if (tx.error){ $("ckTxBox").innerHTML = `<div class="empty">${esc(tx.error.message)}</div>`; return; }
   const pen = Object.fromEntries((cw.data || []).map(c=>[c.id, c.pen])), sup = c => hsSupply(c)?.name || c;
   const rows = [...(tx.data || []).map(t=>({ d:t.start_date, cow:t.cow_id, what: t.protocol==="Ovsynch" ? (t.notes || "Ovsynch").replace(/ \((inicio|chequeo|primer).*\)$/, "") : t.protocol.replace(/^Chequeo · /, ""),
@@ -7827,9 +7953,9 @@ async function ckRenderTx(){
   // totales de lo que hay que tener a mano hoy
   const today0 = rows.filter(r=>r.d===t0 && !r.ia), need = {};
   (tx.data || []).filter(t=>t.start_date===t0).forEach(t=>(t.treatment_items || []).forEach(i=>{ const k = sup(i.supply_code) + "|" + (i.unit || ""); need[k] = (need[k] || 0) + (+i.dose || 0); }));
-  $("ckTxBox").innerHTML = `<div class="sub" style="margin-bottom:6px">Antibiótico, vitaminas, PGF2 y baño del chequeo, y el Ovsynch día a día. Se descuentan del inventario el día que tocan.</div>
+  $("ckTxBox").innerHTML = `<div class="sub" style="margin-bottom:6px">Antibiótico, vitaminas, PGF2 y baño del chequeo, vaca por vaca. Se descuentan del inventario el día que tocan. El Ovsynch y el OVS2 están en 📋 Resultados.</div>
     ${Object.keys(need).length ? `<div class="hscard"><b>Para hoy hay que tener:</b> ${Object.entries(need).map(([k, v])=>{ const [n, u] = k.split("|"); return `${esc(n)} <b>${v.toLocaleString("es-CO")} ${esc(u)}</b>`; }).join(" · ")}
-      <div class="sub">${today0.length} aplicaciones · ${rows.filter(r=>r.d===t0 && r.ia).length} para inseminar</div></div>` : ""}
+      <div class="sub">${today0.length} aplicaciones</div></div>` : ""}
     ${next.map(day).join("") || `<div class="empty">Nada programado para hoy ni los próximos días</div>`}
     ${past.length ? `<details class="ckmore"><summary class="lnk">Días anteriores (${past.length})</summary>${past.map(day).join("")}</details>` : ""}`;
 }
@@ -7970,6 +8096,7 @@ function ckPanel(c, k, r){
   return `<div class="ckpan">
     <div class="sub">${ex ? "Resultado (puedes marcar varios)" : "Resultado"}</div>
     <div class="chips">${opts.map(v=>chip(v, ex ? (r.sel||[]).includes(v) : r.main===v, "data-res")).join("")}</div>
+    ${/^ECO/.test(cat) && ckData?.rs?.[c.id] ? `<div class="sub" style="margin:4px 0">💉 Tiene el Gestar del OVS2 del ${fmt(ckData.rs[c.id])}: si sale negativa sigue el <b>OVS2</b>.</div>` : ""}
     ${meAuto ? `<div class="warn" style="margin:6px 0">Venía con ECO + y sale negativa: se registra <b>muerte embrionaria</b> automáticamente.</div>` : ""}
     ${neg ? `<div class="sub">¿Qué hacer? (puedes marcar varios)</div><div class="chips">${(/^ECO/.test(cat) ? CK_RES.NEG : CK_RES.NEGDP).map(v=>chip(v, (r.fol||[]).includes(v), "data-fol")).join("")}</div>` : ""}
     <div class="sub">Tratamiento</div>
@@ -8031,7 +8158,7 @@ function ckOvsHtml(r, D){
   const all = hsCatGet().supplies.filter(m=>m.active!==false);
   const opt = (codes, cur) => all.filter(m=>codes.includes(m.code)).map(m=>`<option value="${esc(m.code)}" ${m.code===cur ? "selected" : ""}>${esc(m.name)}</option>`).join("");
   const o = r.ovs || {}, g = o.gnrh || OVS_GNRH[0], f = o.pgf || OVS_PGF[0];
-  return `<div class="hscard" style="margin-top:8px"><b>💉 ${ckOvsName(r)==="OVS2" ? "OVS2 (resincronización) programado" : "Ovsynch programado"}</b>
+  return `<div class="hscard" style="margin-top:8px"><b>💉 ${ckOvsName(r)==="OVS2" ? "OVS2 programado" : "Ovsynch programado"}</b>
     <div class="row" style="gap:6px;margin-top:6px;align-items:center"><span class="sub" style="flex:0 0 60px">GnRH</span><select data-ckovs="gnrh" style="flex:1;min-width:0;padding:8px">${opt(OVS_GNRH, g)}</select></div>
     <div class="row" style="gap:6px;margin-top:6px;align-items:center"><span class="sub" style="flex:0 0 60px">PGF</span><select data-ckovs="pgf" style="flex:1;min-width:0;padding:8px">${opt(OVS_PGF, f)}</select></div>
     ${ckOvsName(r)==="OVS2" ? `<div class="sub" style="margin-top:6px">El primer Gestar ya se puso hace una semana: hoy va la prostaglandina del día 7.</div>` : ""}
@@ -8060,6 +8187,12 @@ async function ckLoadLists(){
 }
 function ckSave(){ jset(ckKey(ckFarmSel(), $("ckDate").value || today()), ckRes); }
 $("ckBody").addEventListener("click", e=>{
+  if (e.target.closest("#lsRp")){ const t = e.target, q = a => t.closest(`[${a}]`)?.getAttribute(a);
+    if (q("data-lsrpf")!=null){ lsRp.f = q("data-lsrpf"); return lsRpRender(); }
+    if (q("data-lsrpp")!=null){ lsRp.pen = q("data-lsrpp"); lsRp.ev = ""; return lsRpRender(); }
+    if (q("data-lsrpe")!=null){ const v = q("data-lsrpe"); lsRp.ev = lsRp.ev===v ? "" : v; return lsRpRender(); }
+    if (t.id==="lsRpPdf") return lsRpPdf();
+    return; }
   const md = e.target.closest("[data-ckmode]"); if (md){ ckMode = md.dataset.ckmode; ckOpen = null; ckRender(); return; }
   const k = e.target.closest("[data-key]");
   if (k){ const v = k.dataset.key;
@@ -8103,6 +8236,8 @@ $("ckBody").addEventListener("click", e=>{
     const v = res.dataset.res;
     if (r.cat==="EXREP") r.sel = toggle(r.sel, v);
     else { r.main = r.main===v ? null : v; if (!ckNegMain(r.cat, r.main)) delete r.fol;
+      // tiene el Gestar del resincro: ECO negativa → OVS2 marcado de una vez (se puede quitar)
+      else if (/^ECO/.test(r.cat || "") && /^(Negativo|ME)$/.test(r.main) && ckData?.rs?.[id] && !(r.fol || []).length) r.fol = ["OVS2"];
       // 6 · ¿venía con ECO + de este servicio? Si ahora sale negativa es muerte embrionaria
       const c0 = ckFind(id), D0 = $("ckDate").value || today(), sv0 = r.sv || c0?.ev.filter(x=>x.t==="service" && x.d <= D0).pop()?.d;
       const dx0 = (c0?.ev || []).filter(x=>sv0 && x.d > sv0 && x.d < D0 && ["ultrasound","preg_check","embryo_loss","abortion"].includes(x.t)).pop();
@@ -8122,7 +8257,9 @@ $("ckBody").addEventListener("click", e=>{
   ckOpen = ckOpen===id ? null : id; ckRender();
   row.scrollIntoView({ block:"nearest" });
 });
-$("ckBody").addEventListener("change", e=>{ if (e.target.id==="ckPenSel"){ ckPenF = e.target.value; ckOpen = null; ckRender(); return; }
+$("ckBody").addEventListener("change", e=>{
+  if (e.target.id==="lsRpDate"){ lsRp.date = e.target.value; lsRp.rows = null; $("lsRp").innerHTML = `<div class="sub" style="margin-top:6px">Cargando…</div>`; return lsRpLoad(); }
+  if (e.target.id==="ckPenSel"){ ckPenF = e.target.value; ckOpen = null; ckRender(); return; }
   const ov = e.target.closest("[data-ckovs]");
   if (ov){ const id = ov.closest("[data-ck]")?.dataset.ck || ckOpen; const r = id && (ckRes[id] ||= {});
     if (r && !r.up){ (r.ovs ||= {})[ov.dataset.ckovs] = ov.value; ckSave(); } return; }
