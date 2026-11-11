@@ -18,6 +18,7 @@
   --accent:#0b7a6b; --s0:#2e9e5b; --s1:#8bbf3f; --s2:#e3b322; --s3:#ec8a2c; --s4:#d9472f; --s5:#9e1f1f;
   --milk:#2f6fd6; --soft:#eef6f4;
   --c1:#2a78d6; --c2:#eb6834; --c3:#1baf7a; --c4:#eda100; --c5:#e87ba4;
+  --mq1:#f2c94c; --mq2:#f6a55e; --mq3:#e0661b; --mq4:#d62d20; --mqp:#8c939c;
 }
 @media (prefers-color-scheme: dark){ :root:not([data-theme="light"]){
   --bg:#12161b; --card:#1b2129; --ink:#e7ecf1; --muted:#9aa5b1; --line:#2b333d; --accent:#3cc2ad;
@@ -198,6 +199,20 @@ details.lac td{padding:6px 8px}
 .udder.big{grid-template-columns:repeat(2,30px);gap:3px}
 .q{display:flex;align-items:center;justify-content:center;width:18px;height:18px;border-radius:4px;color:#fff;font-size:11px;font-weight:700}
 .q.big{width:30px;height:30px;border-radius:7px;font-size:15px}
+/* chequeo de mastitis: por cuarto 1 2 / 3 4 en cuadrado y P al lado */
+.mtqg{display:grid;grid-template-columns:1fr 1fr 1fr;grid-template-rows:auto auto;gap:5px}
+.mtqg button{border:2px solid transparent;border-radius:9px;padding:10px 0;font-size:17px;font-weight:800;cursor:pointer;color:#fff;opacity:.3}
+.mtqg button.lt{color:#3a2a00}
+.mtqg button.on{opacity:1;border-color:var(--ink)}
+.mtqg button.p{grid-column:3;grid-row:1 / span 2}
+.mtgr{display:flex;gap:6px;flex-wrap:wrap;margin-top:8px}
+.mtgr span{border-radius:8px;padding:4px 9px;font-size:13px;font-weight:700;color:#fff}
+.mtgr span.lt{color:#3a2a00}
+.mcabx{display:flex;align-items:center;justify-content:space-between;gap:6px;padding:5px 0;border-bottom:1px solid var(--line)}
+.mcabx button{border:1px solid var(--line);background:var(--bg);color:var(--ink);border-radius:8px;padding:6px 11px;font-weight:800;cursor:pointer}
+.mcabx button.on.S{background:var(--s0);color:#fff;border-color:var(--s0)}
+.mcabx button.on.I{background:var(--mq2);color:#3a2a00;border-color:var(--mq2)}
+.mcabx button.on.R{background:var(--mq4);color:#fff;border-color:var(--mq4)}
 .calf-note{background:var(--soft);border-radius:10px;padding:10px 12px;font-size:14px;margin-top:10px}
 .zoom{position:fixed;inset:0;background:rgba(0,0,0,.85);display:flex;align-items:center;justify-content:center;z-index:10}
 .zoom img{max-width:100%;max-height:100%}
@@ -320,6 +335,7 @@ details.lac td{padding:6px 8px}
         </svg></span><b>Pastos</b></a>
       </div>
       <div class="homeedit"><button class="link" id="homeEdit">Organizar íconos</button><button class="link hidden" id="homeReset">Orden original</button></div>
+      <div id="homeJC"></div>
       <div id="homeAbx"></div>
       <form class="homesearch" id="homeSearch" data-perm="vacas_ver"><span>🔍</span><input id="hq" type="search" placeholder="Buscar vaca" autocomplete="off" autocapitalize="characters"></form>
     </section>
@@ -773,7 +789,7 @@ function route(){
   if (h.startsWith("racion")) { setTab("racion"); return; }
   if (h.startsWith("ronda")) { setTab("ronda"); return; }
   if (h.startsWith("pastos")) { setTab("pastos"); const id = +h.slice(7); initPastos().then(()=> id ? loadPaddock(id) : loadPastos()); return; }
-  if (h.startsWith("mastitis")) { setTab("mastitis"); const id = h.slice(9); id==="chequeo" ? mtShow() : id ? loadMastCow(id) : loadMastWatch(); return; }
+  if (h.startsWith("mastitis")) { setTab("mastitis"); const id = h.slice(9); id==="chequeo" ? mtShow() : id==="cultivos" ? mcShow() : id ? loadMastCow(id) : loadMastWatch(); return; }
   if (!h.startsWith("vaca")) { setTab("inicio"); return; }
   setTab("vacas");
   const id = h.startsWith("vaca/") ? h.slice(5) : "";
@@ -796,8 +812,28 @@ function renderHome(){
   applyHomeOrder();
   document.querySelectorAll("[data-perm]").forEach(el=>el.classList.toggle("hidden", !el.dataset.perm.split(" ").some(canSee)));
   $("homeDate").textContent = new Date().toLocaleDateString("es-CO", { weekday:"long", day:"numeric", month:"long" });
-  homeAbx(); ivBadge();
+  homeAbx(); ivBadge(); homeJC();
 }
+// mastitis: vacas que en el chequeo o la revisión dejaron para "Revisar JC" (solo le sale a Juan, hasta marcarlas revisadas)
+async function mastJCHtml(){
+  if (myProfile!=="Admin Principal" || !navigator.onLine) return "";
+  const { data, error } = await sb.from("cow_mastitis").select("id,cow_id,check_date,kind,lot,ai,ad,pi,pd,observation,treatment")
+    .eq("review_jc", true).is("reviewed_at", null).order("check_date");
+  if (error || !data?.length) return "";
+  return `<div class="card" style="margin:14px 0 0;border-left:4px solid var(--mq4)"><b>🩺 Mastitis: para revisar JC (${data.length})</b>
+    ${data.map(x=>`<div style="display:flex;justify-content:space-between;align-items:center;gap:8px;margin-top:8px">
+      <a href="#mastitis/${encodeURIComponent(x.cow_id)}" style="color:inherit;text-decoration:none;min-width:0"><b>${esc(x.cow_id)}</b> ${udder(x)}
+        <div class="sub">${[x.lot, fmt(x.check_date), x.kind==="R" ? "revisión" : "chequeo", x.observation].filter(Boolean).map(esc).join(" · ")}</div></a>
+      <button class="lnk" data-jcok="${x.id}" style="flex:none">✓ revisada</button></div>`).join("")}</div>`;
+}
+async function homeJC(){ const box = $("homeJC"); if (box) box.innerHTML = await mastJCHtml(); }
+document.addEventListener("click", async e=>{
+  const b = e.target.closest("[data-jcok]"); if (!b) return;
+  b.disabled = true;
+  const { data, error } = await sb.from("cow_mastitis").update({ reviewed_at:new Date().toISOString(), reviewed_by:me }).eq("id", +b.dataset.jcok).select("id");
+  if (error || !data?.length){ b.disabled = false; return toast("No se pudo marcar" + (error ? ": " + error.message : "")); }
+  toast("Revisada ✓"); homeJC(); const mb = $("mastJC"); if (mb) mb.innerHTML = await mastJCHtml();
+});
 // leche de antibiótico (Leche diaria): la de la tarde de ayer y la de la mañana de hoy va para las terneras
 async function homeAbx(){
   const box = $("homeAbx"); if (!box) return;
@@ -1112,8 +1148,9 @@ function lacHtml(s, open, kids, bulls, proj){
 
 // ── Mastitis: CMT por cuarto (AI AD / PI PD) ────────────────
 // 0 negativo · 1-3 grado CMT · 4 clínica · P cuarto perdido
-const MQ = { "0":["--s0","Negativo"], "1":["--s1","CMT 1"], "2":["--s2","CMT 2"], "3":["--s3","CMT 3"], "4":["--s5","Clínica"], "P":["--muted","Perdido"] };
-const qCell = (v, big) => { const m = MQ[v]; return `<span class="q${big?" big":""}" style="background:${m ? css(m[0]) : "var(--line)"}" title="${esc(m ? m[1] : v||"sin dato")}">${esc(v ?? "·")}</span>`; };
+// 1 amarillo · 2 naranja claro · 3 naranja oscuro · 4 rojo (clínica) · P gris · 0 (sano) sin número
+const MQ = { "0":["--line","Sano"], "1":["--mq1","CMT 1"], "2":["--mq2","CMT 2"], "3":["--mq3","CMT 3"], "4":["--mq4","4 Clínica"], "P":["--mqp","Perdido"] };
+const qCell = (v, big) => { const m = MQ[v]; return `<span class="q${big?" big":""}" style="background:${m ? css(m[0]) : "var(--line)"}${v==="1" || v==="2" ? ";color:#3a2a00" : ""}" title="${esc(m ? m[1] : v||"sin dato")}">${esc(v==="0" ? "" : v ?? "·")}</span>`; };
 const udder = (c, big) => `<span class="udder${big?" big":""}">${["ai","ad","pi","pd"].map(k=>qCell(c[k], big)).join("")}</span>`;
 const QN = { ai:"anterior izquierdo (AI)", ad:"anterior derecho (AD)", pi:"posterior izquierdo (PI)", pd:"posterior derecho (PD)" };
 // cuartos reportados como perdidos (P): si después vuelve a tener valores, "se mejoró", pero sigue el aviso
@@ -1130,7 +1167,7 @@ const isClin = c => ["ai","ad","pi","pd"].some(k=>c[k]==="4");
 function mastEpisodes(list){ let ep = 0, prev = null; list.filter(isClin).forEach(c=>{ if (!prev || days(prev, c.check_date) > 30) ep++; prev = c.check_date; }); return ep; }
 const lostHtml = lq => lq.map(q=>`<div class="lost">⚠️ Cuarto <b>${QN[q.k]}</b> reportado <b>perdido</b> ${q.first===q.lastP ? `el ${fmt(q.first)}` : `(${fmt(q.first)} → ${fmt(q.lastP)})`}${
   q.recovered ? `. Después volvió a dar ${esc(q.recovered[q.k])} el ${fmt(q.recovered.check_date)}: revisar.` : ". Sigue perdido."}</div>`).join("");
-const mastLegend = () => `<div class="legend">${Object.values(MQ).map(([c,t])=>`<span><i style="background:var(${c});border-radius:3px"></i>${t}</span>`).join("")}<span>AI AD / PI PD</span></div>`;
+const mastLegend = () => `<div class="legend">${Object.entries(MQ).filter(([k])=>k!=="0").map(([, v])=>v).map(([c,t])=>`<span><i style="background:var(${c});border-radius:3px"></i>${t}</span>`).join("")}<span>AI AD / PI PD</span></div>`;
 // hoja de vida: solo lo último; todo el historial está en el módulo Mastitis
 // 💉 Salud en la hoja de vida: tratamientos y vacunas de Mykau (Salud, chequeo, Ingreso rápido), vacunas de Interherd
 // y episodios clínicos de mastitis, todo junto y por fecha
@@ -2662,10 +2699,43 @@ async function renderPastosReport(box){
   await psLoadData();
   const predios = [...new Set(psList.filter(p=>p.active && !p.merged_into).map(p=>p.predio))].sort();
   const body = $("rpPsBody");
-  body.innerHTML = `<div class="chips sm ckpan" style="padding:0;margin-bottom:8px"><div class="chips sm">${["", ...predios].map(p=>`<button class="${psPredio===p?"on":""}" data-rppr="${esc(p)}">${p ? esc(p) : "Todos"}</button>`).join("")}</div></div><div id="rpPsProd"></div>`;
+  body.innerHTML = `<div class="card" id="rpRain"><b>🌧️ Lluvia</b><div class="empty">Cargando…</div></div><div class="chips sm ckpan" style="padding:0;margin-bottom:8px"><div class="chips sm">${["", ...predios].map(p=>`<button class="${psPredio===p?"on":""}" data-rppr="${esc(p)}">${p ? esc(p) : "Todos"}</button>`).join("")}</div></div><div id="rpPsProd"></div>`;
   body.onclick = e=>{ const p = e.target.closest("[data-rppr]"); if (p){ psPredio = p.dataset.rppr; renderPastosReport(box); return; }
     const k = e.target.closest("[data-ps]"); if (k && canSee("pastos_ver")){ location.hash = "pastos/" + k.dataset.ps; window.scrollTo({top:0}); } };
   renderProd($("rpPsProd"));
+  rpRain(psFarm);
+}
+// lluvia de la finca: barras por mes (últimos 24 meses) y por día (últimos 60 días)
+let rpRainMode = "mes";
+async function rpRain(farm){
+  const box = $("rpRain"); if (!box) return;
+  const { data, error } = await sb.from("rainfall").select("rain_date,mm").eq("farm_id", farm).gte("rain_date", addDays(today(), -760)).order("rain_date");
+  if (!$("rpRain")) return;
+  if (error){ box.innerHTML = `<b>🌧️ Lluvia</b><div class="empty">No se pudo cargar la lluvia</div>`; return; }
+  const xs = data || [], t0 = today();
+  let bars;
+  if (rpRainMode==="mes"){
+    const ms = []; for (let i = 23; i >= 0; i--){ const d = new Date(+t0.slice(0, 4), +t0.slice(5, 7) - 1 - i, 1); ms.push(`${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`); }
+    const MN = ["ene","feb","mar","abr","may","jun","jul","ago","sep","oct","nov","dic"];
+    bars = ms.map(m=>({ k:m, lab:MN[+m.slice(5) - 1] + " " + m.slice(2, 4), v:xs.filter(x=>x.rain_date.startsWith(m)).reduce((a, x)=>a + (+x.mm || 0), 0),
+      n:xs.filter(x=>x.rain_date.startsWith(m)).length }));
+  } else {
+    bars = Array.from({ length:60 }, (_, i)=>addDays(t0, i - 59)).map(d=>({ k:d, lab:`${d.slice(8)}/${d.slice(5, 7)}`, v:xs.filter(x=>x.rain_date===d).reduce((a, x)=>a + (+x.mm || 0), 0) }));
+  }
+  const W = 340, H = 170, L = 30, R = 6, T = 14, B = 26, n = bars.length, mx = Math.max(10, ...bars.map(b=>b.v)) * 1.12;
+  const bw = (W - L - R) / n, Y = v => T + (1 - v / mx) * (H - T - B), step = rpRainMode==="mes" ? 3 : 10;
+  const grid = [0, mx / 2, mx].map(v=>`<line x1="${L}" x2="${W - R}" y1="${Y(v)}" y2="${Y(v)}" stroke="var(--line)"/><text x="${L - 4}" y="${Y(v) + 3}" font-size="9" text-anchor="end" fill="var(--muted)">${Math.round(v)}</text>`).join("");
+  const rects = bars.map((b, i)=>{ const x = L + i * bw;
+    return `${b.v ? `<rect x="${x + bw * 0.12}" y="${Y(b.v)}" width="${bw * 0.76}" height="${Y(0) - Y(b.v)}" rx="1.5" fill="var(--milk)"><title>${rpRainMode==="mes" ? b.k : fmt(b.k)}: ${Math.round(b.v)} mm${b.n ? ` (${b.n} días con registro)` : ""}</title></rect>` : ""}
+      ${rpRainMode==="mes" && b.v ? `<text x="${x + bw / 2}" y="${Y(b.v) - 3}" font-size="7.5" text-anchor="middle" fill="var(--muted)">${Math.round(b.v)}</text>` : ""}
+      ${(n - 1 - i) % step===0 ? `<text x="${i===n - 1 ? x + bw : x + bw / 2}" y="${H - 8}" font-size="9" text-anchor="${i===n - 1 ? "end" : "middle"}" fill="var(--muted)">${b.lab}</text>` : ""}`; }).join("");
+  const tot = bars.reduce((a, b)=>a + b.v, 0), last = xs.filter(x=>+x.mm > 0).pop();
+  box.innerHTML = `<div style="display:flex;justify-content:space-between;align-items:center;gap:8px"><b>🌧️ Lluvia (mm)</b>
+      <div class="chips sm ckpan" style="padding:0"><div class="chips sm" style="margin:0">${[["mes","Por mes"],["dia","Últimos 60 días"]].map(([k, t])=>`<button class="${rpRainMode===k ? "on" : ""}" data-rprain="${k}">${t}</button>`).join("")}</div></div></div>
+    <div class="sub">${rpRainMode==="mes" ? "Últimos 24 meses" : "Últimos 60 días"}: ${Math.round(tot).toLocaleString("es-CO")} mm${last ? ` · última lluvia registrada ${fmt(last.rain_date)} (${last.mm} mm)` : ""}</div>
+    <svg viewBox="0 0 ${W} ${H}" style="width:100%;height:auto;display:block;margin-top:4px">${grid}${rects}</svg>
+    ${xs.length ? "" : `<div class="sub">Sin lluvias registradas: se anotan en Pastos → ＋ Lluvia.</div>`}`;
+  box.onclick = e=>{ const b = e.target.closest("[data-rprain]"); if (b){ rpRainMode = b.dataset.rprain; rpRain(farm); } };
 }
 
 // ═══════════════════════ REPORTES · INSEMINADORES Y TOROS ═══════════════
@@ -2830,7 +2900,7 @@ async function tnOpen(){
   const date = $("tnDate").value || today();
   tnDraft = jget(tnKey(tnFarm, date), null) || { farm:tnFarm, date, rows:[] };
   $("tnBody").innerHTML = `<div class="empty">Cargando animales…</div>`;
-  await tnLoad(); renderWeigh();
+  await tnLoad(); renderWeigh(true);
 }
 const tnCow = id => tnCows.find(c=>c.id===id);
 // número escrito → animal: el mismo, o su ".1" si el número es de una vaca adulta
@@ -2850,7 +2920,7 @@ function tnPrev(id, date, kg){
   const n = days(p[0], date); return { date:p[0], kg:p[1], gdp: n > 0 && kg ? Math.round((kg - p[1])/n*1000) : null };
 }
 function tnSave(){ jset(tnKey(tnDraft.farm, tnDraft.date), tnDraft); }
-function renderWeigh(){
+function renderWeigh(focus){
   const d = tnDraft;
   const rows = d.rows.map((r, i)=>({ ...r, i, pv:tnPrev(r.id, d.date, r.kg), cow:tnCow(r.id) }));
   const g = rows.map(r=>r.pv?.gdp).filter(v=>v!=null), kg = rows.map(r=>r.kg).filter(Boolean);
@@ -2862,7 +2932,7 @@ function renderWeigh(){
   $("tnBody").innerHTML = `
     <div class="card hsform">
       <div style="display:grid;grid-template-columns:1fr 1fr auto;gap:8px;align-items:end">
-        <div><label style="margin-top:0">N° animal</label><input id="tnId" autocapitalize="characters" autocomplete="off" style="font-size:24px;font-weight:800"></div>
+        <div><label style="margin-top:0">N° animal</label><input id="tnId" inputmode="decimal" autocapitalize="characters" autocomplete="off" style="font-size:24px;font-weight:800"></div>
         <div><label style="margin-top:0">Peso (kg)</label><input id="tnKg" inputmode="decimal" autocomplete="off" style="font-size:24px;font-weight:800"></div>
         <button class="btn" id="tnAdd" style="width:auto;font-size:22px;padding:12px 16px">＋</button>
       </div>
@@ -2884,7 +2954,7 @@ function renderWeigh(){
     </div>
     ${rows.length ? `<button class="btn" id="tnUp" style="font-size:18px;padding:14px">Guardar y subir (${rows.filter(r=>!r.sent).length} sin subir)</button>
       ${canSee("vacas_pendientes") ? `<button class="btn ghost" id="tnTxt" style="margin-top:8px">⬇️ Descargar .txt para Interherd</button>` : ""}` : ""}`;
-  $("tnId").focus();
+  if (focus) $("tnId").focus();   // solo al abrir o al agregar un animal (no al escoger insumo o marcar a quién se aplica)
 }
 function tnAppCard(d, rows){
   const a = d.app, sup = tnSupplies(), cats = [...new Set(sup.map(m=>m.category||"Otro"))].sort((x,y)=>x.localeCompare(y));
@@ -2919,7 +2989,7 @@ function tnAdd(){
   if (tnDraft.rows.some(x=>x.id===r.id && x.sent)) return toast(`${r.id} ya se subió hoy`);
   const note = ($("tnNote").value || "").trim() || null;
   if (ex >= 0) tnDraft.rows[ex] = { ...tnDraft.rows[ex], id:r.id, kg, note }; else tnDraft.rows.push({ id:r.id, kg, note });
-  tnSave(); renderWeigh();
+  tnSave(); renderWeigh(true);
 }
 $("tnBody").addEventListener("input", e=>{
   if (e.target.id==="tnId") tnHint();
@@ -3042,11 +3112,12 @@ async function rqLoadDry(){
   const [pl, mk, sv] = await Promise.all([
     sb.from("cow_plans").select("id,cow_id,due_date,note").eq("farm_id", f).eq("plan_type", "secado").eq("status", "pending"),
     plan ? psAll(()=>sb.from("cow_milk").select("id,cow_id,test_date,am_kg,pm_kg,total_kg,cows!inner(farm_id)").eq("cows.farm_id", f).gte("test_date", addDays(today(), -15)).order("id")) : { data:[] },
-    psAll(()=>sb.from("cow_events").select("id,cow_id,event_date,bull,cows!inner(farm_id)").eq("cows.farm_id", f).eq("event_type", "service").gte("event_date", addDays(today(), -330)).order("id"))]);
-  const d = { farm:f, plans:{}, milk:{}, sv:{} };
+    psAll(()=>sb.from("cow_events").select("id,cow_id,event_date,event_type,bull,cows!inner(farm_id)").eq("cows.farm_id", f).in("event_type", ["service","dry_off"]).gte("event_date", addDays(today(), -330)).order("id"))]);
+  const d = { farm:f, plans:{}, milk:{}, sv:{}, dried:{} };
   (pl.data || []).forEach(x=>{ const o = d.plans[x.cow_id]; if (!o || x.due_date < o.due) d.plans[x.cow_id] = { id:x.id, due:x.due_date, note:x.note }; });
   (mk.data || []).sort((a, b)=>a.test_date.localeCompare(b.test_date)).forEach(m=>(d.milk[m.cow_id] ||= []).push([m.test_date, m.am_kg, m.pm_kg, m.total_kg]));
-  (sv.data || []).forEach(e=>{ const o = d.sv[e.cow_id]; if (!o || e.event_date >= o.d) d.sv[e.cow_id] = { d:e.event_date, b:e.bull }; });
+  (sv.data || []).forEach(e=>{ if (e.event_type==="dry_off"){ if (!d.dried[e.cow_id] || e.event_date > d.dried[e.cow_id]) d.dried[e.cow_id] = e.event_date; return; }
+    const o = d.sv[e.cow_id]; if (!o || e.event_date >= o.d) d.sv[e.cow_id] = { d:e.event_date, b:e.bull }; });
   rqDryD = d; return true;
 }
 // datos de cada vaca para el secado
@@ -3055,9 +3126,11 @@ function rqDryInfo(c){
   const tot = m => m ? (m[3]!=null ? +m[3] : (+m[1] || 0) + (+m[2] || 0)) : null;
   const preg = /(^|\/)PR(\/|$)/.test(c.status || ""), sv = D.sv[c.id] && (!c.last_calving || D.sv[c.id].d > c.last_calving) ? D.sv[c.id] : null;
   const dry = preg && sv ? addDays(sv.d, LS_GEST - LS_DRY) : null;
-  const lastKg = tot(last), low = lastKg!=null && lastKg < (rq.lowKg || 13);
-  const due = !!(preg && /(^|\/)Lac/.test(c.status || "") && dry && dry <= addDays(today(), 14));
-  return { ms:ms.slice(-2), last, lastKg, low, preg, sv, dry, due, gest: preg && sv ? days(sv.d, today()) : null, plan:D.plans[c.id], tot };
+  const lastKg = tot(last);
+  const dd = D.dried?.[c.id], driedOff = (dd && (!c.last_calving || dd > c.last_calving)) || /^HO/i.test(c.pen || "") || /(^|\/)Horra/i.test(c.status || "");
+  const low = !driedOff && lastKg!=null && lastKg < (rq.lowKg || 13);
+  const due = !!(!driedOff && preg && /(^|\/)Lac/.test(c.status || "") && dry && dry <= addDays(today(), 14));
+  return { ms:ms.slice(-2), last, lastKg, low, preg, sv, dry, due, driedOff, driedOn:dd, gest: preg && sv ? days(sv.d, today()) : null, plan:D.plans[c.id], tot };
 }
 const rqDel = c => c.last_calving ? days(c.last_calving, today()) : null;
 function rqInfo(c){
@@ -3086,7 +3159,7 @@ function renderRapido0(){
       <details style="margin-top:6px"><summary class="sub" style="cursor:pointer">Pegar o escribir varios números</summary>
         <textarea id="rqPaste" rows="3" style="width:100%;margin-top:6px;font:inherit;padding:8px;border-radius:10px;border:1px solid var(--line);background:var(--bg);color:var(--ink)" placeholder="1076 1044 863 ..."></textarea>
         <button class="btn ghost" id="rqPasteGo" style="margin-top:6px">Marcar esos números</button><div class="sub" id="rqPasteMsg"></div></details>
-      ${rq.type==="dry_off" ? (()=>{ const np = rqCows.filter(c=>rqDryD?.plans[c.id] || rqDryInfo(c).due).length, pl = rqCanPlan();
+      ${rq.type==="dry_off" ? (()=>{ const np = rqCows.filter(c=>!rqDryInfo(c).driedOff && (rqDryD?.plans[c.id] || rqDryInfo(c).due)).length, pl = rqCanPlan();
         return `<div class="chips sm ckpan" style="padding:0;margin-top:6px"><div class="chips sm">${[["","Todas"],["lac","En leche"],["prog",`🌙 Para secar (${np})`], ...(pl ? [["low","Bajitas"]] : [])].map(([k,t])=>`<button class="${(rq.dryF||"")===k ? "on" : ""}" data-rqdf="${k}">${t}</button>`).join("")}</div></div>
           ${pl ? `<div class="chips sm ckpan" style="padding:0;margin-top:6px"><div class="chips sm"><span class="sub" style="align-self:center">Ordenar:</span>${[["","Por número"],["milk","Por última leche (menor primero)"]].map(([k,t])=>`<button class="${(rq.dryOrd||"")===k ? "on" : ""}" data-rqdo="${k}">${t}</button>`).join("")}</div></div>` : ""}
           ${pl ? `<div class="row" style="align-items:center;gap:6px;margin-top:6px"><span class="sub" style="flex:none">Bajita: menos de</span><select id="rqLowKg" style="flex:0 0 90px">${[8,10,12,13,14,16].map(k=>`<option value="${k}" ${(rq.lowKg||13)===k ? "selected" : ""}>${k} kg</option>`).join("")}</select><span class="sub" style="flex:none">en el último pesaje</span></div>` : ""}
@@ -3191,7 +3264,7 @@ const rqShown = () => { const tk = rqTokens(), dry = rq.type==="dry_off";
   return L; };
 const rqShown0 = (tk, dry) => { 
   return rqCows.filter(c=>(!rq.pen || (c.pen||"—")===rq.pen) && (!tk.length || (tk.length > 1 ? tk.includes(c.id) : c.id.includes(tk[0])))
-    && (!dry || !rq.dryF || (rq.dryF==="prog" ? (!!rqDryD?.plans[c.id] || rqDryInfo(c).due) : rq.dryF==="low" ? rqDryInfo(c).low : rq.dryF==="lac" ? /(^|\/)Lac/.test(c.status || "") : true))); };
+    && (!dry || !rq.dryF || (rq.dryF==="prog" ? (!rqDryInfo(c).driedOff && (!!rqDryD?.plans[c.id] || rqDryInfo(c).due)) : rq.dryF==="low" ? rqDryInfo(c).low : rq.dryF==="lac" ? /(^|\/)Lac/.test(c.status || "") : true))); };
 function rqListHtml(shown){
   const tk = rqTokens(), miss = tk.length > 1 ? tk.filter(t=>!shown.some(c=>c.id===t)) : [];
   const head = tk.length > 1 ? `<div class="row" style="align-items:center;gap:8px;padding:8px 2px;border-bottom:1px solid var(--line)">
@@ -3204,10 +3277,10 @@ function rqListHtml(shown){
           ${rq.type==="exit" ? `<input data-rqwt="${esc(c.id)}" inputmode="decimal" placeholder="kg" value="${esc(rq.d.w?.[c.id] || "")}" style="width:78px;flex:none;padding:8px;font-size:15px">` : ""}</label>`).join("") || `<div class="empty">Sin animales</div>`;
 }
 function rqDryRow(c){
-  const x = rqDryInfo(c), plan = rqCanPlan(), red = !!x.plan || x.due || (plan && x.low);
+  const x = rqDryInfo(c), plan = rqCanPlan(), red = !x.driedOff && (!!x.plan || x.due || (plan && x.low));
   const n = v => v==null ? "—" : String(+v).replace(".", ",");
   const pes = plan ? (x.ms.length ? x.ms.map(m=>`<span style="white-space:nowrap">${fmt(m[0]).slice(0, 5)}: ${n(m[1])}/${n(m[2])} = <b>${n(x.tot(m))}</b></span>`).join(" · ") : `<span>sin pesaje en 15 días</span>`) : "";
-  const tags = [x.plan ? `<b style="color:var(--s4)">🌙 programada ${fmt(x.plan.due)}</b>` : x.due ? `<b style="color:var(--s4)">🌙 toca secar ${fmt(x.dry)}${x.dry < today() ? " (vencido)" : ""}</b>` : "", plan && x.low ? `<b style="color:var(--s4)">bajita</b>` : "",
+  const tags = [x.driedOff ? `<span>ya seca${x.driedOn && (!c.last_calving || x.driedOn > c.last_calving) ? " " + fmt(x.driedOn) : ""}</span>` : "", x.driedOff ? "" : x.plan ? `<b style="color:var(--s4)">🌙 programada ${fmt(x.plan.due)}</b>` : x.due ? `<b style="color:var(--s4)">🌙 toca secar ${fmt(x.dry)}${x.dry < today() ? " (vencido)" : ""}</b>` : "", plan && x.low ? `<b style="color:var(--s4)">bajita</b>` : "",
     plan ? (x.preg ? `<span>PR ${x.gest ?? "?"} d${x.dry ? ` · secado ${days(today(), x.dry) >= 0 ? "en " + days(today(), x.dry) + " d" : "vencido"}` : ""}</span>` : `<span>vacía</span>`) : ""].filter(Boolean).join(" · ");
   const open = rq.dryOpen===c.id;
   return `<div style="border-bottom:1px solid var(--line);${red ? "background:color-mix(in srgb, var(--s4) 12%, transparent);border-left:4px solid var(--s4);" : ""}">
@@ -3333,7 +3406,7 @@ $("rqBody").addEventListener("click", async e=>{
     return; }
   if (q("data-rqdf")!=null){ rqRead(); rq.dryF = q("data-rqdf"); return renderRapido(); }
   if (q("data-rqdo")!=null){ rqRead(); rq.dryOrd = q("data-rqdo"); return renderRapido(); }
-  if (q("data-rqmarkplan")){ rqRead(); rqCows.filter(c=>rqDryD?.plans[c.id] || rqDryInfo(c).due).forEach(c=>rq.sel.add(c.id)); rq.dryF = "prog"; return renderRapido(); }
+  if (q("data-rqmarkplan")){ rqRead(); rqCows.filter(c=>!rqDryInfo(c).driedOff && (rqDryD?.plans[c.id] || rqDryInfo(c).due)).forEach(c=>rq.sel.add(c.id)); rq.dryF = "prog"; return renderRapido(); }
   if (q("data-rqcow")){ e.preventDefault(); rq.dryOpen = rq.dryOpen===q("data-rqcow") ? null : q("data-rqcow"); $("rqList").innerHTML = rqListHtml(rqShown()); return; }
   if (t.id==="rqPlanGo") return rqPlanDry();
   if (t.id==="rqGo") return rqExec();
@@ -4073,8 +4146,9 @@ function renderRonda(){
   const reg = canDo("ronda_registrar");
   let h = `<div class="card sheet hsform" style="max-height:none">
       ${farms.length > 1 ? seg("rnF", farms.map(f=>[String(f.id), farmLabel(f)]), String(s.farm)) : ""}
-      <div style="margin-top:8px">${seg("rnT", [["hoy","Reporte del día"],["hist","Últimos 15 días"]], s.tab)}</div></div>`;
+      <div style="margin-top:8px">${seg("rnT", [["hoy","Reporte del día"],["hist","Últimos 15 días"], ...(rnMain() ? [["tabla","📊 Tablas 14 días"]] : [])], s.tab)}</div></div>`;
   if (s.tab==="hist"){ $("rnBody").innerHTML = h + rnHistHtml(); return; }
+  if (s.tab==="tabla" && rnMain()){ $("rnBody").innerHTML = h + rnTablesHtml(); return; }
   const c = rnCur, padOpts = cur => `<option value="">— potrero —</option>` + [...new Set(d.pads.map(p=>p.predio))].sort().map(pr=>`<optgroup label="${esc(pr)}">${
     d.pads.filter(p=>p.predio===pr).sort((a,b)=>byNumTxt(a.number, b.number)).map(p=>`<option value="${p.id}" ${+cur===p.id ? "selected" : ""}>${esc(pr)} ${esc(p.number)}</option>`).join("")}</optgroup>`).join("");
   const tot = c.rows.reduce((a,r)=>a + (+r.animals || 0), 0), horses = c.rows.reduce((a,r)=>a + (+r.horses || 0), 0);
@@ -4124,6 +4198,31 @@ function rnText(){
   const tk = Object.entries(c.tanks || {}).filter(([,v])=>v!=null && v!=="").map(([t,v])=>`${t.toLowerCase()} ${v} °C${rnHot(c, t) ? " ⚠️" : ""}`);
   return `Reporte ganadería ${farm ? farmLabel(farm) : ""} ${fmt(c.date)}\n` + c.rows.map(line).join("\n") + `\nTotal ${tot} 🐄` + (tk.length ? `\n🌡️ ${c.ttime ? c.ttime + " · " : ""}${tk.join(" · ")}` : "")
     + (feedTxt.length ? `\n🌾 Bultos: ${feedTxt.join(" · ")}` : "");
+}
+// ── Tablas de los últimos 14 días (solo Admin Principal): # animales, potrero y bultos de concentrado por lote ──
+const rnMain = () => myProfile==="Admin Principal";
+function rnTablesHtml(){
+  const d = rnData, days = Array.from({ length:14 }, (_, i)=>addDays(today(), -i));
+  const rep = d.rep.filter(r=>days.includes(r.report_date));
+  if (!rep.length) return `<div class="card"><div class="empty">Sin reportes en los últimos 14 días</div></div>`;
+  const lab = n => d.lots.find(l=>l.name===n)?.label || n, srt = n => d.lots.find(l=>l.name===n)?.sort ?? 999;
+  const grps = [...new Set(rep.map(r=>r.grp))].sort((a, b)=>srt(a) - srt(b) || a.localeCompare(b));
+  const get = (day, g) => rep.find(r=>r.report_date===day && r.grp===g);
+  const isConc = c => /concentrado/i.test(hsCatGet().supplies.find(m=>m.code===c)?.category || "");
+  const conc = r => (r?.feed || []).filter(f=>isConc(f.code)).reduce((a, f)=>a + (+f.bags || 0), 0);
+  const pad = r => r ? [r.paddock_id, r.paddock2_id].filter(Boolean).map(rnPadName).join(" + ") : "";
+  const n1 = v => v ? (Math.round(v * 10) / 10).toLocaleString("es-CO") : "";
+  const sticky = "position:sticky;left:0;background:var(--card);z-index:1";
+  const table = (title, sub, cell, total) => `<div class="card"><b>${title}</b><div class="sub">${sub}</div>
+    <div style="overflow-x:auto;margin-top:6px"><table class="ivt" style="font-size:12px;white-space:nowrap"><tr><th style="${sticky}">Día</th>${grps.map(g=>`<th style="text-align:right">${esc(lab(g))}</th>`).join("")}${total ? `<th style="text-align:right">Total</th>` : ""}</tr>
+      ${days.map(day=>{ const has = rep.some(r=>r.report_date===day);
+        return `<tr${has ? "" : ` style="opacity:.5"`}><td style="${sticky}"><b>${fmt(day).slice(0, 5)}</b></td>${grps.map(g=>`<td style="text-align:right">${cell(get(day, g))}</td>`).join("")}${total ? `<td style="text-align:right"><b>${total(day)}</b></td>` : ""}</tr>`; }).join("")}
+    </table></div></div>`;
+  const sumDay = (day, f) => rep.filter(r=>r.report_date===day).reduce((a, r)=>a + (f(r) || 0), 0);
+  return `<div class="sub" style="margin:0 2px 8px">Últimos 14 días · ${d.farm===7 ? "La Isla" : d.farm===1 ? "El Recodo" : "finca " + d.farm}. Los días sin reporte salen en gris.</div>`
+    + table("🐄 Animales por lote", "# de animales del reporte de cada día", r=>r?.animals ?? "", day=>sumDay(day, r=>+r.animals) || "")
+    + table("🌱 Potrero de cada lote", "Potrero (y 2º potrero) donde estuvo", r=>esc(pad(r)), null)
+    + table("🌾 Bultos de concentrado", "Bultos de concentrado que se le dieron a cada lote", r=>n1(conc(r)), day=>n1(sumDay(day, conc)));
 }
 function rnHistHtml(){
   const d = rnData, days15 = [...new Set(d.rep.map(r=>r.report_date))].sort().reverse().slice(0, 15);
@@ -4546,7 +4645,7 @@ const lsLactoSet = () => (lsLactoCache?.src === lsData ? lsLactoCache : (lsLacto
 function lsPick(all, k){
   const D = today();
   const CKO = ["EXREP","ECO1","ECO2","REPETIR","DPR","DP5","DPSEC"];
-  const f = { chequeo: x=>!!x.ck, secar: x=>x.preg && x.lac && x.dry && x.dry <= addDays(D, 14),
+  const f = { chequeo: x=>!!x.ck, secar: x=>x.preg && x.lac && x.dry && x.dry <= addDays(D, 14) && !/^HO/i.test(x.c.pen || ""),
     parto: x=>x.preg && x.exp && x.exp <= addDays(D, 21),
     sinserv: x=>x.lac && !x.preg && !x.svs.length && x.del > 60,
     repet: x=>!x.preg && x.svs.length >= 3,
@@ -4572,6 +4671,57 @@ function lsDetail(x, k){
   if (k==="abiertas") return `${x.del} d de parida · ${x.svs.length} servicio${x.svs.length===1?"":"s"}`;
   return "";
 }
+// tratamientos del chequeo que faltan por aplicar (desde hoy): por día, con totales de producto, y PDF / compartir
+let lsTxOpen = false, lsTxRows = null;
+async function lsTxLoad(){
+  const box = $("lsTx"); if (!box) return;
+  if (!navigator.onLine){ box.innerHTML = `<div class="empty">Necesitas señal.</div>`; return; }
+  const farm = lsState.farm, t0 = today();
+  const [tx, pl] = await Promise.all([
+    sb.from("treatments_cow").select("id,cow_id,start_date,protocol,notes,treatment_items(supply_code,dose,unit)").eq("farm_id", farm)
+      .or("protocol.like.Chequeo*,protocol.eq.Ovsynch").gte("start_date", t0).lte("start_date", addDays(t0, 30)).order("start_date"),
+    sb.from("cow_plans").select("cow_id,due_date,note").eq("farm_id", farm).eq("plan_type", "inseminar").eq("status", "pending").gte("due_date", t0).lte("due_date", addDays(t0, 30))]);
+  if (tx.error){ box.innerHTML = `<div class="empty">${esc(tx.error.message)}</div>`; return; }
+  await hsCatalog();
+  const pen = Object.fromEntries((lsData?.cows || []).map(c=>[c.id, c.pen])), sup = c => hsSupply(c)?.name || c;
+  lsTxRows = [...(tx.data || []).map(t=>({ d:t.start_date, cow:t.cow_id, pen:pen[t.cow_id] || "", what: t.protocol==="Ovsynch" ? (t.notes || "Ovsynch").replace(/ \(inicio.*\)$/, "") : t.protocol.replace(/^Chequeo · /, ""),
+      items:(t.treatment_items || []).map(i=>({ n:sup(i.supply_code), dose:+i.dose || 0, unit:i.unit || "" })) })),
+    ...(pl.data || []).map(p=>({ d:p.due_date, cow:p.cow_id, pen:pen[p.cow_id] || "", what:"Inseminar", items:[], ia:true }))]
+    .sort((a, b)=>a.d.localeCompare(b.d) || byNum(a.pen, b.pen) || byNum(a.cow, b.cow));
+  const days = [...new Set(lsTxRows.map(r=>r.d))];
+  const tot = rs => { const o = {}; rs.forEach(r=>r.items.forEach(i=>{ const k = i.n + "|" + i.unit; o[k] = (o[k] || 0) + i.dose; })); return Object.entries(o).map(([k, v])=>{ const [n, u] = k.split("|"); return `${n} <b>${Math.round(v*10)/10} ${u}</b>`; }).join(" · "); };
+  box.innerHTML = lsTxRows.length ? `<div class="sub" style="margin-top:6px">${lsTxRows.filter(r=>!r.ia).length} aplicaciones · ${lsTxRows.filter(r=>r.ia).length} para inseminar · próximos 30 días</div>
+    ${days.map(d=>{ const rs = lsTxRows.filter(r=>r.d===d), t = tot(rs);
+      return `<div class="ckpen" style="${d===t0 ? "color:var(--accent)" : ""}">${d===t0 ? "Hoy" : d===addDays(t0, 1) ? "Mañana" : new Date(d + "T12:00").toLocaleDateString("es-CO", { weekday:"long", day:"numeric", month:"short" })} <span class="sub">· ${fmt(d)} (${rs.length})</span></div>
+        ${t ? `<div class="sub">Tener a mano: ${t}</div>` : ""}
+        <table class="ivt" style="font-size:13px">${rs.map(r=>`<tr><td style="width:62px"><button class="lnk" data-cow="${esc(r.cow)}"><b>${esc(r.cow)}</b></button><div class="sub">${esc(r.pen)}</div></td>
+          <td>${r.ia ? "💉 <b>Inseminar</b>" : `<b>${esc(r.what)}</b>`}<div class="sub">${esc(r.items.map(i=>`${i.n} ${i.dose} ${i.unit}`).join(" + "))}</div></td></tr>`).join("")}</table>`; }).join("")}
+    <div class="row" style="gap:8px;margin-top:10px"><button class="btn ghost" id="lsTxPdf">📄 PDF</button><button class="btn ghost" id="lsTxShare">📤 Compartir</button></div>`
+    : `<div class="empty">No quedan tratamientos pendientes del chequeo 👍</div>`;
+}
+async function lsTxPdf(){
+  if (!lsTxRows?.length) return;
+  let JsPDF; try{ JsPDF = await lsLoadJsPdf(); }catch(e){ return toast("Se necesita señal la primera vez para armar el PDF"); }
+  const farm = jget("mkFarms", []).find(f=>f.id===lsState.farm), fname = farm ? farmLabel(farm) : "";
+  const doc = new JsPDF({ unit:"mm", format:"a4" }), M = 12; let y = M + 4;
+  doc.setFont("helvetica", "bold"); doc.setFontSize(14); doc.setTextColor(30, 110, 100);
+  doc.text(`TRATAMIENTOS PENDIENTES DEL CHEQUEO · ${fname} · ${fmt(today())}`, 105, y, { align:"center" }); y += 8;
+  doc.setTextColor(0);
+  [...new Set(lsTxRows.map(r=>r.d))].forEach(d=>{
+    const rs = lsTxRows.filter(r=>r.d===d), o = {};
+    rs.forEach(r=>r.items.forEach(i=>{ const k = i.n + " " + i.unit; o[k] = (o[k] || 0) + i.dose; }));
+    if (y > 270){ doc.addPage(); y = M; }
+    doc.setFont("helvetica", "bold"); doc.setFontSize(11); doc.text(`${new Date(d + "T12:00").toLocaleDateString("es-CO", { weekday:"long", day:"numeric", month:"long" })} (${rs.length})`, M, y); y += 5;
+    doc.setFont("helvetica", "normal"); doc.setFontSize(9);
+    if (Object.keys(o).length){ doc.splitTextToSize("Tener a mano: " + Object.entries(o).map(([k, v])=>`${k.replace(/ (\S+)$/, "")} ${Math.round(v*10)/10} ${k.split(" ").pop()}`).join(" · "), 186).forEach(l=>{ doc.text(l, M, y); y += 4; }); }
+    rs.forEach(r=>{ if (y > 285){ doc.addPage(); y = M; }
+      doc.rect(M, y - 3.5, 186, 5); doc.text(`${r.cow}`, M + 1, y); doc.text(r.pen, M + 18, y);
+      doc.text(doc.splitTextToSize(r.ia ? "INSEMINAR" : `${r.what}: ${r.items.map(i=>`${i.n} ${i.dose} ${i.unit}`).join(" + ")}`, 150)[0], M + 34, y); y += 5; });
+    y += 3; });
+  const file = new File([doc.output("blob")], `Tratamientos chequeo ${fname} ${today()}.pdf`, { type:"application/pdf" });
+  if (navigator.canShare?.({ files:[file] })){ try{ await navigator.share({ files:[file], title:file.name }); return; }catch(e){ if (e.name==="AbortError") return; } }
+  const a = document.createElement("a"); a.href = URL.createObjectURL(file); a.download = file.name; document.body.appendChild(a); a.click(); setTimeout(()=>{ URL.revokeObjectURL(a.href); a.remove(); }, 2000);
+}
 function renderListas(){
   const s = lsState, farms = (jget("mkFarms", []).length ? jget("mkFarms", []) : [{ id:1, herd:"RC" }, { id:7, herd:"ISLA" }]);
   if (!lsData){ $("lsBody").innerHTML = `<div class="card"><div class="empty">Abre las listas una vez con señal.</div></div>`; return; }
@@ -4583,6 +4733,9 @@ function renderListas(){
   $("lsBody").innerHTML = `<div class="card">${chips(farms.map(f=>[String(f.id), esc(farmLabel(f))]), String(s.farm), "data-lsf")}
       <div class="sub" style="margin-top:6px">Datos de hace ${age < 60 ? age + " min" : Math.round(age/60) + " h"} · <button class="lnk" id="lsReload">actualizar</button></div></div>
     <div class="rpk" style="margin-bottom:14px">${LS_LISTS.map(([k,t])=>`<div data-lsl="${k}" style="cursor:pointer;${s.list===k ? "outline:2px solid var(--accent)" : ""}"><b>${counts[k]}</b><span>${t}</span></div>`).join("")}</div>
+    <div class="card"><div style="display:flex;justify-content:space-between;align-items:center;gap:8px"><b>💊 Tratamientos pendientes del chequeo</b>
+        <button class="btn ghost" id="lsTxBtn" style="width:auto;padding:6px 12px">${lsTxOpen ? "Ocultar" : "Ver resumen"}</button></div>
+      <div id="lsTx">${lsTxOpen ? `<div class="sub" style="margin-top:6px">Cargando…</div>` : `<div class="sub">Lo que falta por aplicar (antibiótico, vitaminas, PGF2, baño, Ovsynch) e inseminar, por día y vaca, con lo que hay que tener a mano.</div>`}</div></div>
     <div class="card"><b>${L[1]} (${rows.length})</b><div class="sub">${L[2]}</div>
       ${s.list==="chequeo" && all.some(x=>x.doubt.length) ? `<div class="warn" style="margin-top:8px">⚠️ Servicios dudosos (terneras de menos de 12 meses con servicio; no entran al chequeo). Corrígelos en Interherd:
         ${all.filter(x=>x.doubt.length).map(x=>`<b>${esc(x.c.id)}</b> (${Math.floor(x.ageM)} m · servicio ${x.doubt.map(e=>fmt(e.d)).join(", ")})`).join(" · ")}</div>` : ""}
@@ -4607,6 +4760,10 @@ $("lsBody").addEventListener("click", async e=>{
   if (q("data-lso")){ s.ord = q("data-lso"); return renderListas(); }
   if (q("data-lsp")!=null){ s.pen = q("data-lsp"); return renderListas(); }
   if (t.id==="lsReload"){ await lsLoad(true); return renderListas(); }
+  if (t.id==="lsTxBtn"){ lsTxOpen = !lsTxOpen; renderListas(); if (lsTxOpen) lsTxLoad(); return; }
+  if (t.id==="lsTxPdf") return lsTxPdf();
+  if (t.id==="lsTxShare"){ const txt = `Tratamientos pendientes del chequeo · ${fmt(today())}\n` + (lsTxRows || []).map(r=>`${fmt(r.d)} · ${r.cow} (${r.pen}) · ${r.ia ? "INSEMINAR" : r.what + ": " + r.items.map(i=>`${i.n} ${i.dose} ${i.unit}`).join(" + ")}`).join("\n");
+    try{ if (navigator.share) await navigator.share({ text:txt }); else { await navigator.clipboard.writeText(txt); toast("Copiado: pégalo en WhatsApp"); } }catch(err){} return; }
   if (q("data-lsall")){ const on = q("data-lsall")==="1", all = lsView(lsCompute());
     all.forEach(x=>on ? s.sel.add(x.c.id) : s.sel.delete(x.c.id)); return renderListas(); }
   if (q("data-cow")){ e.preventDefault(); openCow(q("data-cow")); return; }
@@ -4738,12 +4895,14 @@ async function loadMastCow(id){
   const { data:c } = await sb.from("cows").select("id,pen,herd,status,active,birth_date,lactation_num").eq("id", id).maybeSingle();
   if (!c){ $("mastBody").innerHTML = `<div class="card"><div class="empty">No hay vaca ${esc(id)}</div></div>`; return; }
   const since = c.birth_date || "1900-01-01";
-  const [ms, cv] = await Promise.all([
+  const [ms, cv, cu] = await Promise.all([
     sb.from("cow_mastitis").select("*").eq("cow_id", id).gte("check_date", since).order("check_date"),
     sb.from("cow_events").select("event_date,category").eq("cow_id", id).eq("event_type", "calving").gte("event_date", since).order("event_date"),
+    sb.from("mastitis_cultures").select("*").eq("cow_id", id).order("sample_date", { ascending:false }),
   ]);
-  const list = ms.data || [], calv = (cv.data || []).map(e=>e.event_date);
-  if (!list.length){ $("mastBody").innerHTML = `<div class="card"><b>${esc(id)}</b><div class="empty">Sin chequeos de mastitis</div></div>`; return; }
+  const list = ms.data || [], calv = (cv.data || []).map(e=>e.event_date), cult = cu.data || [];
+  const cultHtml = cult.length ? `<div class="card"><b>🧫 Cultivos (${cult.length})</b>${cult.map(x=>mcRowHtml(x, false)).join("")}</div>` : "";
+  if (!list.length){ $("mastBody").innerHTML = `<div class="card"><b>${esc(id)}</b><div class="empty">Sin chequeos de mastitis</div></div>` + cultHtml; return; }
   // lactancia de cada chequeo = último parto antes del chequeo
   const n = calv.length, L = c.lactation_num ?? n;
   const segs = [null, ...calv].map((start, i)=>({ start, end: calv[i] || null, num: i===0 ? L-n : (L>=n ? L-(n-i) : i),
@@ -4764,6 +4923,7 @@ async function loadMastCow(id){
       ${mastLegend()}
       <div style="margin-top:6px"><a class="lnk" href="#vaca/${encodeURIComponent(c.id)}">Ver hoja de vida →</a></div>
     </div>
+    ${cultHtml}
     <div class="card"><b>Por lactancia</b>
       ${segs.slice().reverse().map((sg, i)=>{ const ep = mastEpisodes(sg.rows), af = affected(sg.rows);
         return `<details class="lac" ${i===0?"open":""}><summary><b>${sg.num > 0 ? "Lactancia "+sg.num : "Antes del primer parto registrado"}</b>
@@ -4774,11 +4934,117 @@ async function loadMastCow(id){
 }
 // ═══ CHEQUEO DE MASTITIS (CMT): se registran solo las vacas enfermas; las demás quedan sanas ═══
 // Se trabaja en el celular (borrador por finca, lote, fecha y tipo) y se sube al final. El tratamiento se escribe después.
-const MT_VALS = [["0","0"],["1","1"],["2","2"],["3","3"],["4","C"],["P","P"]];
 const MT_LOT = { JCAL:"JUNCAL", PARAI:"PARAISO", "R 1":"R1", "R 2":"R2", "R 3":"R3" };
 const MT_Q = ["ai","ad","pi","pd"];
 let mt = null;
-const mtKey = () => `mt:${mt.farm}|${mt.pen}|${mt.date}|${mt.kind}`;
+// Tratamientos de mastitis: las opciones salen de lo que más se ha usado en las fincas (Base de Datos Mastitis, 2025-2026):
+// Neoclordelyn 4 jeringas, apartar vaca, Veterflucina 25 mL × 4 dosis, Rilexine NP + antiinflamatorio, Unitral, Pentriland…
+// Al programar queda en Salud (descuenta del inventario y calcula el retiro) y el texto queda como tratamiento del chequeo.
+const MT_QN = { ai:"DELANTERO IZQUIERDO", ad:"DELANTERO DERECHO", pi:"TRASERO IZQUIERDO", pd:"TRASERO DERECHO" };
+const mtQTxt = qs => qs.length===1 ? `EL PEZON ${MT_QN[qs[0]]}` : `LOS PEZONES ${qs.map(q=>MT_QN[q]).join(", ").replace(/, ([^,]*)$/, " Y $1")}`;
+const MT_TX = [
+  { k:"apartar", t:"Apartar vaca", txt:()=>"APARTAR VACA" },
+  { k:"antiinf", t:"Antiinflamatorio", pick:"Antiinflamatorio / analgésico", every:24, days:1, route:"IM", txt:()=>"COLOCAR UN ANTIINFLAMATORIO" },
+  { k:"neo", t:"Neoclordelyn · 4 jeringas", code:"NEOCLOR", perQ:1, every:12, days:2, route:"Intramamaria", txt:q=>`4 JERINGAS DE NEOCLORDELYN POR ${mtQTxt(q)}` },
+  { k:"veterflu", t:"Veterflucina 25 mL × 4 dosis", code:"VETERFLU", perQ:25, every:12, days:2, route:"Intramamaria", txt:q=>`25 CM DE VETERFLUCINA POR ${mtQTxt(q)} POR 4 DOSIS` },
+  { k:"ril", t:"Rilexine NP · 4 jeringas", code:"RIL200", perQ:1, every:12, days:2, route:"Intramamaria", txt:q=>`4 JERINGAS DE RILEXINE NP POR ${mtQTxt(q)}` },
+  { k:"rutina", t:"Reforzar rutina de ordeño", txt:()=>"REFORZAR RUTINA DE ORDEÑO" },
+  { k:"unitral", t:"Unitral 25 mL × 2 dosis", code:"UNITRAL", dose:25, every:24, days:2, route:"IM", txt:()=>"25 CM DE UNITRAL POR 2 DOSIS" },
+  { k:"pentril", t:"Pentriland inyectado", code:"PENTRIL", dose:1, every:24, days:1, route:"IM", txt:()=>"COLOCAR UN PENTRILAND INYECTADO" },
+  { k:"pezonil", t:"Pezonil · 4 jeringas", code:"PEZONIL", perQ:1, every:12, days:2, route:"Intramamaria", txt:q=>`4 JERINGAS DE PEZONIL POR ${mtQTxt(q)}` },
+  { k:"amoxisol", t:"Amoxisol 25 mL × 2 dosis", code:"AMOXISOL", dose:25, every:24, days:2, route:"IM", txt:()=>"25 CM DE AMOXISOL POR 2 DOSIS" },
+  { k:"marbo", t:"Marbofloxacina 15 mL × 5 días", code:"MARBOQ", dose:15, every:24, days:5, route:"IM", txt:()=>"15 ML MARBOFLOXACINA X 5 DIAS INTRAMUSCULAR" },
+  { k:"cultivo", t:"Cultivo y antibiograma", txt:()=>"REALIZAR CULTIVO Y ANTIBIOGRAMA" },
+  { k:"terminar", t:"Terminar tratamiento anterior", txt:()=>"TERMINAR TRATAMIENTO ANTERIOR" },
+  { k:"revisar", t:"🩺 Revisar JC", txt:()=>"REVISAR JC" }];
+// marcada para que Juan la revise: le sale el aviso en el Inicio
+const mtJC = r => !!(r.txp?.sel?.includes("revisar") || /REVISAR JC/i.test(`${r.tx || ""} ${r.obs || ""}`));
+// cuartos a tratar: los clínicos (C); si no hay, los de grado 2 o 3
+const mtTxQ0 = r => { const c = MT_Q.filter(q=>r[q]==="4"); return c.length ? c : MT_Q.filter(q=>+r[q] >= 2); };
+// sugerido según lo que se le ha puesto antes a la vaca (últimos 60 días) y lo más usado en las fincas
+function mtTxSuggest(id, r){
+  const clin = MT_Q.some(q=>r[q]==="4"), prev = (mt.txh?.[id] || []).filter(x=>x.d >= addDays(mt.date, -60)).map(x=>x.t).join(" ");
+  if (!clin) return ["rutina"];
+  if (/RILEXINE/.test(prev)) return ["apartar", "veterflu"];
+  if (/NEOCLOR|NEOCLIR/.test(prev)) return ["apartar", "antiinf", "ril"];
+  if (/VETERFLU/.test(prev)) return ["apartar", "cultivo"];
+  return ["apartar", "neo"];
+}
+// texto del tratamiento (igual que en el Excel de mastitis)
+const mtTxText = p => [...MT_TX.filter(x=>p.sel.includes(x.k)).map(x=>x.txt(p.q.length ? p.q : ["ai"])), p.note].filter(Boolean).join(" + ");
+async function mtTxHist(){
+  const d = mtDraft(), ids = Object.keys(d.rows).filter(id=>!(id in (mt.txh ||= {})));
+  if (!ids.length || !navigator.onLine) return;
+  for (let i = 0; i < ids.length; i += 150){
+    const { data } = await sb.from("cow_mastitis").select("cow_id,check_date,observation,treatment").in("cow_id", ids.slice(i, i + 150))
+      .gte("check_date", addDays(mt.date, -120)).lt("check_date", mt.date).order("check_date");
+    ids.slice(i, i + 150).forEach(id=>{ mt.txh[id] = []; });
+    (data || []).forEach(x=>{ const t = [x.observation, x.treatment].filter(Boolean).join(" · ").toUpperCase(); if (t) (mt.txh[x.cow_id] ||= []).push({ d:x.check_date, t }); });
+  }
+  if (location.hash==="#mastitis/chequeo" && (mt.mode==="tx" || mt.mode==="rev")) mtRender();
+}
+function mtTxHtml(d){
+  const rows = Object.entries(d.rows).sort((a, b)=>byNum(a[0], b[0]));
+  if (!rows.length) return `<div class="empty">Primero anota las vacas enfermas en "Lista del lote" o "Buscar vaca".</div>`;
+  const anti = hsCatGet().supplies.filter(m=>m.active!==false && m.category==="Antiinflamatorio / analgésico");
+  let changed = false;
+  const cards = rows.map(([id, r])=>{
+    if (!r.txp && mt.txh?.[id]){ r.txp = { sel:mtTxSuggest(id, r), q:mtTxQ0(r), note:"", auto:true }; changed = true; }
+    const p = r.txp, h = (mt.txh?.[id] || []).slice(-2).reverse();
+    if (!p) return `<div class="hscard"><b>${esc(id)}</b> ${udder(r)} <span class="sub">revisando historial…</span></div>`;
+    if (p.done) return `<div class="hscard" style="border-left:4px solid var(--s0)"><b style="font-size:18px">${esc(id)}</b> ${udder(r)}
+      <div style="margin-top:4px"><b>💊 ${esc(r.tx || "")}</b></div><div class="sub">✓ Programado ${fmt(p.at || mt.date)} · está en Salud${p.items ? " (descuenta del inventario)" : ""}</div></div>`;
+    return `<div class="hscard" data-mttxc="${esc(id)}">
+      <div style="display:flex;justify-content:space-between;align-items:center;gap:6px"><div><b style="font-size:18px">${esc(id)}</b> ${udder(r)}</div>
+        ${p.auto ? `<span class="tag">sugerido</span>` : ""}</div>
+      ${h.length ? `<div class="sub" style="margin-top:2px">Antes: ${h.map(x=>`${fmt(x.d)} ${esc(x.t.slice(0, 90))}`).join(" · ")}</div>` : `<div class="sub">Sin tratamientos en los últimos 120 días</div>`}
+      <div class="sub" style="margin-top:6px">Cuartos</div>
+      <div class="chips sm ckpan" style="padding:0"><div class="chips sm">${MT_Q.map(q=>`<button class="${p.q.includes(q) ? "on" : ""}" data-mttxq="${esc(id)}|${q}">${q.toUpperCase()}${+r[q] ? " · " + r[q] : ""}</button>`).join("")}</div></div>
+      <div class="sub" style="margin-top:6px">Tratamiento (puedes escoger varios)</div>
+      <div class="chips sm ckpan" style="padding:0"><div class="chips sm">${MT_TX.map(x=>`<button class="${p.sel.includes(x.k) ? "on" : ""}" data-mttxk="${esc(id)}|${x.k}">${esc(x.t)}</button>`).join("")}</div></div>
+      ${p.sel.includes("antiinf") ? `<div class="row" style="gap:6px;margin-top:6px;align-items:center"><span class="sub" style="flex:none">Antiinflamatorio</span>
+        <select data-mttxai="${esc(id)}" style="flex:1;min-width:0;padding:8px"><option value="">— producto (opcional) —</option>${anti.map(m=>`<option value="${esc(m.code)}" ${p.ai?.code===m.code ? "selected" : ""}>${esc(m.name)}</option>`).join("")}</select>
+        <input data-mttxad="${esc(id)}" inputmode="decimal" placeholder="mL" value="${esc(p.ai?.dose ?? "")}" style="flex:0 0 64px;padding:8px"></div>` : ""}
+      <input data-mttxn="${esc(id)}" placeholder="Otra indicación (opcional)" value="${esc(p.note || "")}" style="margin-top:6px">
+      <div class="sub" style="margin-top:6px;color:var(--ink)">→ ${esc(mtTxText(p)) || "<i>sin tratamiento</i>"}</div></div>`; });
+  if (changed) mtSave(d);
+  const ready = rows.filter(([, r])=>r.txp && !r.txp.done && r.txp.sel.length).length;
+  return `<div class="sub" style="margin-bottom:6px">Para cada vaca enferma: escoge los cuartos y el tratamiento. Viene <b>sugerido</b> según lo que se le ha puesto antes y lo más usado en las fincas. Al programar queda en <b>Salud</b> (descuenta del inventario y calcula el retiro de leche).</div>
+    ${cards.join("")}
+    ${ready ? `<button class="btn" id="mtTxGo" style="margin-top:10px">💊 Programar tratamientos (${ready} vaca${ready===1 ? "" : "s"})</button>` : ""}`;
+}
+// programar: un tratamiento en Salud por vaca con sus productos, y el texto en el chequeo
+async function mtTxProgram(){
+  const err = m => ($("mtErr").textContent = m), d = mtDraft();
+  if (!navigator.onLine) return err("Necesitas señal para programar los tratamientos.");
+  const todo = Object.entries(d.rows).filter(([, r])=>r.txp && !r.txp.done && r.txp.sel.length);
+  if (!todo.length) return;
+  if (!confirm(`Programar el tratamiento a ${todo.length} vaca${todo.length===1 ? "" : "s"}?\n\n${todo.map(([id, r])=>`${id}: ${mtTxText(r.txp)}`).join("\n")}`)) return;
+  $("mtTxGo").disabled = true;
+  const sup = c => hsCatGet().supplies.find(m=>m.code===c), who = store.get("myName") || myProfile || "Mastitis";
+  let ok = 0;
+  for (const [id, r] of todo){
+    const p = r.txp, nq = Math.max(1, p.q.length), txt = mtTxText(p);
+    const items = MT_TX.filter(x=>p.sel.includes(x.k) && (x.code || (x.pick && p.ai?.code && +String(p.ai.dose || "").replace(",", ".") > 0))).map(x=>{
+      const code = x.code || p.ai.code, dose = x.perQ ? x.perQ * nq : x.dose ?? +String(p.ai.dose).replace(",", ".");
+      return sup(code) ? { supply_code:code, dose, unit:sup(code).unit, route:x.route, every_hours:x.every, days:x.days } : null; }).filter(Boolean);
+    if (items.length){
+      p.cid ||= crypto.randomUUID ? crypto.randomUUID() : String(Date.now()) + Math.random();
+      let { data:t, error } = await sb.from("treatments_cow").upsert({ client_id:p.cid, farm_id:mt.farm, cow_id:id, start_date:mt.date, diagnosis:"Mastitis clínica",
+        protocol:"Mastitis", prescribed_by:who, notes:txt }, { onConflict:"client_id", ignoreDuplicates:true }).select("id");
+      if (!error && !t?.length) ({ data:t, error } = await sb.from("treatments_cow").select("id").eq("client_id", p.cid));
+      if (error || !t?.length){ err(`${id}: no se pudo programar (${error?.message || "sin permiso"})`); continue; }
+      const { data:has } = await sb.from("treatment_items").select("id").eq("treatment_id", t[0].id).limit(1);
+      if (!has?.length){ const e2 = (await sb.from("treatment_items").insert(items.map(i=>({ ...i, treatment_id:t[0].id })))).error;
+        if (e2){ err(`${id}: el tratamiento quedó sin productos (${e2.message})`); continue; } }
+    }
+    r.tx = txt; p.done = true; p.items = items.length; p.at = today(); ok++;
+    if (r.up) await sb.from("cow_mastitis").update({ treatment:txt, ...(mtJC(r) ? { review_jc:true } : {}) }).eq("natural_key", `app:${id}|${mt.date}|${mt.kind}`);
+  }
+  mtSave(d); toast(`Tratamiento programado ✓ (${ok} vaca${ok===1 ? "" : "s"})`); mtRender();
+}
+// el chequeo es por lote; la revisión de vacas sueltas es de toda la finca
+const mtKey = () => `mt:${mt.farm}|${mt.kind==="R" ? "*" : mt.pen}|${mt.date}|${mt.kind}`;
 const mtDraft = () => jget(mtKey(), { rows:{} });
 const mtSave = d => jset(mtKey(), d);
 async function mtShow(){
@@ -4797,38 +5063,114 @@ async function mtShow(){
 }
 const mtCows = () => mt.pens[mt.farm] || [];
 function mtRender(){
+  const rev = mt.mode==="rev"; mt.kind = rev ? "R" : "C";
   const lots = [...new Set(mtCows().filter(c=>/Lac/.test(c.status || "")).map(c=>c.pen || "—"))].sort(byNum);
   if (!lots.includes(mt.pen)) mt.pen = lots[0] || "";
   const d = mtDraft(), rows = Object.entries(d.rows), up = rows.filter(([, r])=>r.up).length;
   const clin = rows.filter(([, r])=>MT_Q.some(q=>r[q]==="4")).length, lostN = rows.filter(([, r])=>MT_Q.some(q=>r[q]==="P")).length;
-  $("mastBody").innerHTML = `<div class="card"><div style="display:flex;justify-content:space-between;align-items:center"><b>✍️ Chequeo de mastitis</b><a class="lnk" href="#mastitis">‹ Volver</a></div>
-      <div class="sub">Solo se registran las vacas enfermas: las que no se anotan quedan sanas.</div>
-      ${mt.farms.length > 1 ? `<div class="sheet" style="padding:0;background:none;max-height:none;margin-top:8px">${seg("mtF", mt.farms.map(f=>[String(f.id), farmLabel(f)]), String(mt.farm))}</div>` : ""}
-      <div class="chips sm ckpan" style="padding:0;margin-top:8px"><div class="chips sm">${lots.map(l=>`<button class="${mt.pen===l ? "on" : ""}" data-mtpen="${esc(l)}">${esc(l)}</button>`).join("")}</div></div>
-      <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:8px">
-        <input type="date" id="mtDate" value="${mt.date}" max="${today()}" style="min-width:0">
-        <div class="sheet" style="padding:0;background:none;max-height:none">${seg("mtK", [["C","Chequeo"],["R","Revisión"]], mt.kind)}</div></div>
-    </div>
-    <div class="card"><div class="chips sm ckpan" style="padding:0;margin-bottom:8px"><div class="chips sm" style="margin:0">
-        <button class="${mt.mode==="lista" ? "on" : ""}" data-mtmode="lista">☰ Lista del lote</button><button class="${mt.mode==="buscar" ? "on" : ""}" data-mtmode="buscar">🔍 Buscar vaca</button></div></div>
-      ${mt.mode==="lista" ? mtListHtml(d) : `<div class="row" style="gap:6px"><input id="mtId" placeholder="N° de la vaca enferma" autocapitalize="characters" autocomplete="off" inputmode="text" style="flex:1">
+  const search = `<div class="row" style="gap:6px"><input id="mtId" placeholder="${rev ? "N° de la vaca" : "N° de la vaca enferma"}" autocapitalize="characters" autocomplete="off" inputmode="text" style="flex:1">
       <button class="btn" id="mtGo" style="width:auto">Abrir</button></div>
-      <div id="mtCow">${mt.cur ? mtCowHtml(mt.cur) : `<div class="sub" style="margin-top:6px">Escribe el número y toca Abrir: verás su historial de mastitis antes de anotar.</div>`}</div>`}
-      <div id="mtPrev"></div></div>
-    <div class="card"><div style="display:flex;justify-content:space-between;align-items:center;gap:8px"><b>Vacas enfermas en este chequeo (${rows.length})</b>
+      <div id="mtCow">${mt.cur ? mtCowHtml(mt.cur) : `<div class="sub" style="margin-top:6px">Escribe el número y toca Abrir: verás su historial de mastitis${rev ? "" : " antes de anotar"}.</div>`}</div>`;
+  $("mastBody").innerHTML = `<div class="card"><div style="display:flex;justify-content:space-between;align-items:center"><b>✍️ Mastitis</b><a class="lnk" href="#mastitis">‹ Volver</a></div>
+      ${mt.farms.length > 1 ? `<div class="sheet" style="padding:0;background:none;max-height:none;margin-top:8px">${seg("mtF", mt.farms.map(f=>[String(f.id), farmLabel(f)]), String(mt.farm))}</div>` : ""}
+      <div class="chips ckpan" style="padding:0;margin-top:8px"><div class="chips" style="margin:0">
+        <button class="${rev ? "" : "on"}" data-mtmode="lista">📋 Chequeo del lote</button><button class="${rev ? "on" : ""}" data-mtmode="rev">🩺 Revisión de vacas</button></div></div>
+      <div class="sub">${rev ? "Vacas sueltas que se revisan (después de un tratamiento o porque se vieron mal): busca la vaca, anota los cuartos y el tratamiento." : "Solo se registran las vacas enfermas: las que no se anotan quedan sanas."}</div>
+      ${rev ? "" : `<div class="chips sm ckpan" style="padding:0;margin-top:8px"><div class="chips sm">${lots.map(l=>`<button class="${mt.pen===l ? "on" : ""}" data-mtpen="${esc(l)}">${esc(l)}</button>`).join("")}</div></div>`}
+      <input type="date" id="mtDate" value="${mt.date}" max="${today()}" style="margin-top:8px">
+    </div>
+    ${rev ? `<div class="card"><b>🩺 Revisión</b>${search}<div id="mtPrev"></div></div>
+      ${rows.length ? `<div class="card"><b>💊 Tratamiento</b>${mtTxHtml(d)}</div>` : ""}`
+    : `<div class="card">${mtKpiHtml(d)}<div class="chips sm ckpan" style="padding:0;margin:10px 0 8px"><div class="chips sm" style="margin:0">
+        <button class="${mt.mode==="lista" ? "on" : ""}" data-mtmode="lista">☰ Lista del lote</button><button class="${mt.mode==="buscar" ? "on" : ""}" data-mtmode="buscar">🔍 Buscar vaca</button>
+        <button class="${mt.mode==="tx" ? "on" : ""}" data-mtmode="tx">💊 Tratamientos${rows.length ? ` (${rows.filter(([, r])=>r.txp?.done).length}/${rows.length})` : ""}</button></div></div>
+      ${mt.mode==="tx" ? mtTxHtml(d) : mt.mode==="lista" ? mtListHtml(d) : search}
+      <div id="mtPrev"></div></div>`}
+    <div class="card"><div style="display:flex;justify-content:space-between;align-items:center;gap:8px"><b>${rev ? "Vacas revisadas" : "Vacas enfermas en este chequeo"} (${rows.length})</b>
         <span class="sub">${clin} con clínica · ${lostN} con cuarto perdido</span></div>
       ${mastLegend()}
-      <table class="ivt" style="font-size:13px;margin-top:6px">${rows.sort((a, b)=>byNum(a[0], b[0])).map(([id, r])=>`<tr><td><b>${esc(id)}</b></td><td>${udder(r)}</td>
+      <table class="ivt" style="font-size:13px;margin-top:6px">${rows.sort((a, b)=>byNum(a[0], b[0])).map(([id, r])=>`<tr><td><b>${esc(id)}</b>${mtJC(r) ? `<div class="tag" style="margin:2px 0 0;background:var(--mq4);color:#fff">Revisar JC</div>` : ""}</td><td>${udder(r)}</td>
         <td class="sub">${esc(r.obs || "")}${r.up ? ` <span class="tag" style="background:var(--s0);color:#fff">subida</span>` : ""}
           ${r.up ? `<div class="row" style="gap:4px;margin-top:4px"><input data-mttx="${esc(id)}" placeholder="💊 tratamiento" value="${esc(r.tx || "")}" style="flex:1;min-width:0;padding:6px;font-size:13px"><button class="lnk" data-mttxs="${esc(id)}">guardar</button></div>` : ""}</td>
         <td style="white-space:nowrap">${r.up ? "" : `<button class="lnk" data-mted="${esc(id)}">editar</button> <button class="del" data-mtdel="${esc(id)}">✕</button>`}</td></tr>`).join("")
         || `<tr><td><div class="empty">Aún no hay vacas anotadas</div></td></tr>`}</table>
       <div class="row" style="gap:8px;margin-top:10px;flex-wrap:wrap">
-        ${rows.length > up ? `<button class="btn" id="mtUp" style="width:auto">⬆️ Subir chequeo (${rows.length - up})</button>` : ""}
-        ${rows.length ? `<button class="btn ghost" id="mtTxt" style="width:auto">⬇️ .txt</button><button class="btn ghost" id="mtPdf" style="width:auto">📄 PDF</button>` : ""}</div>
-      <div class="err" id="mtErr"></div></div>`;
-  mtPrevLot();
-  if (mt.mode==="lista") mtLotLast();
+        ${rows.length > up ? `<button class="btn" id="mtUp" style="width:auto">⬆️ Subir ${rev ? "revisión" : "chequeo"} (${rows.length - up})</button>` : ""}
+        ${rows.length ? `<button class="btn ghost" id="mtXls" style="width:auto">📊 Excel</button><button class="btn ghost" id="mtPdf" style="width:auto">📄 PDF</button><button class="btn ghost" id="mtTxt" style="width:auto">⬇️ .txt</button>` : ""}</div>
+      <div class="err" id="mtErr"></div></div>
+    ${rev ? "" : `<div class="card" id="mtChart"></div>`}`;
+  if (rev) mtRevRecent(); else { mtPrevLot(); mtLotLast(); mtChart(); }
+  if (mt.mode==="tx" || rev){ mtTxHist(); if (!hsCatGet().supplies.length && navigator.onLine && !mt.catTry){ mt.catTry = true; hsCatalog().then(()=>{ if (mt.mode==="tx" || mt.mode==="rev") mtRender(); }); } }
+}
+// ── indicadores del chequeo: pezones evaluados (4 × vacas − perdidos), sanos (evaluados − afectados), % hato sano y % por grado ──
+function mtStats(d){
+  const last = mt.lotLast[mt.pen] || {}, ids = new Set(mtLotCows().map(c=>c.id)), g = { 1:0, 2:0, 3:0, 4:0 };
+  Object.keys(d.rows).forEach(id=>ids.add(id));
+  let lost = 0;
+  ids.forEach(id=>{ const r = d.rows[id] || last[id]; if (!r) return;
+    MT_Q.forEach(q=>{ if (r[q]==="P") lost++; else if (d.rows[id] && g[r[q]]!=null) g[r[q]]++; }); });   // de las no anotadas solo cuenta el cuarto perdido
+  const ev = 4 * ids.size - lost, af = g[1] + g[2] + g[3] + g[4];
+  return { cows:ids.size, lost, ev, ok:ev - af, af, g };
+}
+const mtPct = (a, b) => b ? `${(Math.round(1000 * a / b) / 10).toLocaleString("es-CO")}%` : "—";
+function mtKpiHtml(d){
+  const s = mtStats(d);
+  return `<div class="rpk"><div><b>${s.cows}</b><span>vacas</span></div><div><b>${s.ev}</b><span>pezones evaluados${s.lost ? ` (${s.lost} perdidos)` : ""}</span></div>
+      <div><b style="color:var(--s0)">${s.ok}</b><span>pezones sanos</span></div><div><b style="color:var(--s0)">${mtPct(s.ok, s.ev)}</b><span>hato sano</span></div></div>
+    <div class="mtgr">${[1, 2, 3, 4].map(k=>`<span class="${k < 3 ? "lt" : ""}" style="background:var(--mq${k})">${k}: ${mtPct(s.g[k], s.ev)} <small>(${s.g[k]})</small></span>`).join("")}</div>`;
+}
+// al subir el chequeo se guardan los indicadores del lote (mastitis_checks) y se grafican en el tiempo
+async function mtSaveStats(){
+  const s = mtStats(mtDraft()), lot = MT_LOT[mt.pen] || mt.pen;
+  const { error } = await sb.from("mastitis_checks").upsert({ farm_id:mt.farm, lot, check_date:mt.date, cows:s.cows, lost:s.lost,
+    g1:s.g[1], g2:s.g[2], g3:s.g[3], g4:s.g[4], source:"app" }, { onConflict:"farm_id,lot,check_date" });
+  if (error) console.warn("indicadores mastitis", error.message);
+  mt.chart = null; mtChart();
+}
+async function mtChart(){
+  if (!$("mtChart") || !navigator.onLine) return;
+  const lot = MT_LOT[mt.pen] || mt.pen, key = `${mt.farm}|${lot}`;
+  if (mt.chart?.key!==key){
+    const { data, error } = await sb.from("mastitis_checks").select("check_date,cows,lost,g1,g2,g3,g4").eq("farm_id", mt.farm).eq("lot", lot)
+      .gte("check_date", addDays(today(), -540)).order("check_date");
+    mt.chart = { key, data: error ? null : data || [] };
+  }
+  const box = $("mtChart"); if (box && mt.chart.key===`${mt.farm}|${MT_LOT[mt.pen] || mt.pen}`) box.innerHTML = mtChartSvg(mt.chart.data, lot);
+}
+function mtChartSvg(xs, lot){
+  const head = `<b>📈 ${esc(lot)}: indicadores en el tiempo</b>`;
+  if (xs==null) return head + `<div class="sub">Falta correr SQL/mastitis_registro.sql para guardar los indicadores.</div>`;
+  if (!xs.length) return head + `<div class="empty">Al subir el chequeo se guardan los indicadores y aparece aquí la gráfica.</div>`;
+  const pts = xs.map(x=>{ const ev = 4 * x.cows - x.lost, g = [x.g1, x.g2, x.g3, x.g4]; return { d:x.check_date, ok: ev ? 100 * (ev - g.reduce((a, b)=>a + b, 0)) / ev : 0, g:g.map(v=>ev ? 100 * v / ev : 0) }; });
+  const W = 340, L = 30, R = 10, T = 12, B = 20, n = pts.length, X = i => n===1 ? (L + W - R) / 2 : L + i * (W - L - R) / (n - 1);
+  const dm = d => `${d.slice(8)}/${d.slice(5, 7)}`, step = Math.max(1, Math.ceil(n / 6));
+  const xl = (H) => pts.map((p, i)=>i % step===0 || i===n - 1 ? `<text x="${X(i)}" y="${H - 5}" font-size="9" text-anchor="${n > 1 && i===n - 1 ? "end" : n > 1 && i===0 ? "start" : "middle"}" fill="var(--muted)">${dm(p.d)}</text>` : "").join("");
+  // 1) % hato sano
+  const H1 = 140, lo = Math.max(0, Math.floor(Math.min(...pts.map(p=>p.ok)) / 5) * 5 - 5), Y = v => T + (100 - v) / (100 - lo || 1) * (H1 - T - B);
+  const grid1 = [lo, (lo + 100) / 2, 100].map(v=>`<line x1="${L}" x2="${W - R}" y1="${Y(v)}" y2="${Y(v)}" stroke="var(--line)"/><text x="${L - 4}" y="${Y(v) + 3}" font-size="9" text-anchor="end" fill="var(--muted)">${Math.round(v)}</text>`).join("");
+  const svg1 = `<svg viewBox="0 0 ${W} ${H1}" style="width:100%;height:auto;display:block">${grid1}
+    <polyline points="${pts.map((p, i)=>`${X(i)},${Y(p.ok)}`).join(" ")}" fill="none" stroke="var(--s0)" stroke-width="2"/>
+    ${pts.map((p, i)=>`<circle cx="${X(i)}" cy="${Y(p.ok)}" r="3" fill="var(--s0)"><title>${fmt(p.d)}: ${p.ok.toFixed(1)}% sano</title></circle>`).join("")}
+    <text x="${X(n - 1)}" y="${Y(pts[n - 1].ok) - 6}" font-size="10" font-weight="700" text-anchor="${n===1 ? "middle" : "end"}" fill="var(--ink)">${pts[n - 1].ok.toFixed(1)}%</text>${xl(H1)}</svg>`;
+  // 2) % de pezones por grado (barras apiladas)
+  const H2 = 130, mx = Math.max(1, ...pts.map(p=>p.g.reduce((a, b)=>a + b, 0))) * 1.15, Y2 = v => T + (1 - v / mx) * (H2 - T - B), bw = Math.max(4, Math.min(18, (W - L - R) / n * 0.6));
+  const grid2 = [0, mx / 2, mx].map(v=>`<line x1="${L}" x2="${W - R}" y1="${Y2(v)}" y2="${Y2(v)}" stroke="var(--line)"/><text x="${L - 4}" y="${Y2(v) + 3}" font-size="9" text-anchor="end" fill="var(--muted)">${v.toFixed(v < 10 ? 1 : 0)}</text>`).join("");
+  const bars = pts.map((p, i)=>{ let acc = 0; return p.g.map((v, k)=>{ const y0 = Y2(acc), y1 = Y2(acc += v);
+    return v ? `<rect x="${X(i) - bw / 2}" y="${y1}" width="${bw}" height="${Math.max(0.5, y0 - y1)}" fill="var(--mq${k + 1})"><title>${fmt(p.d)} · grado ${k + 1}: ${v.toFixed(1)}%</title></rect>` : ""; }).join(""); }).join("");
+  const svg2 = `<svg viewBox="0 0 ${W} ${H2}" style="width:100%;height:auto;display:block">${grid2}${bars}${xl(H2)}</svg>`;
+  return head + `<div class="sub" style="margin-top:4px">% hato sano (pezones sanos / evaluados) · ${n} chequeo${n===1 ? "" : "s"}</div>${svg1}
+    <div class="sub" style="margin-top:8px">% de pezones por grado</div>${svg2}
+    <div class="legend">${[1, 2, 3, 4].map(k=>`<span><i style="background:var(--mq${k});border-radius:3px"></i>${k===4 ? "4 clínica" : "Grado " + k}</span>`).join("")}</div>`;
+}
+// revisión: las vacas de la finca que salieron con mastitis el último mes (para abrirlas rápido)
+async function mtRevRecent(){
+  if (!navigator.onLine) return;
+  const ids = new Set(mtCows().map(c=>c.id));
+  const { data } = await sb.from("cow_mastitis").select("cow_id,check_date,ai,ad,pi,pd").gte("check_date", addDays(mt.date, -30)).lte("check_date", mt.date).order("check_date");
+  const last = {}; (data || []).filter(x=>ids.has(x.cow_id) && MT_Q.some(q=>/^[1-4]$/.test(x[q] || ""))).forEach(x=>{ last[x.cow_id] = x; });
+  const xs = Object.values(last).sort((a, b)=>byNum(a.cow_id, b.cow_id)), box = $("mtPrev"); if (!box || !xs.length) return;
+  box.innerHTML = `<details class="ckmore" style="margin-top:8px"><summary class="lnk">Con mastitis el último mes (${xs.length} vacas)</summary>
+    <div class="list" style="margin-top:6px">${xs.map(x=>`<button class="chip" data-mtopen="${esc(x.cow_id)}" style="display:inline-flex;gap:6px;align-items:center"><b>${esc(x.cow_id)}</b>${udder(x)}<span class="sub">${fmt(x.check_date)}</span></button>`).join("")}</div></details>`;
 }
 // ── lista del lote: tocar solo las enfermas; las demás quedan en 0 (sanas). Así se ve cuáles faltan por pasar. ──
 const mtLotCows = () => mtCows().filter(c=>(c.pen || "—")===mt.pen && /Lac/.test(c.status || "")).sort((a, b)=>byNum(a.id, b.id));
@@ -4837,9 +5179,7 @@ function mtListHtml(d){
   const n = { sick:cows.filter(c=>st(c.id)==="sick").length, ok:cows.filter(c=>st(c.id)==="ok").length };
   n.todo = cows.length - n.sick - n.ok;
   const shown = cows.filter(c=>!mt.filt || st(c.id)===mt.filt), last = mt.lotLast[mt.pen] || {};
-  return `<div class="rpk" style="margin-bottom:8px"><div><b>${cows.length}</b><span>vacas en ordeño</span></div><div><b style="color:var(--s4)">${n.sick}</b><span>enfermas</span></div>
-      <div><b style="color:var(--s0)">${n.ok}</b><span>sanas (0)</span></div><div><b>${n.todo}</b><span>faltan</span></div></div>
-    <div class="chips sm ckpan" style="padding:0"><div class="chips sm">${[["","Todas"],["todo","Faltan"],["sick","Enfermas"],["ok","Sanas"]].map(([v, t])=>
+  return `<div class="chips sm ckpan" style="padding:0"><div class="chips sm">${[["",`Todas (${cows.length})`],["todo",`Faltan (${n.todo})`],["sick",`Enfermas (${n.sick})`],["ok",`Sanas (${n.ok})`]].map(([v, t])=>
       `<button class="${mt.filt===v ? "on" : ""}" data-mtfilt="${v}">${t}</button>`).join("")}</div></div>
     <div class="sub" style="margin:6px 0">Toca la vaca <b>enferma</b> para marcar sus cuartos. Las sanas: <b>✓</b> (o al final "las que faltan quedan sanas").</div>
     ${shown.map(c=>{ const s0 = st(c.id), r = d.rows[c.id], prev = last[c.id];
@@ -4860,7 +5200,7 @@ async function mtLotLast(){
       .gte("check_date", addDays(mt.date, -365)).lt("check_date", mt.date).order("check_date");
     (data || []).forEach(x=>{ out[x.cow_id] = x; });
   }
-  mt.lotLast[mt.pen] = out; if (location.hash==="#mastitis/chequeo" && mt.mode==="lista") mtRender();
+  mt.lotLast[mt.pen] = out; if (location.hash==="#mastitis/chequeo" && (mt.mode==="lista" || mt.mode==="tx") && !mt.cur) mtRender();
 }
 // el último chequeo de este lote (para las revisiones: qué vacas salieron enfermas)
 async function mtPrevLot(){
@@ -4887,38 +5227,59 @@ function mtCowHtml(id){
   const c = mtCows().find(x=>x.id===id), r = mtDraft().rows[id] || {}, h = mt.hist[id];
   const lost = h ? lostQuarters(h).filter(q=>!q.recovered).map(q=>q.k) : [];
   const val = q => (mt.tmp || {})[id]?.[q] ?? r[q] ?? (lost.includes(q) ? "P" : "0");
-  const qBox = q => `<div><div class="sub" style="text-align:center">${q.toUpperCase()}</div><div class="chips sm" style="justify-content:center">${MT_VALS.map(([v, t])=>
-    `<button class="${val(q)===v ? "on" : ""}" data-mtq="${q}|${v}" style="min-width:34px;padding:6px 8px">${t}</button>`).join("")}</div></div>`;
+  // 1 2 / 3 4 en cuadrado y P a la derecha; tocar otra vez el mismo = sano (no se registra nada)
+  const btn = (q, v) => `<button class="${val(q)===v ? "on " : ""}${v==="P" ? "p" : v < "3" ? "lt" : ""}" data-mtq="${q}|${v}" style="background:var(${MQ[v][0]})">${v}</button>`;
+  const qBox = q => `<div><div class="sub" style="text-align:center;font-weight:700">${q.toUpperCase()}</div><div class="mtqg">${btn(q, "1")}${btn(q, "2")}${btn(q, "P")}${btn(q, "3")}${btn(q, "4")}</div></div>`;
+  const hRow = x => `<tr><td>${fmt(x.check_date)}</td><td>${x.kind==="R" ? "Rev." : "Cheq."}</td><td>${udder(x)}</td>
+    <td class="sub">${esc([x.observation, x.treatment && "💊 " + x.treatment].filter(Boolean).join(" · "))}</td></tr>`;
+  const ep = h ? mastEpisodes(h) : 0;
+  const hist = h==null ? `<div class="sub" style="margin-top:8px">Buscando historial…</div>` : h.length ? `<details class="ckmore" style="margin-top:10px">
+      <summary class="lnk">📋 Historial: ${h.length} chequeo${h.length===1 ? "" : "s"} · ${ep} episodio${ep===1 ? "" : "s"} clínico${ep===1 ? "" : "s"}</summary>
+      <table style="font-size:12px;margin-top:4px">${h.slice(-4).reverse().map(hRow).join("")}</table>
+      ${h.length > 4 ? `<details class="ckmore"><summary class="lnk">+ info (${h.length - 4} más)</summary><table style="font-size:12px">${h.slice(0, -4).reverse().map(hRow).join("")}</table></details>` : ""}
+      <a class="lnk" href="#mastitis/${encodeURIComponent(id)}">historial por lactancia →</a></details>` : `<div class="sub" style="margin-top:8px">Sin chequeos anteriores</div>`;
   return `<div class="hscard" style="margin-top:8px"><div style="display:flex;justify-content:space-between;align-items:center">
       <div><b style="font-size:22px">${esc(id)}</b> <span class="sub">${esc(c?.pen || "")}</span> ${c ? statusPill(c.status) : ""}</div><button class="lnk" data-mtclose="1">cerrar</button></div>
-    ${h==null ? `<div class="sub">Buscando historial…</div>` : h.length ? `${lostHtml(lostQuarters(h))}
-      <div class="sub" style="margin-top:4px">${h.length} chequeos · ${mastEpisodes(h)} episodios clínicos</div>
-      <table style="font-size:12px;margin-top:4px">${h.slice(-5).reverse().map(x=>`<tr><td>${fmt(x.check_date)}</td><td>${x.kind==="R" ? "Rev." : "Cheq."}</td><td>${udder(x)}</td>
-        <td class="sub">${esc([x.observation, x.treatment && "💊 " + x.treatment].filter(Boolean).join(" · "))}</td></tr>`).join("")}</table>
-      <a class="lnk" href="#mastitis/${encodeURIComponent(id)}">historial completo →</a>` : `<div class="sub">Sin chequeos anteriores</div>`}
-    <div class="ckpan" style="padding:0;margin-top:8px"><div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">${MT_Q.map(qBox).join("")}</div></div>
-    <input id="mtObs" placeholder="Observación (opcional)" value="${esc(r.obs || "")}" style="margin-top:8px">
-    <button class="btn" id="mtSaveCow" style="margin-top:8px">Anotar vaca ${esc(id)}</button></div>`;
+    ${h ? lostHtml(lostQuarters(h)) : ""}
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px 14px;margin-top:8px">${MT_Q.map(qBox).join("")}</div>
+    <input id="mtObs" placeholder="Observación (opcional)" value="${esc(r.obs || "")}" style="margin-top:10px">
+    <button class="btn" id="mtSaveCow" style="margin-top:8px">Anotar vaca ${esc(id)}</button>
+    ${hist}</div>`;
 }
 async function mtUpload(){
   const err = m => ($("mtErr").textContent = m), d = mtDraft(), todo = Object.entries(d.rows).filter(([, r])=>!r.up);
   if (!todo.length) return; if (!navigator.onLine) return err("Necesitas señal para subir el chequeo (queda guardado en el celular).");
   $("mtUp").disabled = true;
-  const lot = MT_LOT[mt.pen] || mt.pen;
-  const rows = todo.map(([id, r])=>({ cow_id:id, check_date:mt.date, kind:mt.kind, lot, farm_id:mt.farm, ai:r.ai, ad:r.ad, pi:r.pi, pd:r.pd,
-    observation:r.obs || null, source:"app", natural_key:`app:${id}|${mt.date}|${mt.kind}` }));
+  const rows = todo.map(([id, r])=>({ cow_id:id, check_date:mt.date, kind:mt.kind, lot:mtLotOf(id), farm_id:mt.farm, ai:r.ai, ad:r.ad, pi:r.pi, pd:r.pd,
+    observation:r.obs || null, ...(r.tx ? { treatment:r.tx } : {}), ...(mtJC(r) ? { review_jc:true } : {}), source:"app", natural_key:`app:${id}|${mt.date}|${mt.kind}` }));
   const { error } = await sb.from("cow_mastitis").upsert(rows, { onConflict:"natural_key" });
   if (error){ $("mtUp").disabled = false; return err(/row-level|permission|policy/i.test(error.message) ? "No tienes permiso (¿falta correr SQL/mastitis_registro.sql?)" : "No se pudo subir: " + error.message); }
-  todo.forEach(([, r])=>{ r.up = true; }); mtSave(d); toast(`Chequeo subido ✓ (${todo.length} vacas)`); mt.hist = {}; mtRender();
+  todo.forEach(([, r])=>{ r.up = true; }); mtSave(d); toast(`${mt.kind==="R" ? "Revisión" : "Chequeo"} subido ✓ (${todo.length} vacas)`); mt.hist = {}; mtRender();
+  if (mt.kind==="C") mtSaveStats();
 }
+// lote de la vaca: en el chequeo, el del chequeo; en la revisión, el grupo actual de la vaca
+const mtLotOf = id => { const p = mt.kind==="R" ? mtCows().find(c=>c.id===id)?.pen || "" : mt.pen; return MT_LOT[p] || p || null; };
+let mtXlsx = null;   // librería de Excel: se descarga la primera vez
+const mtLoadXlsx = () => mtXlsx || (mtXlsx = new Promise((ok, ko)=>{
+  const sc = document.createElement("script"); sc.src = "https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js";
+  sc.onload = ()=>ok(window.XLSX); sc.onerror = ()=>{ mtXlsx = null; ko(new Error("sin señal")); }; document.head.appendChild(sc);
+}));
 async function mtExport(kind){
-  const d = mtDraft(), rows = Object.entries(d.rows).sort((a, b)=>byNum(a[0], b[0])), lot = MT_LOT[mt.pen] || mt.pen;
+  const d = mtDraft(), rows = Object.entries(d.rows).sort((a, b)=>byNum(a[0], b[0])), lot = mt.kind==="R" ? "vacas" : MT_LOT[mt.pen] || mt.pen;
   const farm = farmLabel(mt.farms.find(f=>f.id===mt.farm) || {}), tipo = mt.kind==="R" ? "Revisión" : "Chequeo";
-  const name = `Mastitis ${tipo} ${lot} ${mt.date}`, Q = v => v==="4" ? "C" : v ?? "0";
+  const name = `Mastitis ${tipo} ${lot} ${mt.date}`, Q = v => v==="0" || v==null ? "" : v;
   let file;
-  if (kind==="txt"){
+  if (kind==="xls"){
+    let X; try{ X = await mtLoadXlsx(); }catch(e){ return toast("Se necesita señal la primera vez para armar el Excel"); }
+    const head = ["Fecha","Finca","Lote","Tipo","Vaca","AI","AD","PI","PD","Observación","Tratamiento"];
+    const data = [head, ...rows.map(([id, r])=>[mt.date, farm, mtLotOf(id) || "", tipo, isNaN(+id) ? id : +id, Q(r.ai), Q(r.ad), Q(r.pi), Q(r.pd), r.obs || "", r.tx || ""])];
+    const ws = X.utils.aoa_to_sheet(data); ws["!cols"] = [10, 11, 7, 9, 7, 4, 4, 4, 4, 40, 60].map(w=>({ wch:w }));
+    const wb = X.utils.book_new(); X.utils.book_append_sheet(wb, ws, "Mastitis");
+    const buf = X.write(wb, { bookType:"xlsx", type:"array" });
+    file = new File([buf], name + ".xlsx", { type:"application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" });
+  } else if (kind==="txt"){
     const txt = "\ufeff" + [["Fecha","Finca","Lote","Tipo","Vaca","AI","AD","PI","PD","Observación","Tratamiento"].join("\t"),
-      ...rows.map(([id, r])=>[mt.date, farm, lot, tipo, id, Q(r.ai), Q(r.ad), Q(r.pi), Q(r.pd), r.obs || "", r.tx || ""].map(v=>String(v).replace(/[\t\r\n]+/g, " ")).join("\t"))].join("\r\n");
+      ...rows.map(([id, r])=>[mt.date, farm, mtLotOf(id) || "", tipo, id, Q(r.ai), Q(r.ad), Q(r.pi), Q(r.pd), r.obs || "", r.tx || ""].map(v=>String(v).replace(/[\t\r\n]+/g, " ")).join("\t"))].join("\r\n");
     file = new File([txt], name + ".txt", { type:"text/plain" });
   } else {
     let JsPDF; try{ JsPDF = await lsLoadJsPdf(); }catch(e){ return toast("Se necesita señal la primera vez para armar el PDF"); }
@@ -4926,12 +5287,12 @@ async function mtExport(kind){
     doc.setFont("helvetica", "bold"); doc.setFontSize(15); doc.setTextColor(194, 50, 110);
     doc.text(`MASTITIS · ${tipo.toUpperCase()} ${fmt(mt.date)} · ${farm} · ${lot}`, 105, M + 4, { align:"center" });
     doc.setFontSize(9); doc.setTextColor(90); doc.setFont("helvetica", "normal");
-    doc.text("0 negativo · 1-3 grado CMT · C clínica · P cuarto perdido · solo vacas enfermas (las demás sanas)", 105, M + 10, { align:"center" });
+    doc.text("1-3 grado CMT · 4 clínica · P cuarto perdido · vacío = sano · solo vacas enfermas (las demás sanas)", 105, M + 10, { align:"center" });
     let y = M + 16; const head = ["Vaca","AI","AD","PI","PD","Observación / tratamiento"];
     const line = (vals, bold) => { let x = M; doc.setFont("helvetica", bold ? "bold" : "normal"); doc.setTextColor(0);
       vals.forEach((v, i)=>{ doc.rect(x, y, W[i], 7); const t = doc.splitTextToSize(String(v), W[i] - 2)[0] || "";
-        const bad = i>=1 && i<=4 && (v==="C" || v==="P" || +v >= 2);
-        if (bad){ doc.setFillColor(...(v==="C" ? [255, 200, 200] : v==="P" ? [220, 220, 220] : [255, 236, 179])); doc.rect(x, y, W[i], 7, "FD"); }
+        const fill = i>=1 && i<=4 && { "1":[242, 201, 76], "2":[246, 165, 94], "3":[224, 102, 27], "4":[214, 45, 32], "P":[190, 194, 200] }[v];
+        if (fill){ doc.setFillColor(...fill); doc.rect(x, y, W[i], 7, "FD"); }
         doc.text(t, i>=1 && i<=4 ? x + W[i]/2 : x + 1.5, y + 5, { align: i>=1 && i<=4 ? "center" : "left" }); x += W[i]; }); y += 7; };
     line(head, true);
     rows.forEach(([id, r])=>{ if (y > 280){ doc.addPage(); y = M; line(head, true); } line([id, Q(r.ai), Q(r.ad), Q(r.pi), Q(r.pd), [r.obs, r.tx && "Trat: " + r.tx].filter(Boolean).join(" · ")]); });
@@ -4948,7 +5309,7 @@ async function mtExport(kind){
 $("mastBody").addEventListener("click", async e=>{
   if (!mt || location.hash!=="#mastitis/chequeo") return;
   const t = e.target, q = a => t.closest(`[${a}]`)?.getAttribute(a);
-  if (q("data-mtmode")){ mt.mode = q("data-mtmode"); mt.cur = null; return mtRender(); }
+  if (q("data-mtmode")){ mt.mode = q("data-mtmode"); mt.cur = null; mt.tmp = {}; return mtRender(); }
   if (q("data-mtfilt")!=null){ mt.filt = q("data-mtfilt"); return mtRender(); }
   if (q("data-mtok")){ const id = q("data-mtok"), d = mtDraft(); d.ok ||= {}; d.ok[id] ? delete d.ok[id] : d.ok[id] = true; mtSave(d); return mtRender(); }
   if (t.id==="mtRestOk"){ const d = mtDraft(), rest = mtLotCows().filter(c=>!d.rows[c.id] && !(d.ok || {})[c.id]);
@@ -4963,22 +5324,30 @@ $("mastBody").addEventListener("click", async e=>{
   if (q("data-mtq")){ const [k, v] = q("data-mtq").split("|"), d = mtDraft(), h = mt.hist[mt.cur] || [];
     const lost = lostQuarters(h).filter(x=>!x.recovered).map(x=>x.k), r = d.rows[mt.cur] ? { ...d.rows[mt.cur] } : null;
     mt.tmp ||= {}; const cur = mt.tmp[mt.cur] ||= { ...(r || Object.fromEntries(MT_Q.map(x=>[x, lost.includes(x) ? "P" : "0"]))) };
-    cur[k] = v; t.closest(".chips").querySelectorAll("button").forEach(b=>b.classList.toggle("on", b===t.closest("button"))); return; }
+    cur[k] = cur[k]===v ? "0" : v; t.closest(".mtqg").querySelectorAll("button").forEach(b=>b.classList.toggle("on", b.dataset.mtq===`${k}|${cur[k]}`)); return; }
   if (t.id==="mtSaveCow"){
     const d = mtDraft(), h = mt.hist[mt.cur] || [], lost = lostQuarters(h).filter(x=>!x.recovered).map(x=>x.k);
     const base = d.rows[mt.cur] || Object.fromEntries(MT_Q.map(x=>[x, lost.includes(x) ? "P" : "0"]));
     const r = { ...base, ...((mt.tmp || {})[mt.cur] || {}), obs:$("mtObs").value.trim(), up:false };
-    if (mt.kind==="C" && MT_Q.every(k=>r[k]==="0" || r[k]==="P") && !r.obs && !confirm("Todos los cuartos están sanos. En el chequeo las sanas no se registran. ¿Anotarla igual?")) return;
+    // en el chequeo, si todos los cuartos quedan sanos no se registra nada: queda sana
+    if (mt.kind==="C" && MT_Q.every(k=>r[k]==="0" || r[k]==="P") && !r.obs){ const was = mt.cur; delete d.rows[was]; (d.ok ||= {})[was] = true; mtSave(d);
+      delete (mt.tmp || {})[was]; toast(`${was}: sana, no se registra`); mt.cur = null; mtRender(); if (mt.mode!=="lista") $("mtId")?.focus(); return; }
     d.rows[mt.cur] = r; mtSave(d); delete (mt.tmp || {})[mt.cur];
     const was = mt.cur; if (d.ok) delete d.ok[was], mtSave(d);
     toast(`${was} anotada ✓`); mt.cur = null; mtRender();
-    if (mt.mode==="lista") document.querySelector(`[data-mtrow="${CSS.escape(was)}"]`)?.scrollIntoView({ block:"center" }); else $("mtId")?.focus(); return; }
+    if (mt.mode==="lista") document.querySelector(`[data-mtrow="${CSS.escape(was)}"]`)?.scrollIntoView({ block:"center" }); else if (mt.mode!=="rev") $("mtId")?.focus(); return; }
   if (q("data-mted")){ mt.cur = q("data-mted"); return mtOpen(mt.cur); }
   if (q("data-mtdel")){ const id = q("data-mtdel"); if (!confirm(`¿Quitar la vaca ${id} de este chequeo?`)) return; const d = mtDraft(); delete d.rows[id]; mtSave(d); return mtRender(); }
   if (q("data-mttxs")){ const id = q("data-mttxs"), v = document.querySelector(`[data-mttx="${CSS.escape(id)}"]`)?.value.trim() || null;
     const { data, error } = await sb.from("cow_mastitis").update({ treatment:v }).eq("natural_key", `app:${id}|${mt.date}|${mt.kind}`).select("id");
     if (error || !data?.length) return toast("No se pudo guardar el tratamiento" + (error ? ": " + error.message : ""));
     const d = mtDraft(); d.rows[id].tx = v; mtSave(d); toast("Tratamiento guardado ✓"); return; }
+  if (q("data-mttxk")){ const [id, k] = q("data-mttxk").split("|"), d = mtDraft(), p = d.rows[id]?.txp; if (!p) return;
+    p.sel = p.sel.includes(k) ? p.sel.filter(x=>x!==k) : [...p.sel, k]; p.auto = false; mtSave(d); return mtRender(); }
+  if (q("data-mttxq")){ const [id, k] = q("data-mttxq").split("|"), d = mtDraft(), p = d.rows[id]?.txp; if (!p) return;
+    p.q = p.q.includes(k) ? p.q.filter(x=>x!==k) : MT_Q.filter(x=>x===k || p.q.includes(x)); p.auto = false; mtSave(d); return mtRender(); }
+  if (t.id==="mtTxGo") return mtTxProgram();
+  if (t.id==="mtXls") return mtExport("xls");
   if (t.id==="mtUp") return mtUpload();
   if (t.id==="mtTxt") return mtExport("txt");
   if (t.id==="mtPdf") return mtExport("pdf");
@@ -4987,35 +5356,129 @@ $("mastBody").addEventListener("change", async e=>{
   if (!mt || location.hash!=="#mastitis/chequeo") return;
   const t = e.target;
   if (t.name==="mtF"){ mt.farm = +t.value; mt.pen = ""; mt.cur = null; jset("mtLast", { farm:mt.farm }); return mtShow(); }
-  if (t.name==="mtK"){ mt.kind = t.value; mt.cur = null; return mtRender(); }
-  if (t.id==="mtDate"){ mt.date = t.value || today(); mt.cur = null; mt.hist = {}; mt.lotLast = {}; return mtRender(); }
+  if (t.dataset.mttxai){ const d = mtDraft(), p = d.rows[t.dataset.mttxai]?.txp; if (p){ (p.ai ||= {}).code = t.value; p.auto = false; mtSave(d); } return; }
+  if (t.dataset.mttxad){ const d = mtDraft(), p = d.rows[t.dataset.mttxad]?.txp; if (p){ (p.ai ||= {}).dose = t.value; mtSave(d); } return; }
+  if (t.dataset.mttxn){ const d = mtDraft(), p = d.rows[t.dataset.mttxn]?.txp; if (p){ p.note = t.value.trim().toUpperCase(); p.auto = false; mtSave(d); mtRender(); } return; }
+  if (t.id==="mtDate"){ mt.date = t.value || today(); mt.cur = null; mt.hist = {}; mt.lotLast = {}; mt.txh = {}; mt.tmp = {}; return mtRender(); }
 });
 $("mastBody").addEventListener("keydown", e=>{ if (e.target.id==="mtId" && e.key==="Enter"){ e.preventDefault(); mtOpen(e.target.value); } });
 
-// sin vaca: las que hay que vigilar según el último chequeo de cada lote
+// sin vaca: las que salieron con mastitis (grado 1 a 4) el último mes
+const mastTopBtns = () => (canDo("mastitis_registrar") ? `<a class="btn" href="#mastitis/chequeo" style="display:block;text-align:center;text-decoration:none;margin-bottom:8px">✍️ Registrar chequeo o revisión</a>` : "")
+  + `<a class="btn ghost" href="#mastitis/cultivos" style="display:block;text-align:center;text-decoration:none;margin-bottom:12px">🧫 Resultados de cultivo</a><div id="mastJC"></div>`;
 async function loadMastWatch(){
   $("mq").value = "";
-  if (!canSee("mastitis_vigilar")){ $("mastBody").innerHTML = (canDo("mastitis_registrar") ? `<a class="btn" href="#mastitis/chequeo" style="display:block;text-align:center;text-decoration:none;margin-bottom:12px">✍️ Registrar chequeo de mastitis</a>` : "")
-    + `<div class="card"><div class="empty">Escribe el número de la vaca</div></div>`; return; }
-  $("mastBody").innerHTML = `<div class="card"><div class="empty">Cargando último chequeo…</div></div>`;
-  const since = addDays(today(), -45);
+  if (!canSee("mastitis_vigilar")){ $("mastBody").innerHTML = mastTopBtns() + `<div class="card"><div class="empty">Escribe el número de la vaca</div></div>`; return; }
+  $("mastBody").innerHTML = `<div class="card"><div class="empty">Cargando…</div></div>`;
+  const since = addDays(today(), -30);
   const { data, error } = await sb.from("cow_mastitis").select("cow_id,check_date,kind,lot,ai,ad,pi,pd,observation").gte("check_date", since).order("check_date");
-  if (error || !data?.length){ $("mastBody").innerHTML = `<div class="card"><div class="empty">Sin chequeos en los últimos 45 días</div></div>`; return; }
-  const lastByCow = {}; data.forEach(x=>{ lastByCow[x.cow_id] = x; });
-  const worst = x => Math.max(...["ai","ad","pi","pd"].map(k=>x[k]==="4" ? 4 : +x[k] || 0));
-  const watch = Object.values(lastByCow).filter(x=>worst(x) >= 2 || ["ai","ad","pi","pd"].some(k=>x[k]==="P"))
-    .sort((a,b)=> worst(b) - worst(a) || byNum(a.cow_id, b.cow_id));
-  const lots = [...new Set(watch.map(x=>x.lot||"—"))].sort(byNum);
-  const lastDate = data[data.length-1].check_date;
-  $("mastBody").innerHTML = (canDo("mastitis_registrar") ? `<a class="btn" href="#mastitis/chequeo" style="display:block;text-align:center;text-decoration:none;margin-bottom:12px">✍️ Registrar chequeo de mastitis</a>` : "")
-    + `<div class="card"><b>Vacas a vigilar</b>
-      <div class="sub">Su último chequeo (45 días) con CMT 2 o más, clínica o cuarto perdido · último chequeo ${fmt(lastDate)}</div>
+  const sick = x => ["ai","ad","pi","pd"].some(k=>/^[1-4]$/.test(x[k] || ""));
+  const worst = x => Math.max(...["ai","ad","pi","pd"].map(k=>/^[1-4]$/.test(x[k] || "") ? +x[k] : 0));
+  const by = {}; (error ? [] : data || []).filter(sick).forEach(x=>{ (by[x.cow_id] ||= []).push(x); });
+  const watch = Object.values(by).map(xs=>({ ...xs[xs.length - 1], n:xs.length, w:Math.max(...xs.map(worst)) }))
+    .sort((a, b)=>b.w - a.w || byNum(a.cow_id, b.cow_id));
+  const lots = [...new Set(watch.map(x=>x.lot || "—"))].sort(byNum);
+  $("mastBody").innerHTML = mastTopBtns()
+    + `<div class="card"><b>Vacas a vigilar (${watch.length})</b>
+      <div class="sub">Las que salieron con mastitis (grado 1 a 4) en el último mes · desde ${fmt(since)} · se ve su último registro con mastitis</div>
       ${mastLegend()}
       ${lots.map(l=>`<div class="ckpen">${esc(l)} <span class="sub">(${watch.filter(x=>(x.lot||"—")===l).length})</span></div>
         <div class="list">${watch.filter(x=>(x.lot||"—")===l).map(x=>`<a class="chip" href="#mastitis/${encodeURIComponent(x.cow_id)}" style="text-decoration:none;display:inline-flex;gap:6px;align-items:center">
-          <b>${esc(x.cow_id)}</b>${udder(x)}<span class="sub">${fmt(x.check_date)}</span></a>`).join("")}</div>`).join("") || `<div class="empty">Ninguna vaca con CMT alto 👍</div>`}
+          <b>${esc(x.cow_id)}</b>${udder(x)}<span class="sub">${fmt(x.check_date)}${x.n > 1 ? ` · ${x.n} veces` : ""}</span></a>`).join("")}</div>`).join("") || `<div class="empty">Ninguna vaca con mastitis en el último mes 👍</div>`}
     </div>`;
+  const jc = $("mastJC"); if (jc) jc.innerHTML = await mastJCHtml();
 }
+
+// ═══ RESULTADOS DE CULTIVO Y ANTIBIOGRAMA (laboratorio) ═══
+// Del reporte del laboratorio: vaca, fechas, cuartos, crecimiento, microorganismo y antibiograma (S sensible · I intermedio · R resistente)
+const MC_ABX = ["Gentamicina","Trimetoprim sulfa","Tetraciclina","Cefalexina","Ciprofloxacina","Penicilina G","Amoxicilina"];
+const MC_ORG = ["Streptococcus agalactiae","Staphylococcus aureus","Streptococcus uberis","Streptococcus dysgalactiae","Staphylococcus coagulasa negativo",
+  "Escherichia coli","Klebsiella spp.","Corynebacterium bovis","Mycoplasma spp.","Prototheca spp.","Levaduras / hongos","Sin crecimiento","Contaminada"];
+const MC_SIR = { S:"Sensible", I:"Intermedio", R:"Resistente" };
+let mc = null;
+async function mcShow(){
+  $("mq").value = "";
+  if (!canSee("mastitis_historial")){ location.hash = "mastitis"; return; }
+  mc ||= { f:mcNew() };
+  $("mastBody").innerHTML = `<div class="card"><div style="display:flex;justify-content:space-between;align-items:center"><b>🧫 Resultados de cultivo</b><a class="lnk" href="#mastitis">‹ Volver</a></div>
+      ${canDo("mastitis_registrar") ? mcFormHtml() : `<div class="sub">Resultados del laboratorio (cultivo y antibiograma)</div>`}</div>
+    <div class="card" id="mcList"><div class="empty">Cargando…</div></div>`;
+  mcLoad();
+}
+const mcNew = () => ({ q:[], abx:Object.fromEntries(MC_ABX.map(a=>[a, ""])) });
+function mcFormHtml(){
+  const f = mc.f;
+  return `<div class="sub" style="margin-bottom:6px">Anota el resultado que manda el laboratorio. Se ve en la historia de mastitis de la vaca.</div>
+    <label>Vaca</label><input id="mcCow" autocapitalize="characters" autocomplete="off" placeholder="N° de la vaca" value="${esc(f.cow || "")}">
+    <label>Cuartos de la muestra <span class="sub">(ninguno = de toda la vaca)</span></label>
+    <div class="chips sm ckpan" style="padding:0"><div class="chips sm">${MT_Q.map(q=>`<button class="${f.q.includes(q) ? "on" : ""}" data-mcq="${q}">${q.toUpperCase()}</button>`).join("")}</div></div>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">
+      <div><label>Fecha de la muestra</label><input type="date" id="mcS" value="${f.s || today()}" max="${today()}"></div>
+      <div><label>Fecha del resultado</label><input type="date" id="mcR" value="${f.r || today()}" max="${today()}"></div></div>
+    <div style="display:grid;grid-template-columns:2fr 1fr;gap:8px">
+      <div><label>Laboratorio</label><input id="mcLab" value="${esc(f.lab ?? store.get("mcLab") ?? "")}" placeholder="ej. Grupo Biomedical"></div>
+      <div><label>N° de orden</label><input id="mcOrd" value="${esc(f.ord || "")}" inputmode="numeric"></div></div>
+    <label>Microorganismo</label><input id="mcOrg" list="mcOrgs" value="${esc(f.org || "")}" placeholder="ej. Streptococcus agalactiae">
+    <datalist id="mcOrgs">${MC_ORG.map(o=>`<option value="${esc(o)}">`).join("")}</datalist>
+    <label>Crecimiento <span class="sub">(opcional)</span></label><input id="mcGr" value="${esc(f.gr || "")}" placeholder="ej. Agar sangre mayor a 1.000 UFC · Chromocult y Baird Parker negativos">
+    <label>Antibiograma <span class="sub">S sensible · I intermedio · R resistente · sin marcar = no se probó</span></label>
+    <div id="mcAbx">${mcAbxHtml()}</div>
+    <div class="row" style="gap:6px;margin-top:6px"><input id="mcAbxNew" placeholder="Otro antibiótico" style="flex:1"><button class="btn ghost" id="mcAbxAdd" style="width:auto">＋</button></div>
+    <label>Nota <span class="sub">(opcional)</span></label><input id="mcNote" value="${esc(f.note || "")}">
+    <button class="btn" id="mcSave" style="margin-top:10px">Guardar resultado</button><div class="err" id="mcErr"></div>`;
+}
+const mcAbxHtml = () => Object.entries(mc.f.abx).map(([a, v])=>`<div class="mcabx"><span>${esc(a)}</span><span style="display:flex;gap:4px;flex:none">${["S","I","R"].map(k=>
+  `<button class="${k}${v===k ? " on" : ""}" data-mcab="${esc(a)}|${k}" title="${MC_SIR[k]}">${k}</button>`).join("")}</span></div>`).join("");
+// lo escrito en el formulario (para no perderlo al redibujar)
+function mcGrab(){ const f = mc.f, v = id => $(id)?.value.trim() ?? "";
+  if (!$("mcCow")) return f;
+  Object.assign(f, { cow:v("mcCow").toUpperCase(), s:v("mcS"), r:v("mcR"), lab:v("mcLab"), ord:v("mcOrd"), org:v("mcOrg"), gr:v("mcGr"), note:v("mcNote") }); return f; }
+const mcAbxTxt = (ab, k) => Object.entries(ab || {}).filter(([, v])=>v===k).map(([a])=>a).join(", ");
+const mcRowHtml = (x, withCow) => `<div class="hscard" style="margin-top:8px">
+    <div style="display:flex;justify-content:space-between;gap:8px;align-items:flex-start"><div>${withCow ? `<a class="lnk" href="#mastitis/${encodeURIComponent(x.cow_id)}" style="font-size:18px">${esc(x.cow_id)}</a> ` : ""}
+      <i style="font-weight:700">${esc(x.organism || "sin resultado")}</i></div>
+      ${x.created_by===me || isMain() ? `<button class="del" data-mcdel="${x.id}">✕</button>` : ""}</div>
+    <div class="sub">Muestra ${fmt(x.sample_date)}${x.result_date ? ` · resultado ${fmt(x.result_date)}` : ""}${x.quarters ? ` · ${esc(x.quarters)}` : " · toda la vaca"}${x.lab ? ` · ${esc(x.lab)}` : ""}${x.order_no ? ` · orden ${esc(x.order_no)}` : ""}</div>
+    ${x.growth ? `<div class="sub">${esc(x.growth)}</div>` : ""}
+    ${["S","I","R"].map(k=>{ const t = mcAbxTxt(x.antibiogram, k); return t ? `<div style="font-size:13px;margin-top:3px"><b style="color:${k==="S" ? "var(--s0)" : k==="I" ? "var(--mq3)" : "var(--mq4)"}">${MC_SIR[k]}:</b> ${esc(t)}</div>` : ""; }).join("")}
+    ${x.note ? `<div class="sub" style="margin-top:3px">${esc(x.note)}</div>` : ""}</div>`;
+async function mcLoad(){
+  const { data, error } = await sb.from("mastitis_cultures").select("*").order("sample_date", { ascending:false }).limit(150);
+  const box = $("mcList"); if (!box) return;
+  if (error){ box.innerHTML = `<div class="empty">Falta correr SQL/mastitis_registro.sql (${esc(error.message)})</div>`; return; }
+  const xs = data || [], orgs = {}; xs.forEach(x=>{ const o = x.organism || "—"; orgs[o] = (orgs[o] || 0) + 1; });
+  box.innerHTML = `<b>Resultados (${xs.length})</b>
+    ${xs.length ? `<div class="sub">${Object.entries(orgs).sort((a, b)=>b[1] - a[1]).map(([o, n])=>`${esc(o)}: ${n}`).join(" · ")}</div>` : ""}
+    ${xs.map(x=>mcRowHtml(x, true)).join("") || `<div class="empty">Aún no hay resultados</div>`}`;
+}
+async function mcSaveForm(){
+  const f = mcGrab(), err = m => ($("mcErr").textContent = m);
+  if (!f.cow) return err("Escribe el número de la vaca");
+  if (!f.org && !Object.values(f.abx).some(Boolean)) return err("Escribe el microorganismo o el antibiograma");
+  if (!navigator.onLine) return err("Necesitas señal para guardar");
+  $("mcSave").disabled = true;
+  const { data:c } = await sb.from("cows").select("id,farm_id").eq("id", f.cow).maybeSingle();
+  if (!c){ $("mcSave").disabled = false; return err(`No hay vaca ${f.cow}`); }
+  const ab = Object.fromEntries(Object.entries(f.abx).filter(([, v])=>v));
+  const { error } = await sb.from("mastitis_cultures").insert({ farm_id:c.farm_id, cow_id:c.id, sample_date:f.s || today(), result_date:f.r || null,
+    quarters:f.q.map(q=>q.toUpperCase()).join(" ") || null, lab:f.lab || null, order_no:f.ord || null, growth:f.gr || null, organism:f.org || null,
+    antibiogram:ab, note:f.note || null });
+  if (error){ $("mcSave").disabled = false; return err("No se pudo guardar: " + error.message); }
+  if (f.lab) store.set("mcLab", f.lab);
+  toast(`Cultivo de la ${c.id} guardado ✓`); mc.f = mcNew(); mcShow();
+}
+$("mastBody").addEventListener("click", async e=>{
+  if (location.hash!=="#mastitis/cultivos" || !mc) return;
+  const t = e.target, q = a => t.closest(`[${a}]`)?.getAttribute(a);
+  if (q("data-mcq")){ mcGrab(); const k = q("data-mcq"); mc.f.q = mc.f.q.includes(k) ? mc.f.q.filter(x=>x!==k) : MT_Q.filter(x=>x===k || mc.f.q.includes(x));
+    t.closest("button").classList.toggle("on", mc.f.q.includes(k)); return; }
+  if (q("data-mcab")){ const [a, k] = q("data-mcab").split("|"); mc.f.abx[a] = mc.f.abx[a]===k ? "" : k; $("mcAbx").innerHTML = mcAbxHtml(); return; }
+  if (t.id==="mcAbxAdd"){ const a = $("mcAbxNew").value.trim(); if (!a) return; mc.f.abx[a[0].toUpperCase() + a.slice(1)] ??= ""; $("mcAbxNew").value = ""; $("mcAbx").innerHTML = mcAbxHtml(); return; }
+  if (t.id==="mcSave") return mcSaveForm();
+  if (q("data-mcdel")){ if (!confirm("¿Borrar este resultado de cultivo?")) return;
+    const { error } = await sb.from("mastitis_cultures").delete().eq("id", +q("data-mcdel"));
+    if (error) return toast("No se pudo borrar: " + error.message); toast("Borrado"); mcLoad(); }
+});
 
 // ── Gráficas (SVG propio) ───────────────────────────────────
 let lastCowData = null, milkPick = null, wPick = null;
@@ -6978,7 +7441,7 @@ const CKP = { vwp:50, heiferMonths:16, heiferKg:380, ovsynchToSv:10, maxGest:260
   stages:[ ["ECO1",25,38], ["ECO2",39,55], ["DPR",56,80], ["DP5",140,164], ["DPSEC",200,224] ] };
 const CK_COLOR = { EXREP:"--s3", ECO1:"--milk", ECO2:"--milk", DPR:"--s0", DP5:"--s0", DPSEC:"--s0", REPETIR:"--s2" };
 const CK_EXREP = ["INR","OVSYN","DIB","SUCIA","METRITIS","PIOMETRA","O. LISOS","VAGINITIS","RETE","SV","DESCARTE"];
-const CK_EXTRA = ["PGF2","Antibiótico","Vitaminas"];
+const CK_EXTRA = ["PGF2","Antibiótico","Vitaminas","Baño"];
 const CK_RES = {
   ECO:   ["Positivo","Negativo","Dudoso","ME"],
   DP:    ["Cargada Hembra","Cargada Macho","Cargada","Vacía","Aborto"],
@@ -7192,7 +7655,7 @@ async function ckRenderTx(){
   // totales de lo que hay que tener a mano hoy
   const today0 = rows.filter(r=>r.d===t0 && !r.ia), need = {};
   (tx.data || []).filter(t=>t.start_date===t0).forEach(t=>(t.treatment_items || []).forEach(i=>{ const k = sup(i.supply_code) + "|" + (i.unit || ""); need[k] = (need[k] || 0) + (+i.dose || 0); }));
-  $("ckTxBox").innerHTML = `<div class="sub" style="margin-bottom:6px">Antibiótico, vitaminas y PGF2 del chequeo, y el Ovsynch día a día. Se descuentan del inventario el día que tocan.</div>
+  $("ckTxBox").innerHTML = `<div class="sub" style="margin-bottom:6px">Antibiótico, vitaminas, PGF2 y baño del chequeo, y el Ovsynch día a día. Se descuentan del inventario el día que tocan.</div>
     ${Object.keys(need).length ? `<div class="hscard"><b>Para hoy hay que tener:</b> ${Object.entries(need).map(([k, v])=>{ const [n, u] = k.split("|"); return `${esc(n)} <b>${v.toLocaleString("es-CO")} ${esc(u)}</b>`; }).join(" · ")}
       <div class="sub">${today0.length} aplicaciones · ${rows.filter(r=>r.d===t0 && r.ia).length} para inseminar</div></div>` : ""}
     ${next.map(day).join("") || `<div class="empty">Nada programado para hoy ni los próximos días</div>`}
@@ -7345,7 +7808,8 @@ function ckPanel(c, k, r){
 }
 // insumo de cada tratamiento del chequeo (queda en Salud y descuenta del inventario de la finca)
 const CK_TX = { "Antibiótico":{ cats:["Antibiótico"] }, "Vitaminas":{ cats:["Vitamina / mineral","Vitamina / suplemento"] },
-  "PGF2":{ codes:["PROSTAL","CLOPROST"], dose:2, unit:"mL", doses:true } };
+  "PGF2":{ codes:["PROSTAL","CLOPROST"], dose:2, unit:"mL", doses:true },
+  "Baño":{ cats:["Desinfectante / sellador","Antiparasitario","Antibiótico","Otro medicamento"], route:"Tópica" } };
 const ckTxKey = v => Object.keys(CK_TX).find(k=>k.toLowerCase()===String(v).toLowerCase().replace(/s$/, "") || k.toLowerCase()===String(v).toLowerCase());
 function ckTxOpts(v){
   const d = CK_TX[ckTxKey(v)]; if (!d) return [];
@@ -7367,7 +7831,7 @@ function ckTxItems(r){
     if (!d || !t?.code) return null;
     const sup = hsCatGet().supplies.find(m=>m.code===t.code);
     const dose = d.doses ? d.dose * (+t.n || 1) : +String(t.dose || "").replace(",", ".");
-    return dose > 0 ? { k, code:t.code, dose, unit: d.unit || sup?.unit || "", route: k==="PGF2" ? "IM" : "IM" } : null; }).filter(Boolean);
+    return dose > 0 ? { k, code:t.code, dose, unit: d.unit || sup?.unit || "", route: d.route || "IM" } : null; }).filter(Boolean);
 }
 // OVSYNCH (Juan): día 0 Gestar 3 mL · día 7 PGF 3 mL · día 8 PGF 3 mL · día 9 Gestar 3 mL · día 10 inseminar.
 // Se programa al subir el chequeo: cada dosis es un tratamiento con su fecha (el inventario la descuenta ese día)
