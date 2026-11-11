@@ -123,6 +123,9 @@ svg text{fill:var(--muted);font-size:11px}
 .ckrow .id{font-weight:800;font-size:18px;min-width:58px}
 .ckrow .inf{flex:1;font-size:13px;color:var(--muted);line-height:1.3}
 .ckrow.done{background:var(--soft)}
+.ckrow.swp{touch-action:pan-y;position:relative;transition:transform .15s}
+.ckrow.swp.drag{transition:none}
+.ckrow .swphint{font-size:11px;color:var(--muted)}
 .ckrow .res{font-weight:800;font-size:13px;color:var(--accent);text-align:right}
 .ckrow .late{color:var(--s4);font-weight:700}
 .ckpan{padding:8px 0 4px}
@@ -705,7 +708,7 @@ async function showApp(){
   $("login").classList.add("hidden"); $("app").classList.remove("hidden");
   me = navigator.onLine ? (await sb.auth.getUser().catch(()=>({data:{}}))).data?.user?.id || null : null;
   await loadRole();
-  renderRecent(); route(); loadPending(); flushMilk(); flushDaily(); flushCheck(); flushHealth(); flushPastos(); flushWeigh();
+  renderRecent(); route(); loadPending(); flushMilk(); flushDaily(); flushCheck(); flushHealth(); flushPastos(); flushWeigh(); flushMastitis();
   loadFarms();
 }
 $("loginForm").addEventListener("submit", async e=>{
@@ -1148,9 +1151,9 @@ function lacHtml(s, open, kids, bulls, proj){
 
 // ── Mastitis: CMT por cuarto (AI AD / PI PD) ────────────────
 // 0 negativo · 1-3 grado CMT · 4 clínica · P cuarto perdido
-// 1 amarillo · 2 naranja claro · 3 naranja oscuro · 4 rojo (clínica) · P gris · 0 (sano) sin número
-const MQ = { "0":["--line","Sano"], "1":["--mq1","CMT 1"], "2":["--mq2","CMT 2"], "3":["--mq3","CMT 3"], "4":["--mq4","4 Clínica"], "P":["--mqp","Perdido"] };
-const qCell = (v, big) => { const m = MQ[v]; return `<span class="q${big?" big":""}" style="background:${m ? css(m[0]) : "var(--line)"}${v==="1" || v==="2" ? ";color:#3a2a00" : ""}" title="${esc(m ? m[1] : v||"sin dato")}">${esc(v==="0" ? "" : v ?? "·")}</span>`; };
+// 0 verde · 1 amarillo · 2 naranja claro · 3 naranja oscuro · 4 rojo (clínica) · P gris
+const MQ = { "0":["--s0","Negativo"], "1":["--mq1","CMT 1"], "2":["--mq2","CMT 2"], "3":["--mq3","CMT 3"], "4":["--mq4","4 Clínica"], "P":["--mqp","Perdido"] };
+const qCell = (v, big) => { const m = MQ[v]; return `<span class="q${big?" big":""}" style="background:${m ? css(m[0]) : "var(--line)"}${v==="1" || v==="2" ? ";color:#3a2a00" : ""}" title="${esc(m ? m[1] : v||"sin dato")}">${esc(v ?? "·")}</span>`; };
 const udder = (c, big) => `<span class="udder${big?" big":""}">${["ai","ad","pi","pd"].map(k=>qCell(c[k], big)).join("")}</span>`;
 const QN = { ai:"anterior izquierdo (AI)", ad:"anterior derecho (AD)", pi:"posterior izquierdo (PI)", pd:"posterior derecho (PD)" };
 // cuartos reportados como perdidos (P): si después vuelve a tener valores, "se mejoró", pero sigue el aviso
@@ -1167,7 +1170,7 @@ const isClin = c => ["ai","ad","pi","pd"].some(k=>c[k]==="4");
 function mastEpisodes(list){ let ep = 0, prev = null; list.filter(isClin).forEach(c=>{ if (!prev || days(prev, c.check_date) > 30) ep++; prev = c.check_date; }); return ep; }
 const lostHtml = lq => lq.map(q=>`<div class="lost">⚠️ Cuarto <b>${QN[q.k]}</b> reportado <b>perdido</b> ${q.first===q.lastP ? `el ${fmt(q.first)}` : `(${fmt(q.first)} → ${fmt(q.lastP)})`}${
   q.recovered ? `. Después volvió a dar ${esc(q.recovered[q.k])} el ${fmt(q.recovered.check_date)}: revisar.` : ". Sigue perdido."}</div>`).join("");
-const mastLegend = () => `<div class="legend">${Object.entries(MQ).filter(([k])=>k!=="0").map(([, v])=>v).map(([c,t])=>`<span><i style="background:var(${c});border-radius:3px"></i>${t}</span>`).join("")}<span>AI AD / PI PD</span></div>`;
+const mastLegend = () => `<div class="legend">${Object.values(MQ).map(([c,t])=>`<span><i style="background:var(${c});border-radius:3px"></i>${t}</span>`).join("")}<span>AI AD / PI PD</span></div>`;
 // hoja de vida: solo lo último; todo el historial está en el módulo Mastitis
 // 💉 Salud en la hoja de vida: tratamientos y vacunas de Mykau (Salud, chequeo, Ingreso rápido), vacunas de Interherd
 // y episodios clínicos de mastitis, todo junto y por fecha
@@ -5062,6 +5065,8 @@ async function mtShow(){
   mtRender();
 }
 const mtCows = () => mt.pens[mt.farm] || [];
+// vaca seca o que no está en ordeño (ej. del horro): se puede anotar, pero avisa
+const mtDry = c => !!c && (!/Lac/.test(c.status || "") || /^HO/i.test(c.pen || ""));
 function mtRender(){
   const rev = mt.mode==="rev"; mt.kind = rev ? "R" : "C";
   const lots = [...new Set(mtCows().filter(c=>/Lac/.test(c.status || "")).map(c=>c.pen || "—"))].sort(byNum);
@@ -5095,8 +5100,10 @@ function mtRender(){
         <td style="white-space:nowrap">${r.up ? "" : `<button class="lnk" data-mted="${esc(id)}">editar</button> <button class="del" data-mtdel="${esc(id)}">✕</button>`}</td></tr>`).join("")
         || `<tr><td><div class="empty">Aún no hay vacas anotadas</div></td></tr>`}</table>
       <div class="row" style="gap:8px;margin-top:10px;flex-wrap:wrap">
-        ${rows.length > up ? `<button class="btn" id="mtUp" style="width:auto">⬆️ Subir ${rev ? "revisión" : "chequeo"} (${rows.length - up})</button>` : ""}
+        ${rows.length > up ? `<button class="btn" id="mtUp" style="width:auto">💾 Guardar ${rev ? "revisión" : "chequeo"} (${rows.length - up})</button>` : ""}
         ${rows.length ? `<button class="btn ghost" id="mtXls" style="width:auto">📊 Excel</button><button class="btn ghost" id="mtPdf" style="width:auto">📄 PDF</button><button class="btn ghost" id="mtTxt" style="width:auto">⬇️ .txt</button>` : ""}</div>
+      ${jget("mtOutbox", []).includes(mtKey()) ? `<div class="sub" style="margin-top:8px;color:var(--s3)">⏳ Guardado en el celular: se sube solo cuando haya señal.</div>` : ""}
+      <div class="sub" style="margin-top:6px">${navigator.onLine ? "🟢 Con señal" : "⚪ Sin señal: todo queda guardado en el celular"}. Puedes anotar sin internet y al final tocar Guardar.</div>
       <div class="err" id="mtErr"></div></div>
     ${rev ? "" : `<div class="card" id="mtChart"></div>`}`;
   if (rev) mtRevRecent(); else { mtPrevLot(); mtLotLast(); mtChart(); }
@@ -5175,21 +5182,25 @@ async function mtRevRecent(){
 // ── lista del lote: tocar solo las enfermas; las demás quedan en 0 (sanas). Así se ve cuáles faltan por pasar. ──
 const mtLotCows = () => mtCows().filter(c=>(c.pen || "—")===mt.pen && /Lac/.test(c.status || "")).sort((a, b)=>byNum(a.id, b.id));
 function mtListHtml(d){
-  const cows = mtLotCows(), ok = d.ok || {}, st = id => d.rows[id] ? "sick" : ok[id] ? "ok" : "todo";
-  const n = { sick:cows.filter(c=>st(c.id)==="sick").length, ok:cows.filter(c=>st(c.id)==="ok").length };
-  n.todo = cows.length - n.sick - n.ok;
-  const shown = cows.filter(c=>!mt.filt || st(c.id)===mt.filt), last = mt.lotLast[mt.pen] || {};
-  return `<div class="chips sm ckpan" style="padding:0"><div class="chips sm">${[["",`Todas (${cows.length})`],["todo",`Faltan (${n.todo})`],["sick",`Enfermas (${n.sick})`],["ok",`Sanas (${n.ok})`]].map(([v, t])=>
-      `<button class="${mt.filt===v ? "on" : ""}" data-mtfilt="${v}">${t}</button>`).join("")}</div></div>
-    <div class="sub" style="margin:6px 0">Toca la vaca <b>enferma</b> para marcar sus cuartos. Las sanas: <b>✓</b> (o al final "las que faltan quedan sanas").</div>
-    ${shown.map(c=>{ const s0 = st(c.id), r = d.rows[c.id], prev = last[c.id];
-      return `<div class="ckrow ${s0!=="todo" ? "done" : ""}" data-mtrow="${esc(c.id)}"><div class="top" style="align-items:center">
-        <span class="id">${esc(c.id)}</span>
-        <div class="inf">${s0==="sick" ? `${udder(r)} <span class="sub">${esc(r.obs || "")}</span>` : s0==="ok" ? `<span class="tag" style="background:var(--s0);color:#fff">✓ sana</span>` : ""}
-          ${prev ? `<span class="sub" style="display:inline-flex;gap:4px;align-items:center">· antes ${udder(prev)} ${fmt(prev.check_date)}</span>` : ""}</div>
-        ${s0==="sick" ? "" : `<button class="chip ${s0==="ok" ? "on" : ""}" data-mtok="${esc(c.id)}" style="flex:none">✓</button>`}</div>
-        ${mt.cur===c.id ? mtCowHtml(c.id) : ""}</div>`; }).join("") || `<div class="empty">${cows.length ? "Ninguna con ese filtro" : "Este lote no tiene vacas en ordeño"}</div>`}
-    ${n.todo ? `<button class="btn ghost" id="mtRestOk" style="margin-top:10px">Las ${n.todo} que faltan quedan sanas (0)</button>` : ""}`;
+  // la que no se anota queda sana: no hay que marcarla
+  const cows = mtLotCows(), sick = id => !!d.rows[id], nSick = cows.filter(c=>sick(c.id)).length;
+  const shown = cows.filter(c=>mt.filt!=="sick" || sick(c.id)), last = mt.lotLast[mt.pen] || {};
+  const lotIds = new Set(cows.map(c=>c.id)), extra = Object.keys(d.rows).filter(id=>!lotIds.has(id)).sort(byNum);
+  const row = (id, r, prev) => `<div class="ckrow ${r ? "done swp" : ""}" data-mtrow="${esc(id)}" ${r ? `data-mtswp="${esc(id)}"` : ""}><div class="top" style="align-items:center">
+        <span class="id">${esc(id)}</span>
+        <div class="inf">${r ? `${udder(r)} <span class="sub">${esc(r.obs || "")}</span>` : ""}
+          ${prev ? `<span class="sub" style="display:inline-flex;gap:4px;align-items:center">· antes ${udder(prev)} ${fmt(prev.check_date)}</span>` : ""}</div></div>
+        ${mt.cur===id ? mtCowHtml(id) : ""}</div>`;
+  return `<div class="chips sm ckpan" style="padding:0"><div class="chips sm">${[["",`Todas (${cows.length})`],["sick",`Enfermas (${nSick + extra.length})`]].map(([v, t])=>
+      `<button class="${(mt.filt==="sick" ? "sick" : "")===v ? "on" : ""}" data-mtfilt="${v}">${t}</button>`).join("")}</div></div>
+    <div class="sub" style="margin:6px 0">Toca la vaca <b>enferma</b> para marcar sus cuartos. La que no se anota queda <b>sana</b>. Si te equivocaste, <b>desliza a la izquierda</b> la anotada para borrarla.</div>
+    ${shown.map(c=>row(c.id, d.rows[c.id], last[c.id])).join("") || `<div class="empty">${cows.length ? "Ninguna enferma todavía" : "Este lote no tiene vacas en ordeño"}</div>`}
+    ${extra.map(id=>row(id, d.rows[id], null)).join("")}
+    <div class="hscard" style="margin-top:10px"><b>＋ Vaca que no está en la lista</b>
+      <div class="sub">Ej. llegó de otro lote o recién parida. Escribe el número y toca Abrir.</div>
+      <div class="row" style="gap:6px;margin-top:6px"><input id="mtId" placeholder="N° de la vaca" autocapitalize="characters" autocomplete="off" style="flex:1">
+        <button class="btn" id="mtGo" style="width:auto">Abrir</button></div>
+      ${mt.cur && !lotIds.has(mt.cur) && !d.rows[mt.cur] ? mtCowHtml(mt.cur) : ""}</div>`;
 }
 // el último registro de mastitis de cada vaca del lote (para verlo en la lista)
 async function mtLotLast(){
@@ -5216,6 +5227,8 @@ async function mtOpen(id){
   id = String(id || "").trim().toUpperCase(); if (!id) return;
   const c = mtCows().find(x=>x.id===id);
   if (!c && !confirm(`La vaca ${id} no está activa en esta finca. ¿Anotarla igual?`)) return;
+  if (c && mtDry(c) && !mtDraft().rows[id] && !confirm(`⚠️ La vaca ${id} está SECA (${[c.status, c.pen && "grupo " + c.pen].filter(Boolean).join(" · ")}).
+¿Registrarle mastitis igual?`)) return;
   mt.cur = id; mt.hist[id] ||= null; mtRender();
   if (navigator.onLine && mt.hist[id]==null){
     const { data } = await sb.from("cow_mastitis").select("*").eq("cow_id", id).order("check_date");
@@ -5233,13 +5246,14 @@ function mtCowHtml(id){
   const hRow = x => `<tr><td>${fmt(x.check_date)}</td><td>${x.kind==="R" ? "Rev." : "Cheq."}</td><td>${udder(x)}</td>
     <td class="sub">${esc([x.observation, x.treatment && "💊 " + x.treatment].filter(Boolean).join(" · "))}</td></tr>`;
   const ep = h ? mastEpisodes(h) : 0;
-  const hist = h==null ? `<div class="sub" style="margin-top:8px">Buscando historial…</div>` : h.length ? `<details class="ckmore" style="margin-top:10px">
+  const hist = h==null ? `<div class="sub" style="margin-top:8px">${navigator.onLine ? "Buscando historial…" : "Sin señal: el historial se ve cuando haya señal"}</div>` : h.length ? `<details class="ckmore" style="margin-top:10px">
       <summary class="lnk">📋 Historial: ${h.length} chequeo${h.length===1 ? "" : "s"} · ${ep} episodio${ep===1 ? "" : "s"} clínico${ep===1 ? "" : "s"}</summary>
       <table style="font-size:12px;margin-top:4px">${h.slice(-4).reverse().map(hRow).join("")}</table>
       ${h.length > 4 ? `<details class="ckmore"><summary class="lnk">+ info (${h.length - 4} más)</summary><table style="font-size:12px">${h.slice(0, -4).reverse().map(hRow).join("")}</table></details>` : ""}
       <a class="lnk" href="#mastitis/${encodeURIComponent(id)}">historial por lactancia →</a></details>` : `<div class="sub" style="margin-top:8px">Sin chequeos anteriores</div>`;
   return `<div class="hscard" style="margin-top:8px"><div style="display:flex;justify-content:space-between;align-items:center">
       <div><b style="font-size:22px">${esc(id)}</b> <span class="sub">${esc(c?.pen || "")}</span> ${c ? statusPill(c.status) : ""}</div><button class="lnk" data-mtclose="1">cerrar</button></div>
+    ${mtDry(c) ? `<div class="lost">⚠️ Esta vaca está <b>seca</b> (no está en ordeño${c.pen ? ", grupo " + esc(c.pen) : ""}). Se registra igual.</div>` : ""}
     ${h ? lostHtml(lostQuarters(h)) : ""}
     <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px 14px;margin-top:8px">${MT_Q.map(qBox).join("")}</div>
     <input id="mtObs" placeholder="Observación (opcional)" value="${esc(r.obs || "")}" style="margin-top:10px">
@@ -5247,16 +5261,47 @@ function mtCowHtml(id){
     ${hist}</div>`;
 }
 async function mtUpload(){
-  const err = m => ($("mtErr").textContent = m), d = mtDraft(), todo = Object.entries(d.rows).filter(([, r])=>!r.up);
-  if (!todo.length) return; if (!navigator.onLine) return err("Necesitas señal para subir el chequeo (queda guardado en el celular).");
-  $("mtUp").disabled = true;
-  const rows = todo.map(([id, r])=>({ cow_id:id, check_date:mt.date, kind:mt.kind, lot:mtLotOf(id), farm_id:mt.farm, ai:r.ai, ad:r.ad, pi:r.pi, pd:r.pd,
-    observation:r.obs || null, ...(r.tx ? { treatment:r.tx } : {}), ...(mtJC(r) ? { review_jc:true } : {}), source:"app", natural_key:`app:${id}|${mt.date}|${mt.kind}` }));
-  const { error } = await sb.from("cow_mastitis").upsert(rows, { onConflict:"natural_key" });
-  if (error){ $("mtUp").disabled = false; return err(/row-level|permission|policy/i.test(error.message) ? "No tienes permiso (¿falta correr SQL/mastitis_registro.sql?)" : "No se pudo subir: " + error.message); }
-  todo.forEach(([, r])=>{ r.up = true; }); mtSave(d); toast(`${mt.kind==="R" ? "Revisión" : "Chequeo"} subido ✓ (${todo.length} vacas)`); mt.hist = {}; mtRender();
-  if (mt.kind==="C") mtSaveStats();
+  const d = mtDraft(), todo = Object.keys(d.rows).filter(id=>!d.rows[id].up);
+  if (!todo.length) return;
+  // todo lo que se necesita para subirlo después sin la pantalla abierta
+  d.meta = { farm:mt.farm, pen:mt.pen, date:mt.date, kind:mt.kind };
+  d.lots = Object.fromEntries(Object.keys(d.rows).map(id=>[id, mtLotOf(id)]));
+  if (mt.kind==="C"){ const st = mtStats(d); d.stats = { lot:MT_LOT[mt.pen] || mt.pen, cows:st.cows, lost:st.lost, g:st.g }; }
+  mtSave(d);
+  const ob = jget("mtOutbox", []), k = mtKey(); if (!ob.includes(k)){ ob.push(k); jset("mtOutbox", ob); }
+  if (!navigator.onLine){ toast("Sin señal: el chequeo quedó guardado en el celular y se sube solo"); return mtRender(); }
+  $("mtUp") && ($("mtUp").disabled = true);
+  await flushMastitis(true);
 }
+// cola de chequeos guardados en el celular: se suben al tener señal (al abrir la app o al volver la señal)
+let mtFlushing = false;
+async function flushMastitis(loud){
+  if (mtFlushing || !navigator.onLine) return;
+  mtFlushing = true;
+  const ob = jget("mtOutbox", []), left = []; let sent = 0, lastErr = "";
+  for (const key of ob){
+    const d = jget(key, null); if (!d?.meta){ continue; }
+    const m = d.meta, todo = Object.entries(d.rows || {}).filter(([, r])=>!r.up);
+    if (todo.length){
+      const rows = todo.map(([id, r])=>({ cow_id:id, check_date:m.date, kind:m.kind, lot:(d.lots || {})[id] ?? (m.kind==="C" ? MT_LOT[m.pen] || m.pen : null), farm_id:m.farm, ai:r.ai, ad:r.ad, pi:r.pi, pd:r.pd,
+        observation:r.obs || null, ...(r.tx ? { treatment:r.tx } : {}), ...(mtJC(r) ? { review_jc:true } : {}), source:"app", natural_key:`app:${id}|${m.date}|${m.kind}` }));
+      const { error } = await sb.from("cow_mastitis").upsert(rows, { onConflict:"natural_key" });
+      if (error){ left.push(key); lastErr = error.message; console.warn("mastitis", key, error.message); continue; }
+      todo.forEach(([, r])=>{ r.up = true; }); sent += todo.length;
+    }
+    if (m.kind==="C" && d.stats){
+      const { error } = await sb.from("mastitis_checks").upsert({ farm_id:m.farm, lot:d.stats.lot, check_date:m.date, cows:d.stats.cows, lost:d.stats.lost,
+        g1:d.stats.g[1], g2:d.stats.g[2], g3:d.stats.g[3], g4:d.stats.g[4], source:"app" }, { onConflict:"farm_id,lot,check_date" });
+      if (error) console.warn("indicadores mastitis", error.message);
+    }
+    jset(key, d);
+  }
+  jset("mtOutbox", left); mtFlushing = false;
+  if (sent) toast(`Mastitis guardada ✓ (${sent} vaca${sent===1 ? "" : "s"})`);
+  else if (loud && lastErr) toast(/row-level|permission|policy/i.test(lastErr) ? "No tienes permiso para registrar mastitis" : "No se pudo subir: queda guardado en el celular");
+  if (mt && location.hash==="#mastitis/chequeo"){ mt.hist = {}; mt.chart = null; mtRender(); }
+}
+window.addEventListener("online", ()=>flushMastitis());
 // lote de la vaca: en el chequeo, el del chequeo; en la revisión, el grupo actual de la vaca
 const mtLotOf = id => { const p = mt.kind==="R" ? mtCows().find(c=>c.id===id)?.pen || "" : mt.pen; return MT_LOT[p] || p || null; };
 let mtXlsx = null;   // librería de Excel: se descarga la primera vez
@@ -5267,7 +5312,7 @@ const mtLoadXlsx = () => mtXlsx || (mtXlsx = new Promise((ok, ko)=>{
 async function mtExport(kind){
   const d = mtDraft(), rows = Object.entries(d.rows).sort((a, b)=>byNum(a[0], b[0])), lot = mt.kind==="R" ? "vacas" : MT_LOT[mt.pen] || mt.pen;
   const farm = farmLabel(mt.farms.find(f=>f.id===mt.farm) || {}), tipo = mt.kind==="R" ? "Revisión" : "Chequeo";
-  const name = `Mastitis ${tipo} ${lot} ${mt.date}`, Q = v => v==="0" || v==null ? "" : v;
+  const name = `Mastitis ${tipo} ${lot} ${mt.date}`, Q = v => v ?? "0";
   let file;
   if (kind==="xls"){
     let X; try{ X = await mtLoadXlsx(); }catch(e){ return toast("Se necesita señal la primera vez para armar el Excel"); }
@@ -5287,7 +5332,7 @@ async function mtExport(kind){
     doc.setFont("helvetica", "bold"); doc.setFontSize(15); doc.setTextColor(194, 50, 110);
     doc.text(`MASTITIS · ${tipo.toUpperCase()} ${fmt(mt.date)} · ${farm} · ${lot}`, 105, M + 4, { align:"center" });
     doc.setFontSize(9); doc.setTextColor(90); doc.setFont("helvetica", "normal");
-    doc.text("1-3 grado CMT · 4 clínica · P cuarto perdido · vacío = sano · solo vacas enfermas (las demás sanas)", 105, M + 10, { align:"center" });
+    doc.text("0 negativo · 1-3 grado CMT · 4 clínica · P cuarto perdido · solo vacas enfermas (las demás sanas)", 105, M + 10, { align:"center" });
     let y = M + 16; const head = ["Vaca","AI","AD","PI","PD","Observación / tratamiento"];
     const line = (vals, bold) => { let x = M; doc.setFont("helvetica", bold ? "bold" : "normal"); doc.setTextColor(0);
       vals.forEach((v, i)=>{ doc.rect(x, y, W[i], 7); const t = doc.splitTextToSize(String(v), W[i] - 2)[0] || "";
@@ -5298,9 +5343,9 @@ async function mtExport(kind){
     rows.forEach(([id, r])=>{ if (y > 280){ doc.addPage(); y = M; line(head, true); } line([id, Q(r.ai), Q(r.ad), Q(r.pi), Q(r.pd), [r.obs, r.tx && "Trat: " + r.tx].filter(Boolean).join(" · ")]); });
     doc.setFont("helvetica", "bold"); doc.setFontSize(11);
     doc.text(`${rows.length} vacas enfermas · ${rows.filter(([, r])=>MT_Q.some(q=>r[q]==="4")).length} con clínica · ${rows.filter(([, r])=>MT_Q.some(q=>r[q]==="P")).length} con cuarto perdido`, M, Math.min(y + 8, 290));
-    const lc = mtLotCows(), okN = lc.filter(c=>(d.ok || {})[c.id] && !d.rows[c.id]).length, todoN = lc.filter(c=>!d.rows[c.id] && !(d.ok || {})[c.id]).length;
-    if (lc.length){ doc.setFont("helvetica", "normal"); doc.setFontSize(10);
-      doc.text(`Lote ${lot}: ${lc.length} vacas en ordeño · ${okN} sanas marcadas · ${todoN} sin revisar`, M, Math.min(y + 14, 295)); }
+    const lc = mtLotCows(), sanas = lc.filter(c=>!d.rows[c.id]).length;
+    if (lc.length && mt.kind==="C"){ doc.setFont("helvetica", "normal"); doc.setFontSize(10);
+      doc.text(`Lote ${lot}: ${lc.length} vacas en ordeño · ${sanas} sanas (no anotadas)`, M, Math.min(y + 14, 295)); }
     file = new File([doc.output("blob")], name + ".pdf", { type:"application/pdf" });
   }
   if (navigator.canShare?.({ files:[file] })){ try{ await navigator.share({ files:[file], title:name }); return; }catch(e){ if (e.name==="AbortError") return; } }
@@ -5315,7 +5360,7 @@ $("mastBody").addEventListener("click", async e=>{
   if (t.id==="mtRestOk"){ const d = mtDraft(), rest = mtLotCows().filter(c=>!d.rows[c.id] && !(d.ok || {})[c.id]);
     if (!confirm(`¿Marcar las ${rest.length} vacas que faltan como sanas (0)?`)) return;
     d.ok ||= {}; rest.forEach(c=>{ d.ok[c.id] = true; }); mtSave(d); return mtRender(); }
-  if (q("data-mtrow") && !t.closest(".hscard") && !t.closest("[data-mtok]")){ const id = q("data-mtrow");
+  if (q("data-mtrow") && !t.closest(".hscard") && !t.closest("[data-mtok]") && Date.now() - mtSwiped > 400){ const id = q("data-mtrow");
     if (mt.cur===id){ mt.cur = null; return mtRender(); } return mtOpen(id); }
   if (q("data-mtpen")!=null){ mt.pen = q("data-mtpen"); mt.cur = null; jset("mtLast", { farm:mt.farm, pen:mt.pen }); return mtRender(); }
   if (t.id==="mtGo") return mtOpen($("mtId").value);
@@ -5337,7 +5382,7 @@ $("mastBody").addEventListener("click", async e=>{
     toast(`${was} anotada ✓`); mt.cur = null; mtRender();
     if (mt.mode==="lista") document.querySelector(`[data-mtrow="${CSS.escape(was)}"]`)?.scrollIntoView({ block:"center" }); else if (mt.mode!=="rev") $("mtId")?.focus(); return; }
   if (q("data-mted")){ mt.cur = q("data-mted"); return mtOpen(mt.cur); }
-  if (q("data-mtdel")){ const id = q("data-mtdel"); if (!confirm(`¿Quitar la vaca ${id} de este chequeo?`)) return; const d = mtDraft(); delete d.rows[id]; mtSave(d); return mtRender(); }
+  if (q("data-mtdel")) return mtDelRow(q("data-mtdel"));
   if (q("data-mttxs")){ const id = q("data-mttxs"), v = document.querySelector(`[data-mttx="${CSS.escape(id)}"]`)?.value.trim() || null;
     const { data, error } = await sb.from("cow_mastitis").update({ treatment:v }).eq("natural_key", `app:${id}|${mt.date}|${mt.kind}`).select("id");
     if (error || !data?.length) return toast("No se pudo guardar el tratamiento" + (error ? ": " + error.message : ""));
@@ -5362,6 +5407,31 @@ $("mastBody").addEventListener("change", async e=>{
   if (t.id==="mtDate"){ mt.date = t.value || today(); mt.cur = null; mt.hist = {}; mt.lotLast = {}; mt.txh = {}; mt.tmp = {}; return mtRender(); }
 });
 $("mastBody").addEventListener("keydown", e=>{ if (e.target.id==="mtId" && e.key==="Enter"){ e.preventDefault(); mtOpen(e.target.value); } });
+// borrar una vaca anotada (si ya se subió, se borra también de Supabase)
+async function mtDelRow(id){
+  const d = mtDraft(), r = d.rows[id]; if (!r) return mtRender();
+  if (!confirm(`¿Borrar la vaca ${id} de este ${mt.kind==="R" ? "registro de revisión" : "chequeo"}?${r.up ? " Ya estaba subida: se borra también de la base." : ""}`)) return mtRender();
+  if (r.up){
+    if (!navigator.onLine){ toast("Necesitas señal para borrar una vaca ya subida"); return mtRender(); }
+    const { data, error } = await sb.from("cow_mastitis").delete().eq("natural_key", `app:${id}|${mt.date}|${mt.kind}`).select("id");
+    if (error || !data?.length){ toast("No se pudo borrar" + (error ? ": " + error.message : " (solo quien la registró o el administrador)")); return mtRender(); }
+    if (mt.kind==="C"){ delete d.rows[id]; mtSave(d); mtSaveStats(); }
+  }
+  delete d.rows[id]; mtSave(d); if (mt.cur===id) mt.cur = null; toast(`${id} borrada`); mtRender();
+}
+// deslizar a la izquierda una vaca anotada en la lista = borrarla
+(()=>{ let sw = null;
+  $("mastBody").addEventListener("pointerdown", e=>{ const el = e.target.closest("[data-mtswp]"); if (!el || e.target.closest(".hscard,input,button")) return;
+    sw = { el, id:el.dataset.mtswp, x:e.clientX, y:e.clientY, dx:0, on:false }; });
+  $("mastBody").addEventListener("pointermove", e=>{ if (!sw) return;
+    const dx = e.clientX - sw.x, dy = e.clientY - sw.y;
+    if (!sw.on){ if (Math.abs(dy) > 12 && Math.abs(dy) > Math.abs(dx)){ sw = null; return; } if (dx > -12) return; sw.on = true; sw.el.classList.add("drag"); }
+    sw.dx = Math.min(0, dx); sw.el.style.transform = `translateX(${sw.dx}px)`; sw.el.style.background = sw.dx < -90 ? "color-mix(in srgb, var(--s4) 25%, var(--card))" : ""; });
+  const end = () => { if (!sw) return; const s0 = sw; sw = null; s0.el.classList.remove("drag");
+    if (s0.on){ s0.el.style.transform = ""; s0.el.style.background = ""; mtSwiped = Date.now(); if (s0.dx < -90) mtDelRow(s0.id); } };
+  $("mastBody").addEventListener("pointerup", end); $("mastBody").addEventListener("pointercancel", end);
+})();
+let mtSwiped = 0;
 
 // sin vaca: las que salieron con mastitis (grado 1 a 4) el último mes
 const mastTopBtns = () => (canDo("mastitis_registrar") ? `<a class="btn" href="#mastitis/chequeo" style="display:block;text-align:center;text-decoration:none;margin-bottom:8px">✍️ Registrar chequeo o revisión</a>` : "")
