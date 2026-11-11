@@ -8174,7 +8174,8 @@ function renderReport(){
         ${kp(lastOf("iep") ?? "—", "Intervalo entre partos")}
         ${kp(`${L.embryo_losses??0} · ${L.abortions??0}`, "Muertes emb. · abortos")}
         ${kp(pc(lastOf("cull_rate")), "Tasa de descarte")}
-        ${kp(`${L.eco_pos_cows??0} <span style="font-size:13px">/ ${L.cuotaVacas!=null ? Math.round(L.cuotaVacas) : "—"}</span>`, "ECO+ vacas / cuota")}
+        ${kp(`${L.eco_pos_cows??0} <span style="font-size:13px">/ ${L.cuotaVacas!=null ? Math.round(L.cuotaVacas) : "—"}</span>`, `ECO+ vacas / cuota${L.eco_total_cows!=null ? ` · de <b style="display:inline;font-size:13px;color:var(--ink)">${L.eco_total_cows}</b> ECO que venían${L.salieron!=null ? ` (${pc(L.salieron)})` : ""}` : ""}`)}
+        ${kp(`${L.eco_pos_heifers??0} <span style="font-size:13px">/ ${L.cuotaNov!=null ? Math.round(L.cuotaNov) : "—"}</span>`, "ECO+ novillas / cuota")}
         ${kp(`${pc(lastOf("pct_pregnant"))} · ${lastOf("del") ?? "—"}`, "% hato preñado · DEL")}
         ${kp(n1(lastOf("avg_milk")), "Promedio leche (kg)")}
         ${kp(`${pc(lastOf("tc_cows"))} · ${pc(lastOf("tp_cows"))}`, "TC · TP vacas")}
