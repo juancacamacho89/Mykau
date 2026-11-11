@@ -19,6 +19,7 @@
   --milk:#2f6fd6; --soft:#eef6f4;
   --c1:#2a78d6; --c2:#eb6834; --c3:#1baf7a; --c4:#eda100; --c5:#e87ba4;
   --mq1:#f2c94c; --mq2:#f6a55e; --mq3:#e0661b; --mq4:#d62d20; --mqp:#8c939c;
+  --nd1:#08519c; --nd2:#3182bd; --nd3:#9ecae1; --nd4:#f2f7fc;   /* humedad NDMI: azul (agua) → blanco (seco) */
 }
 @media (prefers-color-scheme: dark){ :root:not([data-theme="light"]){
   --bg:#12161b; --card:#1b2129; --ink:#e7ecf1; --muted:#9aa5b1; --line:#2b333d; --accent:#3cc2ad;
@@ -65,7 +66,7 @@ td:first-child{white-space:nowrap}
 .err{color:var(--s4);font-size:14px;margin-top:8px}
 svg text{fill:var(--muted);font-size:11px}
 .legend{display:flex;gap:10px;flex-wrap:wrap;font-size:12px;color:var(--muted);margin-top:4px}
-.legend i{display:inline-block;width:10px;height:10px;border-radius:50%;margin-right:4px;vertical-align:-1px}
+.legend i{display:inline-block;width:10px;height:10px;border-radius:50%;margin-right:4px;vertical-align:-1px;box-shadow:0 0 0 1px rgba(0,0,0,.15)}
 .hidden{display:none}
 
 /* Inicio: íconos como en la pantalla de inicio del iPhone */
@@ -850,8 +851,11 @@ async function homeAbx(){
   const rows = fs.map(f=>{ const xs = (data||[]).filter(r=>r.farm_id===f), pm = xs.filter(r=>r.rec_date===y).reduce((a,r)=>a + (+r.pm_abx_l||0), 0),
     am = xs.filter(r=>r.rec_date===t0).reduce((a,r)=>a + (+r.am_abx_l||0), 0);
     return `<div style="display:flex;justify-content:space-between;gap:8px;margin-top:6px"><span><b>${f===7 ? "La Isla" : "El Recodo"}</b> <span class="sub">tarde de ayer ${pm} L + mañana de hoy ${am} L</span></span><b style="font-size:20px">${pm + am} L</b></div>`; });
-  box.innerHTML = rows.length ? `<div class="card" style="margin:14px 0 0"><b>🍼 Leche de antibiótico para terneras</b>${rows.join("")}</div>` : "";
+  box.innerHTML = `<div class="card" style="margin:14px 0 0"><b>🍼 Leche de antibiótico para terneras</b>${rows.join("") || `<div class="sub" style="margin-top:6px">Todavía no han registrado la leche de antibiótico de ayer en la tarde ni de hoy en la mañana.</div>`}</div>`;
 }
+// si abrió la app sin señal o la dejó abierta desde ayer, el aviso se vuelve a cargar al volver la señal o al regresar a la app
+window.addEventListener("online", ()=>{ if (!$("tabInicio").classList.contains("hidden")) homeAbx(); });
+document.addEventListener("visibilitychange", ()=>{ if (document.visibilityState==="visible" && !$("tabInicio").classList.contains("hidden")) homeAbx(); });
 const openCow = id => { location.hash = "vaca/"+encodeURIComponent(id); window.scrollTo({top:0}); };
 // organizar: tocar "Organizar íconos", arrastrar, "Listo"
 (function(){
@@ -2066,7 +2070,8 @@ const PS_NDVI = [[0.75, "--s0", "listo"], [0.65, "--c3", "casi listo"], [0.5, "-
 const psNdviCls = v => PS_NDVI.find(x=>v >= x[0]);
 // humedad (NDMI de Sentinel-2 = agua en las hojas). Calibrado con 13 meses (oct 2025–nov 2026) de las dos fincas:
 // mediana 0,41 · 25 % más bajo < 0,28 · 10 % más bajo < 0,17. Con estos cortes: ~52 % bien, ~19 % normal, ~15 % secándose, ~14 % seco.
-const PS_NDMI = [[0.4, "--milk", "bien de agua"], [0.3, "--c3", "normal"], [0.2, "--s2", "secándose"], [-1, "--s4", "seco / estrés"]];
+// escala de azul (mucha agua) a blanco (seco), Juan 11/11/2026
+const PS_NDMI = [[0.4, "--nd1", "bien de agua"], [0.3, "--nd2", "normal"], [0.2, "--nd3", "secándose"], [-1, "--nd4", "seco / estrés"]];
 const psNdmiCls = v => PS_NDMI.find(x=>v >= x[0]);
 async function psLoadNdvi(farm){
   if (psNdvi[farm]) return psNdvi[farm];
@@ -2088,7 +2093,7 @@ function psNdviChart(box, obs, occ, o = {}){
   for (let k = 0; k <= 4; k++){ const v = lo + (hi - lo)*k/4; g += `<line x1="${L}" x2="${W - R}" y1="${Y(v)}" y2="${Y(v)}" stroke="currentColor" stroke-opacity=".1"/><text x="${L - 4}" y="${Y(v) + 4}" text-anchor="end">${v.toFixed(1)}</text>`; }
   g += `<line x1="${L}" x2="${W - R}" y1="${Y(ref)}" y2="${Y(ref)}" stroke="var(${ln})" stroke-dasharray="4 3" stroke-opacity=".7"/>`;
   g += `<polyline points="${obs.map(p=>`${X(t(p.d))},${Y(p.v)}`).join(" ")}" fill="none" stroke="var(${ln})" stroke-width="2"/>`;
-  obs.forEach(p=>{ g += `<circle cx="${X(t(p.d))}" cy="${Y(p.v)}" r="2.6" fill="var(${cls(p.v)[1]})"><title>${fmt(p.d)} · ${p.v.toFixed(2)}</title></circle>`; });
+  obs.forEach(p=>{ g += `<circle cx="${X(t(p.d))}" cy="${Y(p.v)}" r="2.6" fill="var(${cls(p.v)[1]})" stroke="var(--muted)" stroke-width=".5"><title>${fmt(p.d)} · ${p.v.toFixed(2)}</title></circle>`; });
   const mo = new Date(t0); mo.setDate(1); mo.setMonth(mo.getMonth() + 1);
   for (; mo.getTime() <= t1; mo.setMonth(mo.getMonth() + 2)) g += `<text x="${X(mo.getTime())}" y="${H - 6}" text-anchor="middle">${MES[mo.getMonth()]}</text>`;
   box.innerHTML = `<svg viewBox="0 0 ${W} ${H}" width="100%" style="color:var(--ink);display:block;font-size:11px">${g}</svg>`;
@@ -2150,7 +2155,7 @@ async function renderMap(box){
       const val = nv ? (hum ? nv.m : nv.v) : null;
       const c = sat ? (nv ? (hum ? psNdmiCls(val) : psNdviCls(val))[1] : "--line")
         : lots ? "--milk" : rest==null ? "--line" : rest < PS_TARGET*0.6 ? "--s4" : rest < PS_TARGET ? "--s2" : "--s0";
-      const poly = L.polygon(g.geom, { color: lots ? "#fff" : css(c), weight: lots ? 3 : 1.5, fillColor: css(c), fillOpacity: lots ? .25 : .4 }).addTo(layer);
+      const poly = L.polygon(g.geom, { color: lots ? "#fff" : hum ? css("--nd1") : css(c), weight: lots ? 3 : hum ? 1 : 1.5, fillColor: css(c), fillOpacity: lots ? .25 : hum ? .8 : .4 }).addTo(layer);
       poly.bindTooltip(`${esc(p.number)}${lots ? " · " + esc([...lots].join(" + ")) : ""}${nv ? " · " + val.toFixed(2) : ""}`, { permanent:true, direction:"center", className:"psmaplbl" + (lots ? " on" : "") });
       poly.bindPopup(`<b>${esc(p.predio)} ${esc(p.number)}</b><br>${lots ? "Con " + esc([...lots].join(" + ")) + (heads[g.id] ? ` · ${heads[g.id]} animales` : "") : rest==null ? "Sin pastoreos" : rest + " d de descanso"}${nv ? `<br>Verdor ${nv.v.toFixed(2)} (${psNdviCls(nv.v)[2]}, imagen ${fmt(nv.d)})${nv.m!=null ? `<br>Humedad ${nv.m.toFixed(2)} (${psNdmiCls(nv.m)[2]})` : ""}` : ""}<br><a href="#pastos/${p.id}">Ver hoja de vida</a>`);
       if (lots) psCowsIn(g, heads[g.id]).forEach(([pt, flip])=>L.marker(pt, { icon:L.divIcon({ className:"pscow", html:PS_COW(flip), iconSize:[26, 18], iconAnchor:[13, 9] }),
@@ -3156,6 +3161,22 @@ function rqDryInfo(c){
   return { ms:ms.slice(-2), last, lastKg, low, preg, sv, dry, due, driedOff, driedOn:dd, gest: preg && sv ? days(sv.d, today()) : null, plan:D.plans[c.id], tot };
 }
 const rqDel = c => c.last_calving ? days(c.last_calving, today()) : null;
+// Inseminación tipo Ovsynch: las vacas que el chequeo dejó programadas para inseminar (Ovsynch día 10 · OVS2 día 3)
+// hasta la fecha escogida (y las atrasadas de los últimos 5 días). Se marcan solas: solo escogen toro e inseminador.
+let rqOvs = null;   // { farm, date, plans:{ cow_id:{ due_date, note } } }
+async function rqLoadOvs(){
+  const D = rq.date || today();
+  const { data } = await sb.from("cow_plans").select("cow_id,due_date,note").eq("farm_id", rq.farm).eq("plan_type", "inseminar").eq("status", "pending")
+    .gte("due_date", addDays(D, -5)).lte("due_date", addDays(D, 1)).order("due_date");
+  rqOvs = { farm:rq.farm, date:D, plans:Object.fromEntries((data || []).map(x=>[x.cow_id, x])) };
+}
+const rqOvsOn = () => rq.type==="service" && rq.d.cat==="Ovsynch";
+async function rqOvsPick(){
+  await rqLoadOvs();
+  const ids = Object.keys(rqOvs.plans).filter(id=>rqCows.some(c=>c.id===id));
+  ids.forEach(id=>rq.sel.add(id)); rq.ovsF = !!ids.length;
+  toast(ids.length ? `${ids.length} vaca${ids.length===1 ? "" : "s"} de Ovsynch para inseminar: quedaron marcadas` : "No hay vacas de Ovsynch programadas para esa fecha");
+}
 function rqInfo(c){
   const st = (c.status||"").replace(/^\/|\/$/g, ""), del = rqDel(c);
   return [st, c.lactation_num > 0 && del!=null ? `${del} d` : "", c.lactation_num > 0 ? `L${c.lactation_num}` : (c.birth_date ? Math.floor(days(c.birth_date, today())/30.4) + " m" : "")].filter(Boolean).join(" · ");
@@ -3189,6 +3210,10 @@ function renderRapido0(){
           ${np ? `<button class="btn ghost" data-rqmarkplan="1" style="margin-top:6px">🌙 Marcar ${np===1 ? "la que toca secar" : "las " + np + " para secar"}</button>` : ""}
           <div class="sub" style="margin-top:4px">Para secar = las programadas y las preñadas con secado esperado en los próximos 14 días (o ya pasado), como en Listas de trabajo.</div>
           ${pl ? `<div class="sub" style="margin-top:4px">En rojo: para secar y bajitas. Toca el número para ver preñez y secado esperado.</div>` : ""}`; })() : ""}
+      ${rqOvsOn() ? (()=>{ const n = Object.keys(rqOvs?.plans || {}).filter(id=>rqCows.some(c=>c.id===id)).length;
+        return `<div class="hscard" style="margin-top:6px"><b>💉 Ovsynch / OVS2: ${n} vaca${n===1 ? "" : "s"} para inseminar</b> <span class="sub">(programadas en el chequeo hasta el ${fmt(rq.date)})</span>
+          <div class="chips sm" style="margin-top:6px"><button class="${rq.ovsF ? "on" : ""}" data-rqovsf="1">Solo las de Ovsynch</button><button class="${rq.ovsF ? "" : "on"}" data-rqovsf="0">Todas</button>${n ? `<button data-rqovsmark="1">✓ Marcar las ${n}</button>` : ""}</div>
+          <div class="sub" style="margin-top:4px">Escoge el toro y el inseminador abajo y ejecuta. Al guardar, el protocolo de cada vaca queda cumplido.</div></div>`; })() : ""}
       <div id="rqList" style="max-height:${rq.type==="dry_off" ? 60 : 46}vh;overflow:auto;margin-top:8px;border-top:1px solid var(--line)">${rqListHtml(shown)}</div></div>
     <div class="card hsform"><b>3 · Datos</b>${rqForm(f)}</div>
     <div class="err" id="rqErr"></div>
@@ -3209,8 +3234,10 @@ async function rqLoadLost(){
   return true;
 }
 // jeringas de cada vaca: lo que se escribió, o 4 − cuartos que siguen perdidos (los que "volvieron" se cuentan, con aviso)
-const rqSyr = c => { const w = rq.d.jw?.[c.id]; if (w!=null) return w; if (rqCull[c.id]) return 0; const l = rqLost[c.id]; return l ? 4 - l.filter(q=>!q.recovered).length : 4; };
-const rqLostTxt = c => [rqCull[c.id] ? `descarte programado ${fmt(rqCull[c.id])}` : "",
+// vacas de descarte (programado o con estado Desc.): 0 jeringas (Juan, 11/11/2026)
+const rqIsCull = c => !!rqCull[c.id] || /^Desc/i.test(c.status || "");
+const rqSyr = c => { const w = rq.d.jw?.[c.id]; if (w!=null) return w; if (rqIsCull(c)) return 0; const l = rqLost[c.id]; return l ? 4 - l.filter(q=>!q.recovered).length : 4; };
+const rqLostTxt = c => [rqCull[c.id] ? `descarte programado ${fmt(rqCull[c.id])}` : /^Desc/i.test(c.status || "") ? "descarte" : "",
   ...(rqLost[c.id] || []).map(q=>`${q.k.toUpperCase()} perdido${q.recovered ? " (volvió a dar " + q.recovered[q.k] + " el " + fmt(q.recovered.check_date) + ": revisar)" : ""}`)].filter(Boolean).join(", ");
 function rqDryHtml(){
   const cows = rqCows.filter(c=>rq.sel.has(c.id)).sort((a, b)=>byNum(a.pen || "", b.pen || "") || byNum(a.id, b.id));
@@ -3287,6 +3314,7 @@ const rqShown = () => { const tk = rqTokens(), dry = rq.type==="dry_off";
   return L; };
 const rqShown0 = (tk, dry) => { 
   return rqCows.filter(c=>(!rq.pen || (c.pen||"—")===rq.pen) && (!tk.length || (tk.length > 1 ? tk.includes(c.id) : c.id.includes(tk[0])))
+    && (!(rqOvsOn() && rq.ovsF) || !!rqOvs?.plans[c.id])
     && (!dry || !rq.dryF || (rq.dryF==="prog" ? (!rqDryInfo(c).driedOff && (!!rqDryD?.plans[c.id] || rqDryInfo(c).due)) : rq.dryF==="low" ? rqDryInfo(c).low : rq.dryF==="lac" ? /(^|\/)Lac/.test(c.status || "") : true))); };
 function rqListHtml(shown){
   const tk = rqTokens(), miss = tk.length > 1 ? tk.filter(t=>!shown.some(c=>c.id===t)) : [];
@@ -3296,7 +3324,7 @@ function rqListHtml(shown){
   if (rq.type==="dry_off") return head + shown.map(rqDryRow).join("") || `<div class="empty">Sin animales${rq.dryF ? " con ese filtro" : ""}</div>`;
   return head + shown.map(c=>`<label style="display:flex;gap:10px;align-items:center;padding:7px 2px;margin:0;border-bottom:1px solid var(--line);color:var(--ink);font-size:15px;font-weight:400">
           <input type="checkbox" data-rqc="${esc(c.id)}" ${rq.sel.has(c.id) ? "checked" : ""} style="width:22px;height:22px;flex:none">
-          <b style="min-width:62px">${esc(c.id)}</b><span class="sub" style="flex:1">${esc(c.pen||"")} · ${esc(rqInfo(c))}</span>
+          <b style="min-width:62px">${esc(c.id)}</b><span class="sub" style="flex:1">${esc(c.pen||"")} · ${esc(rqInfo(c))}${rqOvsOn() && rqOvs?.plans[c.id] ? ` · <b style="color:var(--accent)">💉 ${esc(rqOvs.plans[c.id].note || "Ovsynch")} → inseminar ${fmt(rqOvs.plans[c.id].due_date)}</b>` : ""}</span>
           ${rq.type==="exit" ? `<input data-rqwt="${esc(c.id)}" inputmode="decimal" placeholder="kg" value="${esc(rq.d.w?.[c.id] || "")}" style="width:78px;flex:none;padding:8px;font-size:15px">` : ""}</label>`).join("") || `<div class="empty">Sin animales</div>`;
 }
 function rqDryRow(c){
@@ -3408,7 +3436,9 @@ function rqRead(){
 }
 $("rqBody").addEventListener("click", async e=>{
   const t = e.target, q = a => t.closest(`[${a}]`)?.getAttribute(a);
-  if (q("data-rqt")){ rqRead(); rq.type = q("data-rqt"); rq.d = {};
+  if (q("data-rqovsf")!=null){ rqRead(); rq.ovsF = q("data-rqovsf")==="1"; return renderRapido(); }
+  if (q("data-rqovsmark")){ rqRead(); Object.keys(rqOvs?.plans || {}).forEach(id=>{ if (rqCows.some(c=>c.id===id)) rq.sel.add(id); }); return renderRapido(); }
+  if (q("data-rqt")){ rqRead(); rq.type = q("data-rqt"); rq.d = {}; rq.ovsF = false;
     if (rq.type==="service") rq.opts = await loadRegOpts(rq.farm);
     if (["treat","dry_off"].includes(rq.type)) await hsCatalog();
     return renderRapido(); }
@@ -3448,13 +3478,18 @@ $("rqBody").addEventListener("change", async e=>{
     rqDryRefresh();
     return; }
   if (t.id==="rqLowKg"){ rqRead(); rq.lowKg = +t.value; return renderRapido(); }
+  if (t.name==="rqCat" && rq.type==="service"){ rqRead();
+    if (rqOvsOn()) await rqOvsPick(); else rq.ovsF = false;
+    return renderRapido(); }
+  if (t.id==="rqDate" && rqOvsOn()){ rqRead(); await rqOvsPick(); return renderRapido(); }
   if (t.dataset.rqjw!=null){ (rq.d.jw ||= {})[t.dataset.rqjw] = +t.value; $("rqDry").innerHTML = rqDryHtml(); return; }
   if (t.id==="rqBull"){ rq.d.bull = t.value.trim().toUpperCase(); if ($("rqPerBull")) $("rqPerBull").innerHTML = rqPerBullHtml(); return; }
   if (t.name==="rqStraws"){ rq.d.straws = +t.value; if ($("rqPerBull")) $("rqPerBull").innerHTML = rqPerBullHtml(); return; }
   if (t.dataset.rqsw!=null){ (rq.d.sw ||= {})[t.dataset.rqsw] = +t.value; $("rqPerBull").innerHTML = rqPerBullHtml(); return; }
   if (t.dataset.rqbw!=null){ (rq.d.bw ||= {})[t.dataset.rqbw] = t.value; if (!t.value) delete rq.d.bw[t.dataset.rqbw]; $("rqPerBull").innerHTML = rqPerBullHtml(); return; }
   if (t.name==="rqF"){ rqRead(); rq.farm = +t.value; rq.sel = new Set(); rq.pen = ""; await rqLoadCows();
-    if (rq.type==="service") rq.opts = await loadRegOpts(rq.farm); return renderRapido(); }
+    if (rq.type==="service") rq.opts = await loadRegOpts(rq.farm);
+    if (rqOvsOn()) await rqOvsPick(); return renderRapido(); }
   if (t.name==="rqTF"){ rqRead(); rq.d.toFarm = +t.value; rq.d.pen = ""; return renderRapido(); }
   const el = t.closest("[data-rqi]");
   if (el){ const it = rq.d.items[+el.dataset.rqi], k = el.dataset.k;
@@ -4354,7 +4389,7 @@ const RS_DAYS = 25, RS_WIN = 3, RS_DOSE = 3;   // como Interherd: parto = servic
 const LS_LISTS = [
   ["chequeo", "🩺 Para chequeo", "Las que entran al chequeo reproductivo de esa fecha (mismo cálculo del módulo Chequeo): para marcarlas el día antes", ""],
   ["resincro", "💉 OVS2", "Inseminadas a tiempo fijo (Ovsynch) hace 25 días que no han repetido ni tienen diagnóstico: primer Gestar del OVS2, 7 días antes del chequeo", "resincro"],
-  ["secar", "🌙 Para secar", "Preñadas en lactancia con secado en los próximos 14 días (o ya pasado)", "dry_off"],
+  ["secar", "🌙 Para secar", "Las programadas para secar (con su fecha) y las preñadas en lactancia con secado en los próximos 14 días (o ya pasado)", "dry_off"],
   ["parto", "🐄 Próximas a parto", "Parto esperado en los próximos 21 días (o ya pasado)", ""],
   ["sinserv", "⏳ Sin servir", "Informativa · en lactancia, vacías, más de 60 días de paridas y sin servicio (anestro)", "service"],
   ["repet", "🔁 Repetidoras", "Informativa · 3 o más servicios en esta lactancia sin quedar preñadas", "service"],
@@ -4565,9 +4600,10 @@ async function lsLoad(force){
     const lc = await sb.from("lacto_cows").select("cow_id,pen,list_date").eq("farm_id", farm);   // si falta la tabla, sin lacto
     const pl = await sb.from("cow_plans").select("cow_id,due_date,note,created_at").eq("farm_id", farm).eq("plan_type", "exrep").eq("status", "pending");
     const rs = await sb.from("treatments_cow").select("cow_id,start_date").eq("farm_id", farm).eq("protocol", "Ovsynch").like("notes", "%resincro%").gte("start_date", addDays(today(), -60));
+    const dp = await sb.from("cow_plans").select("cow_id,due_date,note").eq("farm_id", farm).eq("plan_type", "secado").eq("status", "pending");   // secados programados
     if (!c.error && !e.error){ jset(key, { farm, at:Date.now(), cows:c.data, ev:e.data.map(x=>[x.cow_id, x.event_date, x.event_type, noSex(x.result), x.weight_kg, x.category]),
       lacto: lc.error ? [] : lc.data, plans: pl.error ? [] : pl.data.map(x=>[x.cow_id, x.due_date, x.note, x.created_at.slice(0, 10)]),
-      rs: rs.error ? [] : rs.data.map(x=>[x.cow_id, x.start_date]) }); }
+      rs: rs.error ? [] : rs.data.map(x=>[x.cow_id, x.start_date]), dryPlans: dp.error ? [] : dp.data.map(x=>[x.cow_id, x.due_date, x.note]) }); }
   }
   lsData = jget(key, null);
 }
@@ -4596,7 +4632,10 @@ function lsCompute(){
     const svG = svs.filter(e=>e.d <= G).pop();   // el servicio que había el día del Gestar
     const rsDays = svG && /ovsynch/i.test(svG.c || "") && !(svG && ev.some(e=>e.d > svG.d && e.d <= G && ["ultrasound","preg_check","embryo_loss","abortion"].includes(e.t))) ? days(svG.d, G) : null;
     const rs = rsDays!=null && Math.abs(rsDays - RS_DAYS) <= RS_WIN ? { d:rsDays, sv:svG.d, done:(lsData?.rs || []).find(([id, d])=>id===c.id && d > svG.d)?.[1] || null } : null;
-    return { c, C, ck, doubt, rs, lacto: lsLactoSet().has(c.id), del: C ? days(C, D) : null, svs, sv, preg, lac, exp, dry, gest: preg && sv ? days(sv.d, D) : null,
+    // secado programado (Ingreso rápido / hoja de vida): sale en "Para secar" con su fecha, aunque no le toque por fecha de preñez
+    const dp = (lsData?.dryPlans || []).filter(p=>p[0]===c.id).sort((a, b)=>a[1].localeCompare(b[1]))[0];
+    const dried = /^HO/i.test(c.pen || "") || /Horra|Seca/i.test(st);
+    return { c, C, ck, doubt, rs, dryPlan: dp && !dried ? { due:dp[1], note:dp[2] } : null, dried, lacto: lsLactoSet().has(c.id), del: C ? days(C, D) : null, svs, sv, preg, lac, exp, dry, gest: preg && sv ? days(sv.d, D) : null,
       ageM: c.birth_date ? days(c.birth_date, D)/30.44 : null, w: w ? +w.w : null, heifer: !(c.lactation_num > 0) && !C };
   });
 }
@@ -4680,14 +4719,14 @@ const lsLactoSet = () => (lsLactoCache?.src === lsData ? lsLactoCache : (lsLacto
 function lsPick(all, k){
   const D = today();
   const CKO = ["EXREP","ECO1","ECO2","REPETIR","DPR","DP5","DPSEC"];
-  const f = { chequeo: x=>!!x.ck, resincro: x=>!!x.rs, secar: x=>x.preg && x.lac && x.dry && x.dry <= addDays(D, 14) && !/^HO/i.test(x.c.pen || ""),
+  const f = { chequeo: x=>!!x.ck, resincro: x=>!!x.rs, secar: x=>!!x.dryPlan || (x.preg && x.lac && x.dry && x.dry <= addDays(D, 14) && !x.dried),
     parto: x=>x.preg && x.exp && x.exp <= addDays(D, 21),
     sinserv: x=>x.lac && !x.preg && !x.svs.length && x.del > 60,
     repet: x=>!x.preg && x.svs.length >= 3,
     novillas: x=>x.heifer && !x.svs.length && !x.preg && x.ageM >= 16 && (x.w==null || x.w >= 380),
     abiertas: x=>x.lac && !x.preg && x.del > 150 }[k];
   const sortBy = { resincro:(a,b)=>byNum(a.c.pen||"", b.c.pen||"") || byNum(a.c.id, b.c.id), chequeo:(a,b)=>byNum(a.c.pen||"", b.c.pen||"") || CKO.indexOf(a.ck.cat) - CKO.indexOf(b.ck.cat) || byNum(a.c.id, b.c.id),
-    secar:(a,b)=>a.dry.localeCompare(b.dry), parto:(a,b)=>a.exp.localeCompare(b.exp), sinserv:(a,b)=>b.del - a.del,
+    secar:(a,b)=>(a.dryPlan?.due || a.dry || "").localeCompare(b.dryPlan?.due || b.dry || ""), parto:(a,b)=>a.exp.localeCompare(b.exp), sinserv:(a,b)=>b.del - a.del,
     repet:(a,b)=>b.svs.length - a.svs.length, novillas:(a,b)=>b.ageM - a.ageM, abiertas:(a,b)=>b.del - a.del }[k];
   return all.filter(f).sort(sortBy);
 }
@@ -4700,7 +4739,8 @@ function lsDetail(x, k){
          : q.g!=null ? `${q.g} d de servida (${fmt(q.sv.d)})` : ""); }
   if (k==="resincro") return `IA Ovsynch ${fmt(x.rs.sv)} · <b>${x.rs.d} d</b> el ${fmt(lsState.rsDate || today())}${x.rs.d!==RS_DAYS ? ` <span style="color:var(--s3)">(lo ideal: ${RS_DAYS} d)</span>` : ""}`
     + (x.rs.done ? ` · <span class="ok">✓ Gestar puesto ${fmt(x.rs.done)}</span>` : "");
-  if (k==="secar") return `secar ${fmt(x.dry)} (${dd(x.dry)}) · ${x.gest} d preñada · parto ${fmt(x.exp)}`;
+  if (k==="secar") return (x.dryPlan ? `<b style="color:var(--s4)">🌙 programada ${fmt(x.dryPlan.due)}</b> (${dd(x.dryPlan.due)})${x.dryPlan.note ? " · " + esc(x.dryPlan.note) : ""}` : `secar ${fmt(x.dry)} (${dd(x.dry)})`)
+    + (x.preg && x.gest!=null ? ` · ${x.gest} d preñada · parto ${fmt(x.exp)}` : x.preg ? "" : " · vacía");
   if (k==="parto") return `parto ${fmt(x.exp)} (${dd(x.exp)}) · ${x.gest} d preñada`;
   if (k==="sinserv") return `${x.del} d de parida · sin servicio`;
   if (k==="repet") return `${x.svs.length} servicios · último ${fmt(x.sv.d)}${x.del!=null ? ` · ${x.del} d de parida` : ""}`;
@@ -4732,14 +4772,15 @@ async function lsTxLoad(){
   if (!navigator.onLine){ box.innerHTML = `<div class="empty">Necesitas señal.</div>`; return; }
   const farm = lsState.farm, t0 = today();
   const [tx, pl] = await Promise.all([
-    sb.from("treatments_cow").select("id,cow_id,start_date,protocol,notes,treatment_items(supply_code,dose,unit)").eq("farm_id", farm)
+    sb.from("treatments_cow").select("id,cow_id,start_date,diagnosis,protocol,notes,treatment_items(supply_code,dose,unit)").eq("farm_id", farm)
       .or("protocol.like.Chequeo*,protocol.eq.Ovsynch").gte("start_date", t0).lte("start_date", addDays(t0, 30)).order("start_date"),
     sb.from("cow_plans").select("cow_id,due_date,note").eq("farm_id", farm).eq("plan_type", "inseminar").eq("status", "pending").gte("due_date", t0).lte("due_date", addDays(t0, 30))]);
   if (tx.error){ box.innerHTML = `<div class="empty">${esc(tx.error.message)}</div>`; return; }
   await hsCatalog();
   const pen = Object.fromEntries((lsData?.cows || []).map(c=>[c.id, c.pen])), sup = c => hsSupply(c)?.name || c;
-  lsTxRows = [...(tx.data || []).map(t=>({ d:t.start_date, cow:t.cow_id, pen:pen[t.cow_id] || "", what: t.protocol==="Ovsynch" ? (t.notes || "Ovsynch").replace(/ \((inicio|chequeo|primer).*\)$/, "") : t.protocol.replace(/^Chequeo · /, ""),
-      items:(t.treatment_items || []).map(i=>({ n:sup(i.supply_code), dose:+i.dose || 0, unit:i.unit || "" })) })),
+  const resOf = await ckTxResults(tx.data || []);
+  lsTxRows = [...(tx.data || []).map(t=>{ const x = ckTxRowTxt(t, resOf(t), sup); return { d:t.start_date, cow:t.cow_id, pen:pen[t.cow_id] || "", what:x.what, txt:x.items,
+      items:(t.treatment_items || []).map(i=>({ n:sup(i.supply_code), dose:+i.dose || 0, unit:i.unit || "" })) }; }),
     ...(pl.data || []).map(p=>({ d:p.due_date, cow:p.cow_id, pen:pen[p.cow_id] || "", what:"Inseminar", items:[], ia:true }))]
     .sort((a, b)=>a.d.localeCompare(b.d) || byNum(a.pen, b.pen) || byNum(a.cow, b.cow));
   const days = [...new Set(lsTxRows.map(r=>r.d))];
@@ -4749,7 +4790,7 @@ async function lsTxLoad(){
       return `<div class="ckpen" style="${d===t0 ? "color:var(--accent)" : ""}">${d===t0 ? "Hoy" : d===addDays(t0, 1) ? "Mañana" : new Date(d + "T12:00").toLocaleDateString("es-CO", { weekday:"long", day:"numeric", month:"short" })} <span class="sub">· ${fmt(d)} (${rs.length})</span></div>
         ${t ? `<div class="sub">Tener a mano: ${t}</div>` : ""}
         <table class="ivt" style="font-size:13px">${rs.map(r=>`<tr><td style="width:62px"><button class="lnk" data-cow="${esc(r.cow)}"><b>${esc(r.cow)}</b></button><div class="sub">${esc(r.pen)}</div></td>
-          <td>${r.ia ? "💉 <b>Inseminar</b>" : `<b>${esc(r.what)}</b>`}<div class="sub">${esc(r.items.map(i=>`${i.n} ${i.dose} ${i.unit}`).join(" + "))}</div></td></tr>`).join("")}</table>`; }).join("")}
+          <td>${r.ia ? "💉 <b>Inseminar</b>" : `<b>${esc(r.what)}</b>`}<div class="sub">${esc(r.txt ?? r.items.map(i=>`${i.n} ${i.dose} ${i.unit}`).join(" + "))}</div></td></tr>`).join("")}</table>`; }).join("")}
     <div class="row" style="gap:8px;margin-top:10px"><button class="btn ghost" id="lsTxPdf">📄 PDF</button><button class="btn ghost" id="lsTxShare">📤 Compartir</button></div>`
     : `<div class="empty">No quedan tratamientos pendientes del chequeo 👍</div>`;
 }
@@ -4770,7 +4811,7 @@ async function lsTxPdf(){
     if (Object.keys(o).length){ doc.splitTextToSize("Tener a mano: " + Object.entries(o).map(([k, v])=>`${k.replace(/ (\S+)$/, "")} ${Math.round(v*10)/10} ${k.split(" ").pop()}`).join(" · "), 186).forEach(l=>{ doc.text(l, M, y); y += 4; }); }
     rs.forEach(r=>{ if (y > 285){ doc.addPage(); y = M; }
       doc.rect(M, y - 3.5, 186, 5); doc.text(`${r.cow}`, M + 1, y); doc.text(r.pen, M + 18, y);
-      doc.text(doc.splitTextToSize(r.ia ? "INSEMINAR" : `${r.what}: ${r.items.map(i=>`${i.n} ${i.dose} ${i.unit}`).join(" + ")}`, 150)[0], M + 34, y); y += 5; });
+      doc.text(doc.splitTextToSize(r.ia ? "INSEMINAR" : `${r.what}: ${r.txt ?? r.items.map(i=>`${i.n} ${i.dose} ${i.unit}`).join(" + ")}`, 150)[0], M + 34, y); y += 5; });
     y += 3; });
   const file = new File([doc.output("blob")], `Tratamientos chequeo ${fname} ${today()}.pdf`, { type:"application/pdf" });
   if (navigator.canShare?.({ files:[file] })){ try{ await navigator.share({ files:[file], title:file.name }); return; }catch(e){ if (e.name==="AbortError") return; } }
@@ -4798,7 +4839,7 @@ async function lsRpLoad(){
     psAll(()=>sb.from("cow_events").select("cow_id,event_type,result,category,days_value,comments,cows!inner(farm_id,pen)")
       .eq("cows.farm_id", farm).eq("event_date", D).in("event_type", ["repro_exam","ultrasound","preg_check","embryo_loss","abortion"]).order("id")),
     // tratamientos del chequeo (ese día) y Ovsynch / OVS2 que arrancan ese día (hasta el día 10)
-    sb.from("treatments_cow").select("cow_id,start_date,protocol,notes,treatment_items(supply_code,dose,unit)").eq("farm_id", farm)
+    sb.from("treatments_cow").select("cow_id,start_date,diagnosis,protocol,notes,treatment_items(supply_code,dose,unit)").eq("farm_id", farm)
       .or("protocol.like.Chequeo*,protocol.eq.Ovsynch").gte("start_date", D).lte("start_date", addDays(D, 10)).order("start_date").limit(5000),
     sb.from("cow_plans").select("cow_id,due_date,note").eq("farm_id", farm).eq("plan_type", "inseminar").gte("due_date", D).lte("due_date", addDays(D, 11)),
     // servicios después del chequeo: la que se insemina antes de la fecha del Ovsynch / OVS2 sale del protocolo
@@ -4813,7 +4854,7 @@ async function lsRpLoad(){
     const res = sec==="REABS" ? (e.event_type==="abortion" ? "Aborto" : "ME") : noSex(e.result) || "";
     if (res && !r.res.includes(res)) r.res.push(res);
     const c = sec==="REABS" ? (e.comments || "").replace(/^Muerte embrionaria |^Aborto /, "") : e.comments;
-    (c || "").split(" · ").map(x=>x.trim()).filter(x=>x && !/^(PGF2|Antibiótico|Vitaminas|Baño|OVSYNCH|OVS2)(, .*)?$/i.test(x)).forEach(x=>{ if (!r.com.includes(x)) r.com.push(x); });
+    (c || "").split(" · ").map(x=>x.trim()).filter(x=>x && !/^(PGF2|Cefalexina|Ceftiofur|Penicilina|Antibiótico|Vitaminas|Baño|OVSYNCH|OVS2)(, .*)?$/i.test(x)).forEach(x=>{ if (!r.com.includes(x)) r.com.push(x); });
     if ((sec==="DPR" || sec==="ECO") && +e.days_value > 0){ r.days = +e.days_value; if (sec==="DPR") r.due = addDays(addDays(D, -r.days), LS_GEST); }
   });
   // tratamientos: producto y dosis de lo del chequeo; el Ovsynch solo como etiqueta
@@ -4824,7 +4865,8 @@ async function lsRpLoad(){
       ovsOf[t.cow_id] = k; const P = prot[k] ||= { k, steps:{}, cows:new Set() }; P.cows.add(t.cow_id);
       (t.treatment_items || []).forEach(i=>{ const st = P.steps[t.start_date] ||= { d:t.start_date, n, items:{} };
         const key = sup(i.supply_code) + "|" + (+i.dose || 0) + "|" + (i.unit || ""); st.items[key] = (st.items[key] || 0) + 1; });
-    } else if (t.start_date===D) (t.treatment_items || []).forEach(i=>(txOf[t.cow_id] ||= []).push(`${sup(i.supply_code)} ${(+i.dose || 0).toLocaleString("es-CO")} ${i.unit || ""}`.trim()));
+    } else if (t.start_date===D && /·/.test(t.diagnosis || "") && t.notes) (txOf[t.cow_id] ||= []).push(t.notes);   // protocolo del chequeo (texto armado)
+    else if (t.start_date===D) (t.treatment_items || []).forEach(i=>(txOf[t.cow_id] ||= []).push(`${sup(i.supply_code)} ${(+i.dose || 0).toLocaleString("es-CO")} ${i.unit || ""}`.trim()));
   });
   const iaOf = Object.fromEntries((pl.data || []).map(p=>[p.cow_id, p.due_date]));
   const svOf = {}; (sv.data || []).forEach(x=>{ svOf[x.cow_id] ||= x.event_date; });
@@ -7719,7 +7761,7 @@ const CKP = { vwp:50, heiferMonths:16, heiferKg:380, ovsynchToSv:10, maxGest:260
   stages:[ ["ECO1",25,38], ["ECO2",39,55], ["DPR",56,80], ["DP5",140,164], ["DPSEC",200,224] ] };
 const CK_COLOR = { EXREP:"--s3", ECO1:"--milk", ECO2:"--milk", DPR:"--s0", DP5:"--s0", DPSEC:"--s0", REPETIR:"--s2" };
 const CK_EXREP = ["INR","OVSYN","DIB","SUCIA","METRITIS","PIOMETRA","O. LISOS","VAGINITIS","RETE","SV","DESCARTE"];
-const CK_EXTRA = ["PGF2","Antibiótico","Vitaminas","Baño"];
+const CK_EXTRA = ["PGF2","Cefalexina","Ceftiofur","Penicilina","Antibiótico","Vitaminas","Baño"];   // protocolos predeterminados (CK_TX)
 const CK_RES = {
   ECO:   ["Positivo","Negativo","Dudoso","ME"],
   DP:    ["Cargada Hembra","Cargada Macho","Cargada","Vacía","Aborto"],
@@ -7937,11 +7979,11 @@ async function ckRenderTx(){
     sb.from("treatments_cow").select("id,cow_id,start_date,diagnosis,protocol,notes,treatment_items(supply_code,dose,unit,route)")
       .eq("farm_id", farm).like("protocol", "Chequeo*").gte("start_date", addDays(t0, -14)).lte("start_date", addDays(t0, 21)).order("start_date"),
     sb.from("cows").select("id,pen").eq("farm_id", farm).eq("active", true)]);
+  const resOf = await ckTxResults(tx.data || []);
   const pl = { data:[] };
   if (tx.error){ $("ckTxBox").innerHTML = `<div class="empty">${esc(tx.error.message)}</div>`; return; }
   const pen = Object.fromEntries((cw.data || []).map(c=>[c.id, c.pen])), sup = c => hsSupply(c)?.name || c;
-  const rows = [...(tx.data || []).map(t=>({ d:t.start_date, cow:t.cow_id, what: t.protocol==="Ovsynch" ? (t.notes || "Ovsynch").replace(/ \((inicio|chequeo|primer).*\)$/, "") : t.protocol.replace(/^Chequeo · /, ""),
-      items:(t.treatment_items || []).map(i=>`${sup(i.supply_code)} ${i.dose ?? ""} ${i.unit || ""}`.trim()).join(" + "), ovs:t.protocol==="Ovsynch" })),
+  const rows = [...(tx.data || []).map(t=>({ d:t.start_date, cow:t.cow_id, ...ckTxRowTxt(t, resOf(t), sup), ovs:t.protocol==="Ovsynch" })),
     ...(pl.data || []).map(p=>({ d:p.due_date, cow:p.cow_id, what:"Inseminar", items:p.note || "Ovsynch", ia:true }))]
     .sort((a, b)=>a.d.localeCompare(b.d) || byNum(pen[a.cow] || "", pen[b.cow] || "") || byNum(a.cow, b.cow));
   const label = d => d===t0 ? "Hoy" : d===addDays(t0, 1) ? "Mañana" : d===addDays(t0, -1) ? "Ayer"
@@ -7960,6 +8002,16 @@ async function ckRenderTx(){
     ${past.length ? `<details class="ckmore"><summary class="lnk">Días anteriores (${past.length})</summary>${past.map(day).join("")}</details>` : ""}`;
 }
 
+// resultado del chequeo de cada tratamiento (los viejos no lo guardaban): EXREP / ECO / DP de esa vaca ese día o antes
+async function ckTxResults(txs){
+  const old = txs.filter(t=>!/·/.test(t.diagnosis || "") && /^Chequeo/.test(t.protocol || ""));
+  if (!old.length) return () => "";
+  const from = old.reduce((a, t)=>t.start_date < a ? t.start_date : a, old[0].start_date);
+  const { data } = await sb.from("cow_events").select("cow_id,event_date,event_type,result").in("cow_id", [...new Set(old.map(t=>t.cow_id))])
+    .in("event_type", ["repro_exam","ultrasound","preg_check"]).gte("event_date", addDays(from, -10)).order("event_date");
+  return t => { const xs = (data || []).filter(e=>e.cow_id===t.cow_id && e.event_date <= t.start_date); const last = xs[xs.length - 1]; if (!last) return "";
+    return [...new Set(xs.filter(e=>e.event_date===last.event_date).map(e=>noSex(e.result)).filter(Boolean))].join(" + "); };
+}
 // Proyección de leche como la de Interherd (calibrada con su listado de marzo 2026: ~2 % de diferencia):
 //   acumulado = controles de esta lactancia unidos en línea recta (del parto al 1er control, plano)
 //   desde el último control se proyecta la última leche bajando 0,07 % por día
@@ -8078,6 +8130,14 @@ function ckRenderList(){
       <div class="mkbar"><div><b>${doneN}/${list.length}</b> registradas<br>${fmt(D)}</div><button class="btn" id="ckUp" style="width:auto">Subir resultados</button></div>
     </div>`;
 }
+// vacía con más de 250 días de parida: se puede programar lactoinducción o descarte (Juan, 11/11/2026). Devuelve los días o 0
+function ckLongOpen(c, r){
+  const D = $("ckDate").value || today(), calv = (c.ev || []).filter(e=>e.t==="calving" && e.d <= D), C = calv.length ? calv[calv.length-1].d : c.lc;
+  if (!C) return 0;
+  const del = days(C, D), pos = /^(Positivo|Cargada)/.test(r.main || "");
+  const preg = /(^|\/)PR(\/|$)/.test(c.status || "") && !ckNegMain(r.cat, r.main) && r.cat!=="EXREP";
+  return del > 250 && !pos && !preg ? del : 0;
+}
 // resultados que se muestran en el EXREP (lista de la finca; DIB siempre, junto al OVSYN)
 function ckExrepOpts(){
   const l = [...(ckLists.exrep || CK_EXREP)];
@@ -8086,13 +8146,13 @@ function ckExrepOpts(){
 }
 // texto del resultado guardado (lo que se ve en la lista)
 const ckResTxt = r => [r.cat==="EXREP" ? (r.sel||[]).join(" + ") : [r.main, /^ECO/.test(r.cat || "") && r.main==="Negativo" && r.wasPos ? "ME" : "", ...(r.fol||[])].filter(Boolean).join(" · "),
-  r.sale && (r.sel?.length || r.main) ? "🚪 venta" : ""].filter(Boolean).join(" · ");
+  r.lacto ? "🍼 lactoinducción" : "", r.sale && (r.sel?.length || r.main || r.lacto) ? "🚪 venta" : ""].filter(Boolean).join(" · ");
 function ckPanel(c, k, r){
   const cat = k.cat==="REPETIR" ? k.stage : k.cat, ex = cat==="EXREP";
   const opts = ex ? ckExrepOpts() : /^ECO/.test(cat) ? CK_RES.ECO : isMain() ? CK_RES.DP : CK_RES.DP.filter(x=>!/hembra|macho/i.test(x));
   const chip = (v, on, attr) => `<button class="${on?"on":""}" ${attr}="${esc(v)}">${esc(v)}</button>`;
   const neg = !ex && ckNegMain(cat, r.main), meAuto = /^ECO/.test(cat) && r.main==="Negativo" && r.wasPos;
-  const ready = ex ? (r.sel||[]).length : !!r.main;
+  const ready = ex ? (r.sel||[]).length || r.lacto : !!r.main;
   return `<div class="ckpan">
     <div class="sub">${ex ? "Resultado (puedes marcar varios)" : "Resultado"}</div>
     <div class="chips">${opts.map(v=>chip(v, ex ? (r.sel||[]).includes(v) : r.main===v, "data-res")).join("")}</div>
@@ -8100,11 +8160,16 @@ function ckPanel(c, k, r){
     ${meAuto ? `<div class="warn" style="margin:6px 0">Venía con ECO + y sale negativa: se registra <b>muerte embrionaria</b> automáticamente.</div>` : ""}
     ${neg ? `<div class="sub">¿Qué hacer? (puedes marcar varios)</div><div class="chips">${(/^ECO/.test(cat) ? CK_RES.NEG : CK_RES.NEGDP).map(v=>chip(v, (r.fol||[]).includes(v), "data-fol")).join("")}</div>` : ""}
     <div class="sub">Tratamiento</div>
-    <div class="chips sm">${(ckLists.extra || CK_EXTRA).map(v=>chip(v, (r.extras||[]).includes(v), "data-ext")).join("")}</div>
+    <div class="chips sm">${CK_EXTRA.map(v=>chip(v, (r.extras||[]).map(ckTxKey).includes(v), "data-ext")).join("")}</div>
     ${(r.extras||[]).map(v=>ckTxHtml(v, r)).join("")}
+    ${ckLongOpen(c, r) ? `<div class="sub" style="margin-top:8px">Vacía con ${ckLongOpen(c, r)} días de parida:</div>
+      <div class="chips sm"><button class="${r.lacto ? "on" : ""}" data-cklacto="1">🍼 Lactoinducción</button>${canDo("vacas_salida") || isMain() ? `<button class="${r.sale ? "on" : ""}" data-cksale="1">🚪 Descarte</button>` : ""}</div>
+      ${r.lacto ? `<div class="hscard" style="margin-top:6px"><b>🍼 Lactoinducción programada</b>
+        <div class="row" style="gap:6px;margin-top:6px;align-items:center"><span class="sub" style="flex:0 0 60px">Inicia</span><input type="date" data-cklactod="1" value="${esc(r.lacto.date || "")}" style="flex:1;min-width:0;padding:8px"></div>
+        <div class="sub" style="margin-top:4px">Sale del chequeo y queda programada en la hoja de vida.</div></div>` : ""}` : ""}
     ${ckOvs(r) ? ckOvsHtml(r, $("ckDate").value || today()) : ""}
-    ${canDo("vacas_salida") || isMain() ? `<div class="chips sm" style="margin-top:8px"><button class="${r.sale ? "on" : ""}" data-cksale="1">🚪 Programar venta</button></div>
-      ${r.sale ? `<div class="hscard" style="margin-top:6px"><b>🚪 Venta programada</b>
+    ${canDo("vacas_salida") || isMain() ? `${ckLongOpen(c, r) ? "" : `<div class="chips sm" style="margin-top:8px"><button class="${r.sale ? "on" : ""}" data-cksale="1">🚪 Programar venta</button></div>`}
+      ${r.sale ? `<div class="hscard" style="margin-top:6px"><b>🚪 ${ckLongOpen(c, r) ? "Descarte" : "Venta"} programada</b>
         <div class="row" style="gap:6px;margin-top:6px;align-items:center"><span class="sub" style="flex:0 0 60px">Fecha</span><input type="date" data-cksalek="date" value="${esc(r.sale.date || "")}" min="${today()}" style="flex:1;min-width:0;padding:8px"></div>
         <div class="row" style="gap:6px;margin-top:6px;align-items:center"><span class="sub" style="flex:0 0 60px">Motivo</span><input data-cksalek="note" value="${esc(r.sale.note || "")}" placeholder="ej. no preña, baja producción" maxlength="200" style="flex:1;min-width:0;padding:8px"></div>
         <div class="sub" style="margin-top:4px">Al subir el chequeo queda como descarte programado y la vaca pasa a estado DESCARTE.</div></div>` : ""}` : ""}
@@ -8114,32 +8179,79 @@ function ckPanel(c, k, r){
            : r.res || r.cat ? `<button class="del" data-ckclear style="margin-top:8px;font-size:14px">🗑 Borrar resultado</button>` : ""}
   </div>`;
 }
-// insumo de cada tratamiento del chequeo (queda en Salud y descuenta del inventario de la finca)
-const CK_TX = { "Antibiótico":{ cats:["Antibiótico"] }, "Vitaminas":{ cats:["Vitamina / mineral","Vitamina / suplemento"] },
-  "PGF2":{ codes:["PROSTAL","CLOPROST"], dose:2, unit:"mL", doses:true },
-  "Baño":{ cats:["Desinfectante / sellador","Antiparasitario","Antibiótico","Otro medicamento"], route:"Tópica" } };
-const ckTxKey = v => Object.keys(CK_TX).find(k=>k.toLowerCase()===String(v).toLowerCase().replace(/s$/, "") || k.toLowerCase()===String(v).toLowerCase());
+// Tratamientos del chequeo con protocolo predeterminado (Juan, 11/11/2026). La primera dosis va el día del chequeo
+// (el baño se puede dejar pendiente); cada aplicación queda en Salud con su fecha y se descuenta del inventario ese día.
+//   PGF2: 2 mL, 1 o 2 días · Cefalexina / Ceftiofur: 15 mL × 4 días · Penicilina: 1 o 2 frascos
+//   Vitaminas: 3 veces día de por medio, 15 mL vacas / 10 mL novillas · Baño: agua destilada 30 mL + oxitetraciclina 20 mL, 1–3 baños
+const CK_TX = {
+  "PGF2":        { codes:["CLOPROST","PROSTAL"], dose:2, n:1, ns:[1,2], every:1, route:"IM" },
+  "Cefalexina":  { codes:["CEFALEX"], dose:15, n:4, ns:[1,2,3,4,5], every:1, route:"IM" },
+  "Ceftiofur":   { codes:["CEFTIOF"], dose:15, n:4, ns:[1,2,3,4,5], every:1, route:"IM" },
+  "Penicilina":  { codes:["PENTRIL","BENZETA","GANAPEN"], dose:1, doses:[1,2], n:1, ns:[1], every:1, route:"IM" },
+  "Antibiótico": { cats:["Antibiótico"], dose:null, n:1, ns:[1,2,3,4,5], every:1, route:"IM" },
+  "Vitaminas":   { cats:["Vitamina / mineral","Vitamina / suplemento"], prefer:"OVERSEL", dose:15, heiferDose:10, n:3, ns:[1,2,3], every:2, route:"IM" },
+  "Baño":        { codes:["OXITETRA"], dose:20, water:{ codes:["AGUAD500","AGUAD1L"], ml:30 }, n:1, ns:[1,2,3], every:1, everies:[1,2], askNow:true, route:"Intrauterina" } };
+const ckTxKey = v => { const x = String(v).toLowerCase(); return Object.keys(CK_TX).find(k=>k.toLowerCase()===x || k.toLowerCase()===x.replace(/s$/, "")); };
 function ckTxOpts(v){
   const d = CK_TX[ckTxKey(v)]; if (!d) return [];
   const all = hsCatGet().supplies.filter(m=>m.active!==false);
-  return d.codes ? all.filter(m=>d.codes.includes(m.code)) : all.filter(m=>d.cats.includes(m.category));
+  return d.codes ? d.codes.map(c=>all.find(m=>m.code===c)).filter(Boolean) : all.filter(m=>d.cats.includes(m.category));
 }
+// valores de cada tratamiento: lo que se cambió en esa vaca, o el predeterminado
+function ckTxVal(k, r){
+  const d = CK_TX[k], t = (r.tx || {})[k] || {}, ops = ckTxOpts(k);
+  const code = t.code || (d.prefer && ops.some(m=>m.code===d.prefer) ? d.prefer : d.codes ? ops[0]?.code : "") || "";
+  const n = +(t.n || d.n), dose = t.dose!=null && t.dose!=="" ? +String(t.dose).replace(",", ".") : (r.heifer && d.heiferDose ? d.heiferDose : d.dose);
+  return { code, dose, n, every: +(t.every || d.every), now: d.askNow ? (t.now!=null ? !!t.now : n===1) : true, sup: hsCatGet().supplies.find(m=>m.code===code) };
+}
+// días (después del chequeo) de cada aplicación
+const ckTxDays = v => { const first = v.now ? 0 : 1; return Array.from({ length:Math.max(1, v.n) }, (_, i)=>first + i*v.every); };
+function ckTxPlanTxt(k, v){
+  const ds = ckTxDays(v), pend = ds.filter(x=>x > 0).length, last = addDays($("ckDate").value || today(), ds[ds.length - 1]);
+  return `${v.n > 1 ? `${v.n} ${k==="Baño" ? "baños" : "aplicaciones"} ${v.every > 1 ? "día de por medio" : k==="Baño" ? "seguidos" : "seguidas"}` : k==="Baño" ? "1 baño" : "1 aplicación"} · `
+    + (ds[0]===0 ? "la primera hoy" : "pendiente, empieza mañana") + (pend && ds[0]===0 ? ` · quedan ${pend} pendiente${pend===1 ? "" : "s"} (hasta ${fmt(last)})` : ds[0]!==0 && ds.length > 1 ? ` (hasta ${fmt(last)})` : "");
+}
+const ckWater = d => d.water ? hsCatGet().supplies.find(m=>d.water.codes.includes(m.code)) : null;
 function ckTxHtml(v, r){
   const k = ckTxKey(v), d = CK_TX[k]; if (!d) return "";
-  const t = (r.tx || {})[k] || {}, ops = ckTxOpts(v), sup = ops.find(m=>m.code===t.code);
-  return `<div class="row" style="gap:6px;margin-top:6px;align-items:center"><span class="sub" style="flex:0 0 74px">${esc(v)}</span>
-    <select data-cktx="${esc(k)}" data-k="code" style="flex:1;min-width:0;padding:8px"><option value="">— producto —</option>${ops.map(m=>`<option value="${esc(m.code)}" ${m.code===t.code ? "selected" : ""}>${esc(m.name)}</option>`).join("")}</select>
-    ${d.doses ? `<select data-cktx="${esc(k)}" data-k="n" style="width:auto;padding:8px">${[1, 2].map(n=>`<option value="${n}" ${(t.n || 1)==n ? "selected" : ""}>${n} dosis (${n*d.dose} ${d.unit})</option>`).join("")}</select>`
-      : `<input data-cktx="${esc(k)}" data-k="dose" inputmode="decimal" placeholder="dosis" value="${esc(t.dose ?? "")}" style="flex:0 0 64px;padding:8px"><span class="sub">${esc(sup?.unit || "")}</span>`}</div>
-    ${!t.code || (!d.doses && !(+String(t.dose || "").replace(",", ".") > 0)) ? `<div class="sub" style="color:var(--s3)">Sin producto${t.code ? " y dosis" : ""}: queda solo como comentario (no descuenta del inventario)</div>` : ""}`;
+  const x = ckTxVal(k, r), ops = ckTxOpts(v), unit = x.sup?.unit || "mL", water = ckWater(d);
+  const sel = (key, opts, cur) => `<select data-cktx="${esc(k)}" data-k="${key}" style="width:auto;padding:8px">${opts.map(([val, t])=>`<option value="${val}" ${String(cur)===String(val) ? "selected" : ""}>${esc(t)}</option>`).join("")}</select>`;
+  return `<div class="hscard" style="margin-top:6px;padding:8px"><div class="row" style="gap:6px;align-items:center;flex-wrap:wrap"><b style="flex:0 0 auto">${esc(k)}</b>
+    ${ops.length > 1 || !d.codes ? `<select data-cktx="${esc(k)}" data-k="code" style="flex:1;min-width:120px;padding:8px"><option value="">— producto —</option>${ops.map(m=>`<option value="${esc(m.code)}" ${m.code===x.code ? "selected" : ""}>${esc(m.name)}</option>`).join("")}</select>` : `<span class="sub">${esc(x.sup?.name || "")}</span>`}</div>
+    <div class="row" style="gap:6px;margin-top:6px;align-items:center;flex-wrap:wrap">
+      ${d.doses ? sel("dose", d.doses.map(n=>[n, `${n} ${unit}${n > 1 && !/s$/.test(unit) ? "s" : ""}`]), x.dose)
+        : `<input data-cktx="${esc(k)}" data-k="dose" inputmode="decimal" placeholder="dosis" value="${esc(x.dose ?? "")}" style="flex:0 0 64px;padding:8px"><span class="sub">${esc(unit)}${water ? ` + agua destilada ${d.water.ml} mL` : ""}</span>`}
+      ${d.ns.length > 1 ? sel("n", d.ns.map(n=>[n, k==="Baño" ? `${n} baño${n===1 ? "" : "s"}` : `${n} ${n===1 ? "vez" : "veces"}`]), x.n) : ""}
+      ${d.everies ? sel("every", d.everies.map(n=>[n, n===1 ? "cada día" : "día de por medio"]), x.every) : ""}
+      ${d.askNow ? `<label style="display:flex;gap:6px;align-items:center;margin:0;font-weight:400"><input type="checkbox" data-cktx="${esc(k)}" data-k="now" ${x.now ? "checked" : ""} style="width:20px;height:20px">Se hace hoy</label>` : ""}</div>
+    <div class="sub" style="margin-top:4px">${ckTxPlanTxt(k, x)}${k==="Vitaminas" ? ` · ${r.heifer ? "novilla: 10 mL" : "vaca: 15 mL"}` : ""}</div>
+    ${!x.code || !(x.dose > 0) ? `<div class="sub" style="color:var(--s3)">Sin producto${x.code ? " y dosis" : ""}: queda solo como comentario (no descuenta del inventario)</div>` : ""}</div>`;
 }
-// los tratamientos del chequeo como filas para Salud
-function ckTxItems(r){
-  return (r.extras || []).map(v=>{ const k = ckTxKey(v), d = CK_TX[k], t = (r.tx || {})[k];
-    if (!d || !t?.code) return null;
-    const sup = hsCatGet().supplies.find(m=>m.code===t.code);
-    const dose = d.doses ? d.dose * (+t.n || 1) : +String(t.dose || "").replace(",", ".");
-    return dose > 0 ? { k, code:t.code, dose, unit: d.unit || sup?.unit || "", route: d.route || "IM" } : null; }).filter(Boolean);
+// las aplicaciones del chequeo agrupadas por día: [{ off, keys, items:[{code,dose,unit,route}], txt:[...] }]
+function ckTxPlan(r){
+  const by = {};
+  (r.extras || []).forEach(v=>{ const k = ckTxKey(v), d = CK_TX[k]; if (!d) return;
+    const x = ckTxVal(k, r); if (!x.code || !(x.dose > 0)) return;
+    const unit = x.sup?.unit || "mL", water = ckWater(d);
+    // agua destilada: el inventario la lleva por frasco (500 o 1000 mL): se descuenta la fracción
+    const bottle = water ? (/1000|1\s*l\b/i.test(water.name) ? 1000 : 500) : 0;
+    ckTxDays(x).forEach((off, i)=>{
+      const b = by[off] ||= { off, keys:[], items:[], txt:[] };
+      if (!b.keys.includes(k)) b.keys.push(k);
+      b.items.push({ code:x.code, dose:x.dose, unit, route:d.route || "IM" });
+      if (water) b.items.push({ code:water.code, dose:Math.round(d.water.ml / bottle * 1000)/1000, unit:water.unit || "unidad", route:d.route });
+      b.txt.push(`${(x.sup?.name || x.code).replace(/ (L\.A\.|R\.L\.A\.|LPU)$/i, "")} ${x.dose} ${unit}${water ? " + agua destilada " + d.water.ml + " mL" : ""}${x.n > 1 ? ` (${i + 1}/${x.n})` : ""}`);
+    }); });
+  return Object.values(by).sort((a, b)=>a.off - b.off);
+}
+// "METRITIS" → "Metritis" (las siglas cortas como INR quedan igual)
+const ckNiceRes = t => String(t || "").replace(/\b[A-ZÁÉÍÓÚÑ]{5,}\b/g, w=>w[0] + w.slice(1).toLowerCase());
+// texto de un tratamiento del chequeo para las listas: el resultado del chequeo y lo que se aplica (sin la categoría)
+function ckTxRowTxt(t, res, sup){
+  const its = (t.treatment_items || []).map(i=>`${sup(i.supply_code)} ${i.dose ?? ""} ${i.unit || ""}`.trim()).join(" + ");
+  if (t.protocol==="Ovsynch") return { what:(t.notes || "Ovsynch").replace(/ \((inicio|chequeo|primer).*\)$/, ""), items:its };
+  const neu = /·/.test(t.diagnosis || ""), dx = neu ? t.diagnosis.split(" · ").slice(1).join(" · ") : res;
+  return { what: ckNiceRes(dx) || t.protocol.replace(/^Chequeo · /, ""), items: neu && t.notes ? t.notes : its };
 }
 // OVSYNCH (Juan): día 0 Gestar 3 mL · día 7 PGF 3 mL · día 8 PGF 3 mL · día 9 Gestar 3 mL · día 10 inseminar.
 // Se programa al subir el chequeo: cada dosis es un tratamiento con su fecha (el inventario la descuenta ese día)
@@ -8226,6 +8338,10 @@ $("ckBody").addEventListener("click", e=>{
       const dry = /(^|\/)PR(\/|$)/.test(c0?.status || "") && sv0 && !ckNegMain(r.cat, r.main) ? addDays(sv0.d, 283 - 60) : null;
       r.sale = { date: dry && dry > today() ? dry : addDays(today(), 30), note:"" }; }
     ckSave(); ckRender(); return; }
+  { const c0 = ckFind(id); if (c0) r.heifer = !(c0.ln > 0) && !c0.lc && !c0.ev.some(x=>x.t==="calving"); }   // vitaminas: 10 mL novillas
+  if (e.target.closest("[data-cklacto]")){ if (r.up) return;
+    if (r.lacto) delete r.lacto; else r.lacto = { date: $("ckDate").value || today() };
+    ckSave(); ckRender(); return; }
   if (item.k.g!=null){ r.g = item.k.g; r.sv = item.k.sv.d; }
   else if (!r.g && /^(ECO|DP)/.test(r.cat||"")){   // agregada a mano: días de gestación desde su último servicio
     const c = ckFind(id), sv = c?.ev.filter(x=>x.t==="service" && x.d <= ($("ckDate").value || today())).pop();
@@ -8247,7 +8363,7 @@ $("ckBody").addEventListener("click", e=>{
   if (fol){ const v = fol.dataset.fol; r.fol = toggle(r.fol, v);
     if (v==="OVS2") r.fol = r.fol.filter(x=>x!=="OVSYNCH"); else if (v==="OVSYNCH") r.fol = r.fol.filter(x=>x!=="OVS2");   // uno u otro
     ckSave(); ckRender(); return; }
-  if (ext){ r.extras = toggle(r.extras, ext.dataset.ext); ckSave(); ckRender(); return; }
+  if (ext){ const v = ext.dataset.ext; r.extras = (r.extras || []).some(x=>ckTxKey(x)===v) ? r.extras.filter(x=>ckTxKey(x)!==v) : [...(r.extras || []), v]; ckSave(); ckRender(); return; }
   if (save){
     r.res = ckResTxt(r); if (!r.res) return;
     ckSave(); ckNext(id); return;
@@ -8266,16 +8382,20 @@ $("ckBody").addEventListener("change", e=>{
   const sk = e.target.closest("[data-cksalek]");
   if (sk){ const id = sk.closest("[data-ck]")?.dataset.ck || ckOpen; const r = id && ckRes[id];
     if (r?.sale && !r.up){ r.sale[sk.dataset.cksalek] = sk.value; ckSave(); } return; }
+  const ld = e.target.closest("[data-cklactod]");
+  if (ld){ const id = ld.closest("[data-ck]")?.dataset.ck || ckOpen; const r = id && ckRes[id];
+    if (r?.lacto && !r.up){ r.lacto.date = ld.value; ckSave(); } return; }
   const tx = e.target.closest("[data-cktx]"); if (!tx) return;
   const id = tx.closest("[data-ck]")?.dataset.ck || ckOpen; if (!id) return;
   const r = ckRes[id] ||= {}; if (r.up) return;
-  const k = tx.dataset.cktx; (r.tx ||= {})[k] = { ...(r.tx[k] || {}), [tx.dataset.k]: tx.value }; ckSave();
-  if (tx.dataset.k==="code") ckRender(); });
+  const k = tx.dataset.cktx; (r.tx ||= {})[k] = { ...(r.tx[k] || {}), [tx.dataset.k]: tx.type==="checkbox" ? tx.checked : tx.value }; ckSave();
+  if (tx.dataset.k!=="dose" || tx.tagName==="SELECT") ckRender(); });
 $("ckBody").addEventListener("keydown", e=>{ if (e.target.id==="ckQ" && e.key==="Enter"){ e.preventDefault(); const b = $("ckSug").querySelector("[data-pick]"); if (b){ ckOpen = b.dataset.pick; ckRender(); window.scrollTo({ top:0 }); } } });
 $("ckBody").addEventListener("input", e=>{
   if (e.target.id==="ckQ"){ ckPad = e.target.value.toUpperCase().replace(/\s/g, ""); const list = ckList();
     $("ckSug").innerHTML = ckSugHtml(list, list.filter(x=>ckRes[x.c.id]?.res).length); return; }
-  const tx = e.target.closest("input[data-cktx]");
+  const tx = e.target.closest('input[data-cktx][data-k="dose"]');
+  if (e.target.matches("input[data-cktx]") && !tx) return;
   if (tx){ const id = tx.closest("[data-ck]")?.dataset.ck || ckOpen; const r = id && (ckRes[id] ||= {});
     if (r && !r.up){ const k = tx.dataset.cktx; (r.tx ||= {})[k] = { ...(r.tx[k] || {}), dose: tx.value }; ckSave(); } return; }
   if (!e.target.matches("[data-cknote]") || !ckOpen) return;
@@ -8299,7 +8419,9 @@ function ckRows(D, id, r){
   const base = { cow_id:id, event_date:D, source:"app", sync_status:"pending" };
   const eco = /^ECO/.test(r.cat || ""), fol = (r.fol||[]).filter(x=>eco ? !/^(OVSYNCH|OVS2)$/.test(x) : true);   // en la ECO el Ovsynch va en el resultado
   const com = [fol.join(", ") || null, (r.extras||[]).join(", ") || null, r.sale ? "Venta programada " + fmt(r.sale.date) : null, r.note || null].filter(Boolean).join(" · ") || null;
-  if (r.cat==="EXREP") return (r.sel||[]).map(v=>({ ...base, event_type:"repro_exam", result:v, category:"EXREP", comments:com }));
+  // lactoinducción: examen "Lactoinducir" (así sale del chequeo, como en Interherd)
+  const lacto = r.lacto ? [{ ...base, event_type:"repro_exam", result:"Lactoinducir", category:r.cat || "EXREP", comments:"Lactoinducción programada " + fmt(r.lacto.date || D) }] : [];
+  if (r.cat==="EXREP") return [...(r.sel||[]).map(v=>({ ...base, event_type:"repro_exam", result:v, category:"EXREP", comments:com })), ...lacto];
   const g = r.g ?? null, main = r.main;
   if (/^ECO/.test(r.cat)){
     const res = main==="Positivo" ? "Positivo" : main==="Dudoso" ? "Dudoso" : (r.fol||[]).includes("OVS2") ? "Negativo  OVS2"   // así está en Interherd (dos espacios)
@@ -8307,11 +8429,11 @@ function ckRows(D, id, r){
     const rows = [{ ...base, event_type:"ultrasound", result:res, category:r.cat, days_value: main==="Positivo" ? g : 0, comments:com }];
     // ME: marcada, o negativa cuando venía con ECO + (se da sola)
     if (main==="ME" || (main==="Negativo" && r.wasPos)) rows.push({ ...base, event_type:"embryo_loss", category:r.cat, comments:"Muerte embrionaria en " + r.cat + (main==="ME" ? "" : " (venía con ECO +)") });
-    return rows;
+    return [...rows, ...lacto];
   }
   const rows = [{ ...base, event_type:"preg_check", result: main==="Aborto" ? "Vacía" : main, category:r.cat, days_value: /^Cargada/.test(main||"") ? g : 0, comments:com }];
   if (main==="Aborto") rows.push({ ...base, event_type:"abortion", category:r.cat, comments:"Aborto en " + r.cat });
-  return rows;
+  return [...rows, ...lacto];
 }
 let ckFlushing = false;
 async function flushCheck(){
@@ -8324,14 +8446,24 @@ async function flushCheck(){
     if (!rows.length) continue;
     const { error } = await sb.from("cow_events").insert(rows);
     if (error){ left.push(key); console.warn("chequeo", error.message); continue; }
+    // tratamientos: una fila por día de aplicación (la primera hoy, las pendientes con su fecha), con el resultado del chequeo
     for (const [id, r] of todo){
-      const its = ckTxItems(r); if (!its.length) continue;
-      const farm = +key.slice(3).split("|")[0] || ckFarmSel();
-      const { data:t, error:e2 } = await sb.from("treatments_cow").insert({ client_id:crypto.randomUUID ? crypto.randomUUID() : String(Date.now()) + Math.random(),
-        farm_id:farm, cow_id:id, start_date:D, diagnosis:"Chequeo " + (r.cat || ""), protocol:"Chequeo · " + its.map(i=>i.k).join(" + "),
-        prescribed_by: isAdmin ? "Juan (veterinario)" : "Chequeo", notes:r.note || null }).select("id");
+      const plan = ckTxPlan(r); if (!plan.length) continue;
+      const farm = +key.slice(3).split("|")[0] || ckFarmSel(), uid = () => crypto.randomUUID ? crypto.randomUUID() : String(Date.now()) + Math.random();
+      const res = r.cat==="EXREP" ? (r.sel || []).join(" + ") : [r.main, ...(r.fol || [])].filter(Boolean).join(", ");
+      const tx = plan.map(b=>({ client_id:uid(), farm_id:farm, cow_id:id, start_date:addDays(D, b.off), diagnosis:`Chequeo ${r.cat || ""} · ${res || "—"}`,
+        protocol:"Chequeo · " + b.keys.join(" + "), prescribed_by: isAdmin ? "Juan (veterinario)" : "Chequeo", notes:b.txt.join(" + ") + (r.note ? " · " + r.note : "") }));
+      const { data:t, error:e2 } = await sb.from("treatments_cow").insert(tx).select("id,start_date");
       if (e2 || !t?.length){ toast("Los resultados subieron, pero un tratamiento no quedó en Salud: " + (e2?.message || "")); continue; }
-      await sb.from("treatment_items").insert(its.map(i=>({ treatment_id:t[0].id, supply_code:i.code, dose:i.dose, unit:i.unit, route:i.route, every_hours:24, days:1 })));
+      await sb.from("treatment_items").insert(t.flatMap(x=>(plan.find(b=>addDays(D, b.off)===x.start_date)?.items || [])
+        .map(i=>({ treatment_id:x.id, supply_code:i.code, dose:i.dose, unit:i.unit, route:i.route, every_hours:24, days:1 }))));
+    }
+    // lactoinducción programada desde el chequeo (queda en la hoja de vida)
+    for (const [id, r] of todo){
+      if (!r.lacto) continue;
+      const farm = +key.slice(3).split("|")[0] || ckFarmSel();
+      const { error:e5 } = await sb.from("cow_plans").insert({ cow_id:id, farm_id:farm, plan_type:"otro", due_date:r.lacto.date || D, note:`Lactoinducción · Chequeo ${fmt(D)}` });
+      if (e5) toast(`Los resultados subieron, pero la lactoinducción de la ${id} no se programó: ${e5.message}`);
     }
     for (const [id, r] of todo){
       if (!ckOvs(r)) continue;
