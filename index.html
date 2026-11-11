@@ -930,6 +930,7 @@ async function loadCow(id){
   const tx = await sb.from("treatments_cow").select("id,start_date,diagnosis,protocol,prescribed_by,notes,outcome,created_by,treatment_items(supply_code,dose,unit,route,days)")
     .eq("cow_id", id).gte("start_date", since).order("start_date", { ascending:false }).limit(100);
   if (seq !== cowSeq) return;
+  if (tx.data) tx.data = tx.data.filter(t=>t.protocol!=="Ovsynch");   // el Ovsynch no es un tratamiento: sale como resultado del chequeo
   const events = (ev.data || []).map(e=>({ ...e, result:noSex(e.result) }));
   const codes = [...new Set([c.sire, c.maternal_grandsire, ...events.map(e=>e.bull)].filter(Boolean))];
   const { data:bulls } = codes.length ? await sb.from("bulls").select("code,name").in("code", codes) : {data:[]};
@@ -2313,9 +2314,9 @@ async function loadRegistros(){
       title:"Leche diaria", detail:`${d.pen} · ${Math.round(d.total_l||0).toLocaleString("es-CO")} L${d.cows ? " · " + d.cows + " vacas" : ""}`, status:"app" }));
   })());
   if (want("salud")) jobs.push((async()=>{
-    const { data } = await sb.from("treatments_cow").select("id,farm_id,cow_id,start_date,diagnosis,prescribed_by,created_by,created_at,treatment_items(supply_code,dose,unit)")
+    const { data } = await sb.from("treatments_cow").select("id,farm_id,cow_id,start_date,diagnosis,protocol,prescribed_by,created_by,created_at,treatment_items(supply_code,dose,unit)")
       .gte("created_at", qFrom).lt("created_at", t1).limit(2000);
-    (data||[]).forEach(t=>add({ kind:"salud", icon:"🩺", when:t.created_at, date:t.start_date, farm:t.farm_id, who:t.created_by, cow:t.cow_id, id:t.id,
+    (data||[]).filter(t=>t.protocol!=="Ovsynch").forEach(t=>add({ kind:"salud", icon:"🩺", when:t.created_at, date:t.start_date, farm:t.farm_id, who:t.created_by, cow:t.cow_id, id:t.id,
       title:"Tratamiento", detail:(t.diagnosis ? t.diagnosis + " · " : "") + (t.treatment_items||[]).map(i=>`${i.supply_code} ${i.dose??""} ${i.unit||""}`).join(", ") + (t.prescribed_by ? " · formuló " + t.prescribed_by : ""), status:"app" }));
   })());
   if (want("pastos")) jobs.push((async()=>{
@@ -7515,7 +7516,8 @@ const CK_EXTRA = ["PGF2","Antibiótico","Vitaminas","Baño"];
 const CK_RES = {
   ECO:   ["Positivo","Negativo","Dudoso","ME"],
   DP:    ["Cargada Hembra","Cargada Macho","Cargada","Vacía","Aborto"],
-  NEG:   ["OVSYNCH","DIB","Servir","Ojo al celo"],   // qué hacer con una ECO negativa o ME (se pueden varios)
+  NEG:   ["OVSYNCH","OVS2","DIB","Servir","Ojo al celo"],   // qué hacer con una ECO negativa o ME (se pueden varios). OVS2 = resincronización
+  NEGDP: ["OVSYNCH","DIB","Servir","Ojo al celo"],          // qué hacer con una vaca que sale vacía (o aborto) en DPR / DP5 / DPSEC
 };
 const ckIsPos = e => (e.t==="preg_check" || e.t==="ultrasound") && /^(cargada|positivo)/i.test(e.r||"");
 const ckIsEmpty = e => e.t==="embryo_loss" || e.t==="abortion" || (e.t==="preg_check" && /^vac/i.test(e.r||"")) ||
@@ -7566,6 +7568,11 @@ function ckClassify(c, ev, D){
   if (!nxt && top===order.indexOf("ECO2") && g < CKP.stages.find(s=>s[0]==="DPR")[1]){
     const e2 = dx.filter(e=>ckIsPos(e) && ckStageOfEv(e, sv.d)==="ECO2").pop();
     if (e2 && days(e2.d, D) >= 7) return { cat:"ECO2", g, sv, late:false, last, again:true };
+  }
+  // ya tiene ECO1 + de un chequeo anterior: le toca ECO2 en este, así no haya llegado a los 39 días (Juan)
+  if (!nxt && top===order.indexOf("ECO1")){
+    const e1 = dx.filter(ckIsPos).pop();
+    if (e1 && days(e1.d, D) >= 7) return { cat:"ECO2", g, sv, late:false, last, after1:true };
   }
   if (!nxt || g > CKP.maxGest) return null;         // no le toca todavía, ya terminó, o está por parir
   return { cat:nxt[0], g, sv, late: g > nxt[2], last };
@@ -7684,7 +7691,7 @@ function ckInfoTxt(k){
     if (k.why) p.push(esc(k.why));
     return p.join(" · ");
   }
-  return `${k.g} d · servida ${fmt(k.sv.d)}${k.sv.b ? " · toro "+esc(k.sv.b) : ""}${k.cat==="REPETIR" ? ` · dudosa ${fmt(k.last.d)}` : ""}${k.again ? ` · <b>ECO2 otra vez</b> (aún no tiene 56 d para DPR; ECO2 ${fmt(k.last?.d)})` : ""}${k.late ? ` · <span class="late">atrasada</span>` : ""}`;
+  return `${k.g} d · servida ${fmt(k.sv.d)}${k.sv.b ? " · toro "+esc(k.sv.b) : ""}${k.cat==="REPETIR" ? ` · dudosa ${fmt(k.last.d)}` : ""}${k.after1 ? ` · ECO + el ${fmt(k.last?.d)}` : ""}${k.again ? ` · <b>ECO2 otra vez</b> (aún no tiene 56 d para DPR; ECO2 ${fmt(k.last?.d)})` : ""}${k.late ? ` · <span class="late">atrasada</span>` : ""}`;
 }
 const ckModeBar = (doneN, total) => `<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
   <div class="chips sm ckpan" style="padding:0"><div class="chips sm" style="margin:0">
@@ -7775,6 +7782,7 @@ function ckCard(id, list){
   const item = list.find(x=>x.c.id===id), r = ckRes[id] || {};
   const cat = r.cat || (item ? (item.k.cat==="REPETIR" ? item.k.stage : item.k.cat) : null);
   const calv = c.ev.filter(e=>e.t==="calving" && e.d <= D), C = calv.length ? calv[calv.length-1].d : c.lc;
+  const cvCat = calv.length ? calv[calv.length-1].c || "" : "", cvKind = /abort/i.test(cvCat) ? "ABORTO" : /induc/i.test(cvCat) ? "LACTOINDUCCIÓN" : "";
   const svs = c.ev.filter(e=>e.t==="service" && e.d > (C||"0") && e.d <= D), sv = svs[svs.length-1];
   // secado esperado: si está preñada, servicio que la preñó + 283 − 60 días
   const preg = /(^|\/)PR(\/|$)/.test(c.status||"") && sv ? addDays(sv.d, 283 - 60) : null;
@@ -7783,14 +7791,15 @@ function ckCard(id, list){
   const big = (v, t, sub) => `<div><b>${v}</b><span>${t}${sub ? `<br>${sub}` : ""}</span></div>`;
   return `<div data-ck="${esc(id)}">
     <div style="display:flex;justify-content:space-between;align-items:center">
-      <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap"><span style="font-size:34px;font-weight:800">${esc(id)}</span>
+      <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap"><a href="#vaca/${encodeURIComponent(id)}" title="Abrir la hoja de vida" style="font-size:34px;font-weight:800;color:var(--ink);text-decoration:underline;text-decoration-color:var(--accent);text-underline-offset:5px">${esc(id)}</a>
         ${item || cat ? `<span class="ckcat" style="background:${css(CK_COLOR[item?.k.cat || cat]||"--muted")};font-size:22px;padding:4px 12px">${item ? (item.k.cat==="REPETIR" ? "REPETIR " + item.k.stage : item.k.cat) : cat}</span>` : ""}
         <div><span class="sub">${esc(c.pen||"")}</span> ${statusPill(c.status)}</div></div>
       <button class="lnk" data-ckback>Otra vaca</button></div>
+    <div class="sub" style="margin-top:2px">Toca el número para abrir la hoja de vida (ej. registrar un servicio que faltó). Al volver, descarga la lista de nuevo para que lo tenga en cuenta.</div>
     ${item ? `<div class="sub" style="margin:6px 0">${ckInfoTxt(item.k)}</div>`
            : `<div class="warn">No le toca chequeo hoy. ¿Qué examen le hiciste?</div>`}
     <div class="ckbig">
-      ${big(C ? days(C, D) : "—", "Días de parida", C ? "parto " + fmt(C) : "novilla")}
+      ${big(C ? days(C, D) : "—", "Días de parida", C ? (cvKind ? `<b style="color:var(--s4)">${cvKind}</b> ` : "parto ") + fmt(C) : "novilla")}
       ${big(sv ? days(sv.d, D) : "—", "Días de servida", sv ? `${svs.length} serv.${sv.b ? " · toro "+esc(sv.b) : ""}` : "sin servicio")}
       ${big(lastM ? (+lastM[1]).toFixed(1) : "—", "Última leche kg", lastM ? fmt(lastM[0]) : "")}
       ${big(p305 ? p305.kg305.toLocaleString("es-CO") : "—", "305 d proyectada kg", p305?.early ? "estimado (antes del pico)" : "")}
@@ -7832,7 +7841,7 @@ function ckRenderList(){
     html += `<div class="ckrow ${r?.res?"done":""}" data-ck="${esc(c.id)}">
       <div class="top"><span class="id">${esc(c.id)}</span><div class="inf"><span class="ckcat" style="background:${col}">${k.cat==="REPETIR" ? "REPETIR "+k.stage : k.cat}</span>${ckInfoTxt(k)}</div>
       <div class="res">${r?.res ? esc(r.res) + (r.up?" ✓":"") : ""}</div></div>
-      ${ckOpen===c.id ? ckPanel(c, k, r||{}) + ckLacNow(c) : ""}</div>`;
+      ${ckOpen===c.id ? ckPanel(c, k, r||{}) + ckLacNow(c) + `<a class="lnk" href="#vaca/${encodeURIComponent(c.id)}" style="display:inline-block;margin:6px 0">Abrir hoja de vida de la ${esc(c.id)} →</a>` : ""}</div>`;
   });
   const cats = ["EXREP","ECO1","ECO2","REPETIR","DPR","DP5","DPSEC"].filter(x=>counts[x]);
   $("ckBody").innerHTML = `<div class="card">${ckModeBar(doneN, list.length)}
@@ -7855,21 +7864,28 @@ function ckExrepOpts(){
   return l;
 }
 // texto del resultado guardado (lo que se ve en la lista)
-const ckResTxt = r => r.cat==="EXREP" ? (r.sel||[]).join(" + ") : [r.main, ...(r.fol||[])].filter(Boolean).join(" · ");
+const ckResTxt = r => [r.cat==="EXREP" ? (r.sel||[]).join(" + ") : [r.main, /^ECO/.test(r.cat || "") && r.main==="Negativo" && r.wasPos ? "ME" : "", ...(r.fol||[])].filter(Boolean).join(" · "),
+  r.sale && (r.sel?.length || r.main) ? "🚪 venta" : ""].filter(Boolean).join(" · ");
 function ckPanel(c, k, r){
   const cat = k.cat==="REPETIR" ? k.stage : k.cat, ex = cat==="EXREP";
   const opts = ex ? ckExrepOpts() : /^ECO/.test(cat) ? CK_RES.ECO : isMain() ? CK_RES.DP : CK_RES.DP.filter(x=>!/hembra|macho/i.test(x));
   const chip = (v, on, attr) => `<button class="${on?"on":""}" ${attr}="${esc(v)}">${esc(v)}</button>`;
-  const neg = /^ECO/.test(cat) && /^(Negativo|ME)$/.test(r.main||"");
+  const neg = !ex && ckNegMain(cat, r.main), meAuto = /^ECO/.test(cat) && r.main==="Negativo" && r.wasPos;
   const ready = ex ? (r.sel||[]).length : !!r.main;
   return `<div class="ckpan">
     <div class="sub">${ex ? "Resultado (puedes marcar varios)" : "Resultado"}</div>
     <div class="chips">${opts.map(v=>chip(v, ex ? (r.sel||[]).includes(v) : r.main===v, "data-res")).join("")}</div>
-    ${neg ? `<div class="sub">¿Qué hacer? (puedes marcar varios)</div><div class="chips">${CK_RES.NEG.map(v=>chip(v, (r.fol||[]).includes(v), "data-fol")).join("")}</div>` : ""}
+    ${meAuto ? `<div class="warn" style="margin:6px 0">Venía con ECO + y sale negativa: se registra <b>muerte embrionaria</b> automáticamente.</div>` : ""}
+    ${neg ? `<div class="sub">¿Qué hacer? (puedes marcar varios)</div><div class="chips">${(/^ECO/.test(cat) ? CK_RES.NEG : CK_RES.NEGDP).map(v=>chip(v, (r.fol||[]).includes(v), "data-fol")).join("")}</div>` : ""}
     <div class="sub">Tratamiento</div>
     <div class="chips sm">${(ckLists.extra || CK_EXTRA).map(v=>chip(v, (r.extras||[]).includes(v), "data-ext")).join("")}</div>
     ${(r.extras||[]).map(v=>ckTxHtml(v, r)).join("")}
     ${ckOvs(r) ? ckOvsHtml(r, $("ckDate").value || today()) : ""}
+    ${canDo("vacas_salida") || isMain() ? `<div class="chips sm" style="margin-top:8px"><button class="${r.sale ? "on" : ""}" data-cksale="1">🚪 Programar venta</button></div>
+      ${r.sale ? `<div class="hscard" style="margin-top:6px"><b>🚪 Venta programada</b>
+        <div class="row" style="gap:6px;margin-top:6px;align-items:center"><span class="sub" style="flex:0 0 60px">Fecha</span><input type="date" data-cksalek="date" value="${esc(r.sale.date || "")}" min="${today()}" style="flex:1;min-width:0;padding:8px"></div>
+        <div class="row" style="gap:6px;margin-top:6px;align-items:center"><span class="sub" style="flex:0 0 60px">Motivo</span><input data-cksalek="note" value="${esc(r.sale.note || "")}" placeholder="ej. no preña, baja producción" maxlength="200" style="flex:1;min-width:0;padding:8px"></div>
+        <div class="sub" style="margin-top:4px">Al subir el chequeo queda como descarte programado y la vaca pasa a estado DESCARTE.</div></div>` : ""}` : ""}
     <input data-cknote placeholder="Comentario" value="${esc(r.note||"")}">
     ${r.up ? "" : `<button class="btn" data-cksave style="margin-top:10px" ${ready ? "" : "disabled"}>${r.res ? "Guardar cambios" : "Guardar"}</button>`}
     ${r.up ? `<div class="sub" style="margin-top:4px">✓ Ya subido. Para borrarlo: abre la hoja de vida de la vaca y toca "borrar" en el registro pendiente.</div>`
@@ -7908,12 +7924,15 @@ function ckTxItems(r){
 // y la inseminación queda como evento programado. Si se insemina antes, Supabase borra las dosis que faltan (SQL/ovsynch.sql).
 const OVS_STEPS = [{ d:0, k:"GnRH" }, { d:7, k:"PGF" }, { d:8, k:"PGF" }, { d:9, k:"GnRH" }];
 const OVS_DOSE = 3, OVS_IA = 10, OVS_GNRH = ["GESTAR"], OVS_PGF = ["PROSTAL","CLOPROST"];
-const ckOvs = r => (r.sel || []).includes("OVSYN") || (r.fol || []).includes("OVSYNCH");
+const ckOvs = r => (r.sel || []).includes("OVSYN") || (r.fol || []).includes("OVSYNCH") || (r.fol || []).includes("OVS2");
+const ckOvsName = r => (r.fol || []).includes("OVS2") ? "OVS2" : "Ovsynch";
+// resultado que deja la vaca vacía: se pregunta qué hacer (Ovsynch, DIB, servir…)
+const ckNegMain = (cat, main) => /^ECO/.test(cat || "") ? /^(Negativo|ME)$/.test(main || "") : /^(Vacía|Aborto)$/.test(main || "");
 function ckOvsHtml(r, D){
   const all = hsCatGet().supplies.filter(m=>m.active!==false);
   const opt = (codes, cur) => all.filter(m=>codes.includes(m.code)).map(m=>`<option value="${esc(m.code)}" ${m.code===cur ? "selected" : ""}>${esc(m.name)}</option>`).join("");
   const o = r.ovs || {}, g = o.gnrh || OVS_GNRH[0], f = o.pgf || OVS_PGF[0];
-  return `<div class="hscard" style="margin-top:8px"><b>💉 Ovsynch programado</b>
+  return `<div class="hscard" style="margin-top:8px"><b>💉 ${ckOvsName(r)==="OVS2" ? "OVS2 (resincronización) programado" : "Ovsynch programado"}</b>
     <div class="row" style="gap:6px;margin-top:6px;align-items:center"><span class="sub" style="flex:0 0 60px">GnRH</span><select data-ckovs="gnrh" style="flex:1;min-width:0;padding:8px">${opt(OVS_GNRH, g)}</select></div>
     <div class="row" style="gap:6px;margin-top:6px;align-items:center"><span class="sub" style="flex:0 0 60px">PGF</span><select data-ckovs="pgf" style="flex:1;min-width:0;padding:8px">${opt(OVS_PGF, f)}</select></div>
     <div class="sub" style="margin-top:6px">${OVS_STEPS.map(x=>`Día ${x.d} (${fmt(addDays(D, x.d))}): ${x.k==="GnRH" ? "GnRH" : "PGF"} ${OVS_DOSE} mL`).join(" · ")} · <b>Día ${OVS_IA} (${fmt(addDays(D, OVS_IA))}): inseminar</b></div>
@@ -7961,12 +7980,19 @@ $("ckBody").addEventListener("click", e=>{
     const id = $("ckAddId").value.trim().toUpperCase(); if (!id) return;
     ckRes[id] = { ...(ckRes[id]||{}), cat:$("ckAddCat").value }; ckSave(); ckOpen = id; ckRender(); return;
   }
+  if (e.target.closest('a[href^="#vaca/"]')) return;   // va a la hoja de vida
   const row = e.target.closest("[data-ck]"); if (!row) return;
   const id = row.dataset.ck, item = ckList().find(x=>x.c.id===id) || { k:{ cat:ckRes[id]?.cat } };
   const r = ckRes[id] ||= { cat:item.k.cat==="REPETIR" ? item.k.stage : item.k.cat };
   const res = e.target.closest("[data-res]"), fol = e.target.closest("[data-fol]"), ext = e.target.closest("[data-ext]");
   const save = e.target.closest("[data-cksave]");
-  if (r.up && (res||fol||ext||save)) return;
+  const sale = e.target.closest("[data-cksale]");
+  if (r.up && (res||fol||ext||save||sale)) return;
+  if (sale){   // venta: por defecto el secado esperado si está preñada, o en 30 días
+    if (r.sale) delete r.sale; else { const D0 = $("ckDate").value || today(), c0 = ckFind(id), sv0 = c0?.ev.filter(x=>x.t==="service" && x.d <= D0).pop();
+      const dry = /(^|\/)PR(\/|$)/.test(c0?.status || "") && sv0 && !ckNegMain(r.cat, r.main) ? addDays(sv0.d, 283 - 60) : null;
+      r.sale = { date: dry && dry > today() ? dry : addDays(today(), 30), note:"" }; }
+    ckSave(); ckRender(); return; }
   if (item.k.g!=null){ r.g = item.k.g; r.sv = item.k.sv.d; }
   else if (!r.g && /^(ECO|DP)/.test(r.cat||"")){   // agregada a mano: días de gestación desde su último servicio
     const c = ckFind(id), sv = c?.ev.filter(x=>x.t==="service" && x.d <= ($("ckDate").value || today())).pop();
@@ -7976,10 +8002,16 @@ $("ckBody").addEventListener("click", e=>{
   if (res){
     const v = res.dataset.res;
     if (r.cat==="EXREP") r.sel = toggle(r.sel, v);
-    else { r.main = r.main===v ? null : v; if (!/^(Negativo|ME)$/.test(r.main||"")) delete r.fol; }
+    else { r.main = r.main===v ? null : v; if (!ckNegMain(r.cat, r.main)) delete r.fol;
+      // 6 · ¿venía con ECO + de este servicio? Si ahora sale negativa es muerte embrionaria
+      const c0 = ckFind(id), D0 = $("ckDate").value || today(), sv0 = r.sv || c0?.ev.filter(x=>x.t==="service" && x.d <= D0).pop()?.d;
+      const dx0 = (c0?.ev || []).filter(x=>sv0 && x.d > sv0 && x.d < D0 && ["ultrasound","preg_check","embryo_loss","abortion"].includes(x.t)).pop();
+      r.wasPos = !!(dx0 && ckIsPos(dx0)); }
     ckSave(); ckRender(); return;
   }
-  if (fol){ r.fol = toggle(r.fol, fol.dataset.fol); ckSave(); ckRender(); return; }
+  if (fol){ const v = fol.dataset.fol; r.fol = toggle(r.fol, v);
+    if (v==="OVS2") r.fol = r.fol.filter(x=>x!=="OVSYNCH"); else if (v==="OVSYNCH") r.fol = r.fol.filter(x=>x!=="OVS2");   // uno u otro
+    ckSave(); ckRender(); return; }
   if (ext){ r.extras = toggle(r.extras, ext.dataset.ext); ckSave(); ckRender(); return; }
   if (save){
     r.res = ckResTxt(r); if (!r.res) return;
@@ -7994,6 +8026,9 @@ $("ckBody").addEventListener("change", e=>{ if (e.target.id==="ckPenSel"){ ckPen
   const ov = e.target.closest("[data-ckovs]");
   if (ov){ const id = ov.closest("[data-ck]")?.dataset.ck || ckOpen; const r = id && (ckRes[id] ||= {});
     if (r && !r.up){ (r.ovs ||= {})[ov.dataset.ckovs] = ov.value; ckSave(); } return; }
+  const sk = e.target.closest("[data-cksalek]");
+  if (sk){ const id = sk.closest("[data-ck]")?.dataset.ck || ckOpen; const r = id && ckRes[id];
+    if (r?.sale && !r.up){ r.sale[sk.dataset.cksalek] = sk.value; ckSave(); } return; }
   const tx = e.target.closest("[data-cktx]"); if (!tx) return;
   const id = tx.closest("[data-ck]")?.dataset.ck || ckOpen; if (!id) return;
   const r = ckRes[id] ||= {}; if (r.up) return;
@@ -8025,14 +8060,16 @@ function ckQueue(){
 // convierte cada resultado en eventos con el mismo vocabulario de Interherd (quedan pendientes de pasar)
 function ckRows(D, id, r){
   const base = { cow_id:id, event_date:D, source:"app", sync_status:"pending" };
-  const fol = (r.fol||[]).filter(x=>x!=="OVSYNCH");
-  const com = [fol.join(", ") || null, (r.extras||[]).join(", ") || null, r.note || null].filter(Boolean).join(" · ") || null;
+  const eco = /^ECO/.test(r.cat || ""), fol = (r.fol||[]).filter(x=>eco ? !/^(OVSYNCH|OVS2)$/.test(x) : true);   // en la ECO el Ovsynch va en el resultado
+  const com = [fol.join(", ") || null, (r.extras||[]).join(", ") || null, r.sale ? "Venta programada " + fmt(r.sale.date) : null, r.note || null].filter(Boolean).join(" · ") || null;
   if (r.cat==="EXREP") return (r.sel||[]).map(v=>({ ...base, event_type:"repro_exam", result:v, category:"EXREP", comments:com }));
   const g = r.g ?? null, main = r.main;
   if (/^ECO/.test(r.cat)){
-    const res = main==="Positivo" ? "Positivo" : main==="Dudoso" ? "Dudoso" : (r.fol||[]).includes("OVSYNCH") ? "Negativo Ovsyn" : "Negativo";
+    const res = main==="Positivo" ? "Positivo" : main==="Dudoso" ? "Dudoso" : (r.fol||[]).includes("OVS2") ? "Negativo  OVS2"   // así está en Interherd (dos espacios)
+      : (r.fol||[]).includes("OVSYNCH") ? "Negativo Ovsyn" : "Negativo";
     const rows = [{ ...base, event_type:"ultrasound", result:res, category:r.cat, days_value: main==="Positivo" ? g : 0, comments:com }];
-    if (main==="ME") rows.push({ ...base, event_type:"embryo_loss", category:r.cat, comments:"Muerte embrionaria en " + r.cat });
+    // ME: marcada, o negativa cuando venía con ECO + (se da sola)
+    if (main==="ME" || (main==="Negativo" && r.wasPos)) rows.push({ ...base, event_type:"embryo_loss", category:r.cat, comments:"Muerte embrionaria en " + r.cat + (main==="ME" ? "" : " (venía con ECO +)") });
     return rows;
   }
   const rows = [{ ...base, event_type:"preg_check", result: main==="Aborto" ? "Vacía" : main, category:r.cat, days_value: /^Cargada/.test(main||"") ? g : 0, comments:com }];
@@ -8064,13 +8101,23 @@ async function flushCheck(){
       const farm = +key.slice(3).split("|")[0] || ckFarmSel(), uid = () => crypto.randomUUID ? crypto.randomUUID() : String(Date.now()) + Math.random();
       const code = st => st.k==="GnRH" ? (r.ovs?.gnrh || OVS_GNRH[0]) : (r.ovs?.pgf || OVS_PGF[0]);
       const tx = OVS_STEPS.map(st=>({ client_id:uid(), farm_id:farm, cow_id:id, start_date:addDays(D, st.d), diagnosis:"Ovsynch", protocol:"Ovsynch",
-        prescribed_by: isAdmin ? "Juan (veterinario)" : "Chequeo", notes:`Día ${st.d} del Ovsynch (inicio ${fmt(D)})` }));
+        prescribed_by: isAdmin ? "Juan (veterinario)" : "Chequeo", notes:`Día ${st.d} del ${ckOvsName(r)} (inicio ${fmt(D)})` }));
       const { data:t, error:e3 } = await sb.from("treatments_cow").insert(tx).select("id,start_date");
       if (e3 || !t?.length){ toast("Los resultados subieron, pero el Ovsynch no se programó: " + (e3?.message || "")); continue; }
       await sb.from("treatment_items").insert(t.map(x=>{ const st = OVS_STEPS[tx.findIndex(y=>y.start_date===x.start_date)] || OVS_STEPS[0];
         return { treatment_id:x.id, supply_code:code(st), dose:OVS_DOSE, unit:"mL", route:"IM", every_hours:24, days:1 }; }));
-      await sb.from("cow_plans").insert({ cow_id:id, farm_id:farm, plan_type:"inseminar", due_date:addDays(D, OVS_IA), note:`Ovsynch del ${fmt(D)}` });
+      await sb.from("cow_plans").insert({ cow_id:id, farm_id:farm, plan_type:"inseminar", due_date:addDays(D, OVS_IA), note:`${ckOvsName(r)} del ${fmt(D)}` });
     }
+    // venta programada desde el chequeo (descarte programado: la vaca pasa a DESCARTE)
+    for (const [id, r] of todo){
+      if (!r.sale?.date) continue;
+      const farm = +key.slice(3).split("|")[0] || ckFarmSel();
+      const { error:e4 } = await sb.from("cow_plans").insert({ cow_id:id, farm_id:farm, plan_type:"descarte", due_date:r.sale.date, note:[r.sale.note, `Chequeo ${fmt(D)}`].filter(Boolean).join(" · ") });
+      if (e4) toast(`Los resultados subieron, pero la venta de la ${id} no se programó: ${e4.message}`);
+    }
+    // 2 · el reporte de reproducción se actualiza solo con este chequeo
+    { const farm = +key.slice(3).split("|")[0] || ckFarmSel(); const rr = await sb.rpc("repro_check_refresh", { p_farm:farm, p_date:D });
+      if (rr.error) console.warn("reporte repro", rr.error.message); else rpRows = null; }
     todo.forEach(([, r])=>{ r.up = true; }); jset(key, res); sent += todo.length;
   }
   jset("ckOutbox", left); ckFlushing = false; updCheckNet();
