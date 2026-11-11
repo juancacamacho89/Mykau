@@ -8211,10 +8211,9 @@ function ckTxPlanTxt(k, v){
   return `${v.n > 1 ? `${v.n} ${k==="Baño" ? "baños" : "aplicaciones"} ${v.every > 1 ? "día de por medio" : k==="Baño" ? "seguidos" : "seguidas"}` : k==="Baño" ? "1 baño" : "1 aplicación"} · `
     + (ds[0]===0 ? "la primera hoy" : "pendiente, empieza mañana") + (pend && ds[0]===0 ? ` · quedan ${pend} pendiente${pend===1 ? "" : "s"} (hasta ${fmt(last)})` : ds[0]!==0 && ds.length > 1 ? ` (hasta ${fmt(last)})` : "");
 }
-const ckWater = d => d.water ? hsCatGet().supplies.find(m=>d.water.codes.includes(m.code)) : null;
 function ckTxHtml(v, r){
   const k = ckTxKey(v), d = CK_TX[k]; if (!d) return "";
-  const x = ckTxVal(k, r), ops = ckTxOpts(v), unit = x.sup?.unit || "mL", water = ckWater(d);
+  const x = ckTxVal(k, r), ops = ckTxOpts(v), unit = x.sup?.unit || "mL", water = !!d.water;
   const sel = (key, opts, cur) => `<select data-cktx="${esc(k)}" data-k="${key}" style="width:auto;padding:8px">${opts.map(([val, t])=>`<option value="${val}" ${String(cur)===String(val) ? "selected" : ""}>${esc(t)}</option>`).join("")}</select>`;
   return `<div class="hscard" style="margin-top:6px;padding:8px"><div class="row" style="gap:6px;align-items:center;flex-wrap:wrap"><b style="flex:0 0 auto">${esc(k)}</b>
     ${ops.length > 1 || !d.codes ? `<select data-cktx="${esc(k)}" data-k="code" style="flex:1;min-width:120px;padding:8px"><option value="">— producto —</option>${ops.map(m=>`<option value="${esc(m.code)}" ${m.code===x.code ? "selected" : ""}>${esc(m.name)}</option>`).join("")}</select>` : `<span class="sub">${esc(x.sup?.name || "")}</span>`}</div>
@@ -8232,14 +8231,12 @@ function ckTxPlan(r){
   const by = {};
   (r.extras || []).forEach(v=>{ const k = ckTxKey(v), d = CK_TX[k]; if (!d) return;
     const x = ckTxVal(k, r); if (!x.code || !(x.dose > 0)) return;
-    const unit = x.sup?.unit || "mL", water = ckWater(d);
-    // agua destilada: el inventario la lleva por frasco (500 o 1000 mL): se descuenta la fracción
-    const bottle = water ? (/1000|1\s*l\b/i.test(water.name) ? 1000 : 500) : 0;
+    // agua destilada del baño: solo en el texto, NO se descuenta del inventario (Juan: solo los medicamentos)
+    const unit = x.sup?.unit || "mL", water = !!d.water;
     ckTxDays(x).forEach((off, i)=>{
       const b = by[off] ||= { off, keys:[], items:[], txt:[] };
       if (!b.keys.includes(k)) b.keys.push(k);
       b.items.push({ code:x.code, dose:x.dose, unit, route:d.route || "IM" });
-      if (water) b.items.push({ code:water.code, dose:Math.round(d.water.ml / bottle * 1000)/1000, unit:water.unit || "unidad", route:d.route });
       b.txt.push(`${(x.sup?.name || x.code).replace(/ (L\.A\.|R\.L\.A\.|LPU)$/i, "")} ${x.dose} ${unit}${water ? " + agua destilada " + d.water.ml + " mL" : ""}${x.n > 1 ? ` (${i + 1}/${x.n})` : ""}`);
     }); });
   return Object.values(by).sort((a, b)=>a.off - b.off);
