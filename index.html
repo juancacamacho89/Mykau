@@ -3243,7 +3243,10 @@ async function tnOpen(){
   const date = $("tnDate").value || today();
   tnDraft = jget(tnKey(tnFarm, date), null) || { farm:tnFarm, date, rows:[] };
   $("tnBody").innerHTML = `<div class="empty">Cargando animales…</div>`;
-  await tnLoad(); renderWeigh(true);
+  await tnLoad();
+  if (!tnDraft.rows.length){ const ids = new Set(tnCows.map(c=>c.id));
+    Object.entries(tnW).forEach(([id, ws])=>ws.forEach(([dt, kg])=>{ if (dt===date && ids.has(id)) tnDraft.rows.push({ id, kg, sent:true }); })); }
+  renderWeigh(true);
 }
 const tnCow = id => tnCows.find(c=>c.id===id);
 // número escrito → animal: el mismo, o su ".1" si el número es de una vaca adulta
@@ -3322,21 +3325,71 @@ function renderWeigh(focus){
     <div class="rpk" style="margin-bottom:14px"><div><b>${rows.length}</b><span>animales</span></div><div><b>${avg(kg)}</b><span>kg promedio</span></div>
       <div><b>${avg(g)}</b><span>g/día de ganancia (prom.)</span></div><div><b>${rows.filter(bad).length}</b><span>para revisar</span></div></div>
     <div class="card"><b>Pesados ${fmt(d.date)}</b> <span class="sub">· toca el número para ver la curva</span>
-      ${lotNames.map(l=>`<div class="ckpen">${esc(l)} <span class="sub">(${rows.filter(r=>grp(r)===l).length})</span></div>
-        <table style="font-size:14px"><tr>${d.app?.kind ? `<th>💉</th>` : ""}<th>N°</th><th>Edad</th><th>kg</th><th>Antes</th><th>g/día</th><th></th></tr>
-        ${rows.filter(r=>grp(r)===l).slice().reverse().map(r=>`<tr style="${bad(r) ? "background:#e3b32222" : ""}">
+      ${tnListHtml(d, rows, bad, grp, lotNames)}
+    </div>
+    ${rows.length ? `<button class="btn" id="tnUp" style="font-size:18px;padding:14px">Guardar y subir (${rows.filter(r=>!r.sent).length} sin subir)</button>
+      ${canSee("vacas_pendientes") ? `<button class="btn ghost" id="tnTxt" style="margin-top:8px">⬇️ Descargar .txt para Interherd</button>` : ""}` : ""}`;
+  if (focus) $("tnId").focus();   // solo al abrir o al agregar un animal (no al escoger insumo o marcar a quién se aplica)
+}
+// lista de pesados: ordenar, filtrar (grupo, peso, edad) y dividir un lote por peso sin exportar
+let tnView = { ord:"", grp:"", rng:{}, split:"" };
+const TN_ORD = [["","Orden de pesaje"],["kgd","Más pesadas"],["kga","Más livianas"],["age","Mayor edad"],["gdp","Mayor g/día"],["id","N°"]];
+function tnRowHtml(d, r, bad, showPen){
+  return `<tr style="${bad(r) ? "background:#e3b32222" : ""}">
           ${d.app?.kind ? `<td><input type="checkbox" data-tnchk="${r.i}" ${r.noApp ? "" : "checked"} ${r.tx ? "disabled" : ""} style="width:22px;height:22px"></td>` : ""}
-          <td><button class="lnk" data-tnrow="${esc(r.id)}" style="font-weight:800;font-size:15px">${esc(r.id)} ${tnOpenRows.has(r.id) ? "▴" : "▾"}</button>${r.sent ? ` <span class="ok">✓</span>` : ""}${r.tx ? " 💉" : ""}${r.note ? `<div class="sub">${esc(r.note)}</div>` : ""}${!r.cow ? `<div class="sub" style="color:var(--s4)">no está en Mykau</div>` : !tnYoung(r.cow) ? `<div class="sub" style="color:var(--s4)">vaca adulta</div>` : ""}</td>
+          <td><button class="lnk" data-tnrow="${esc(r.id)}" style="font-weight:800;font-size:15px">${esc(r.id)} ${tnOpenRows.has(r.id) ? "▴" : "▾"}</button>${r.sent ? ` <span class="ok">✓</span>` : ""}${r.tx ? " 💉" : ""}${showPen ? `<div class="sub">${esc(r.cow?.pen || "Sin grupo")}</div>` : ""}${r.note ? `<div class="sub">${esc(r.note)}</div>` : ""}${!r.cow ? `<div class="sub" style="color:var(--s4)">no está en Mykau</div>` : !tnYoung(r.cow) ? `<div class="sub" style="color:var(--s4)">vaca adulta</div>` : ""}</td>
           <td style="white-space:nowrap">${tnAgeTxt(tnAgeM(r.cow, d.date))}</td>
           <td><b>${r.kg}</b></td><td class="sub">${r.pv ? `${r.pv.kg} · ${fmt(r.pv.date).slice(0,5)}` : "—"}</td>
           <td style="${r.pv?.gdp!=null && (r.pv.gdp < 0 || r.pv.gdp > 1500) ? `color:var(--s4);font-weight:800` : ""}">${r.pv?.gdp ?? "—"}</td>
           <td>${r.sent ? "" : `<button class="del" data-tndel="${r.i}">✕</button>`}</td></tr>
           ${tnOpenRows.has(r.id) ? `<tr><td colspan="${d.app?.kind ? 7 : 6}" style="padding:4px 2px 10px;white-space:normal">
-            <div style="width:min(460px, calc(100vw - 72px))"><div style="margin-bottom:4px">${tnSvc(r.cow, d.date, r.kg, r.pv?.gdp)}</div>${tnCurve(r.id, d.date, r.kg)}</div></td></tr>` : ""}`).join("")}</table>`).join("") || `<div class="empty">Escribe el número y el peso, y toca ＋</div>`}
-    </div>
-    ${rows.length ? `<button class="btn" id="tnUp" style="font-size:18px;padding:14px">Guardar y subir (${rows.filter(r=>!r.sent).length} sin subir)</button>
-      ${canSee("vacas_pendientes") ? `<button class="btn ghost" id="tnTxt" style="margin-top:8px">⬇️ Descargar .txt para Interherd</button>` : ""}` : ""}`;
-  if (focus) $("tnId").focus();   // solo al abrir o al agregar un animal (no al escoger insumo o marcar a quién se aplica)
+            <div style="width:min(460px, calc(100vw - 72px))"><div style="margin-bottom:4px">${tnSvc(r.cow, d.date, r.kg, r.pv?.gdp)}</div>${tnCurve(r.id, d.date, r.kg)}</div></td></tr>` : ""}`;
+}
+function tnListHtml(d, rows, bad, grp, lotNames){
+  if (!rows.length) return `<div class="empty">Escribe el número y el peso, y toca ＋</div>`;
+  const v = tnView, age = r => tnAgeM(r.cow, d.date);
+  if (v.grp && !lotNames.includes(v.grp)) v.grp = "";
+  const inR = (k, val) => { const [lo, hi] = v.rng[k] || []; return (lo==null || lo==="" || (val!=null && val >= +lo)) && (hi==null || hi==="" || (val!=null && val <= +hi)); };
+  const list = rows.filter(r=>(!v.grp || grp(r)===v.grp) && inR("kg", r.kg) && inR("age", age(r)));
+  const n = Math.max(0, Math.round(+v.split || 0)), ord = n ? "kgd" : v.ord;
+  const cmp = { kgd:(a, b)=>b.kg - a.kg, kga:(a, b)=>a.kg - b.kg, age:(a, b)=>(age(b) ?? -1) - (age(a) ?? -1),
+    gdp:(a, b)=>(b.pv?.gdp ?? -1e9) - (a.pv?.gdp ?? -1e9), id:(a, b)=>byNum(a.id, b.id) }[ord];
+  const nFilt = !!v.grp + Object.values(v.rng).filter(x=>(x || []).some(y=>y!=null && y!=="")).length + !!n;
+  const chips = (opts, cur, attr) => `<div class="ckpan" style="padding:0;margin-top:6px"><div class="chips sm">${opts.map(([k, t])=>`<button class="${cur===k ? "on" : ""}" ${attr}="${esc(k)}">${t}</button>`).join("")}</div></div>`;
+  const num = (k, i, ph) => `<input type="number" inputmode="decimal" placeholder="${ph}" data-tnr="${k}|${i}" value="${esc((v.rng[k] || [])[i] ?? "")}" style="min-width:0;padding:8px">`;
+  const stat = a => { if (!a.length) return "0"; const k = a.map(r=>r.kg); return `<b>${a.length}</b> · ${Math.min(...k)}–${Math.max(...k)} kg · prom <b>${Math.round(k.reduce((x, y)=>x + y, 0)/k.length)}</b> kg`; };
+  const head = `<table style="font-size:14px"><tr>${d.app?.kind ? `<th>💉</th>` : ""}<th>N°</th><th>Edad</th><th>kg</th><th>Antes</th><th>g/día</th><th></th></tr>`;
+  const tools = rows.length > 1 ? `<div style="margin:6px 0 10px">
+      <div class="sub">Ordenar</div>${chips(TN_ORD, ord, "data-tnord")}
+      ${lotNames.length > 1 ? `<div class="sub" style="margin-top:6px">Grupo</div>${chips([["", "Todos"], ...lotNames.map(l=>[l, `${esc(l)} (${rows.filter(r=>grp(r)===l).length})`])], v.grp, "data-tngrp")}` : ""}
+      <div style="display:grid;grid-template-columns:auto 1fr 1fr;gap:6px 8px;align-items:center;margin-top:8px">
+        <span class="sub">Peso (kg)</span>${num("kg", 0, "desde")}${num("kg", 1, "hasta")}
+        <span class="sub">Edad (meses)</span>${num("age", 0, "desde")}${num("age", 1, "hasta")}
+        <span class="sub">Dividir</span><input type="number" inputmode="numeric" placeholder="las N más pesadas" data-tnsplit value="${esc(v.split ?? "")}" style="min-width:0;padding:8px;grid-column:span 2"></div>
+      <div class="sub" style="margin-top:6px">${nFilt ? `<b>${list.length}</b> de ${rows.length} animales · <button class="lnk" id="tnClear">quitar filtros</button> · ` : ""}<button class="lnk" data-tncopy="all">📋 copiar números (${list.length})</button></div></div>` : "";
+  if (!list.length) return tools + `<div class="empty">Ningún animal con estos filtros</div>`;
+  // orden de pesaje: por grupo, el último pesado arriba (como siempre)
+  if (!ord) return tools + lotNames.filter(l=>list.some(r=>grp(r)===l)).map(l=>`<div class="ckpen">${esc(l)} <span class="sub">(${list.filter(r=>grp(r)===l).length})</span></div>
+        ${head}${list.filter(r=>grp(r)===l).slice().reverse().map(r=>tnRowHtml(d, r, bad, false)).join("")}</table>`).join("");
+  const sorted = list.slice().sort((a, b)=>cmp(a, b) || byNum(a.id, b.id));
+  if (!n || n >= sorted.length) return tools + head + sorted.map(r=>tnRowHtml(d, r, bad, lotNames.length > 1 && !v.grp)).join("") + `</table>`;
+  const A = sorted.slice(0, n), B = sorted.slice(n), cols = d.app?.kind ? 7 : 6;
+  const band = (t, a, k, c) => `<tr><td colspan="${cols}" style="padding:10px 4px 6px;background:${c};white-space:normal"><div style="width:min(460px, calc(100vw - 72px))"><b>${t}</b>: ${stat(a)}<br><button class="lnk" data-tncopy="${k}">📋 copiar números (${a.length})</button></div></td></tr>`;
+  return tools + `<div class="rpk" style="margin:4px 0 10px"><div><b>${A.length}</b><span>más pesadas · ${stat(A).replace(/^<b>\d+<\/b> · /, "")}</span></div>
+      <div><b>${B.length}</b><span>más livianas · ${stat(B).replace(/^<b>\d+<\/b> · /, "")}</span></div></div>`
+    + head + band("⬆ Más pesadas", A, "a", "rgba(123,214,123,.15)") + A.map(r=>tnRowHtml(d, r, bad, lotNames.length > 1 && !v.grp)).join("")
+    + band("⬇ Más livianas", B, "b", "rgba(124,198,242,.15)") + B.map(r=>tnRowHtml(d, r, bad, lotNames.length > 1 && !v.grp)).join("") + `</table>`;
+}
+// números de la lista que se ve (todos, las pesadas o las livianas), para pegar en Ingreso rápido o WhatsApp
+function tnShownIds(which){
+  const d = tnDraft, v = tnView, rows = d.rows.map((r, i)=>({ ...r, i, pv:tnPrev(r.id, d.date, r.kg), cow:tnCow(r.id) }));
+  const grp = r => r.cow?.pen || "Sin grupo", age = r => tnAgeM(r.cow, d.date);
+  const inR = (k, val) => { const [lo, hi] = v.rng[k] || []; return (lo==null || lo==="" || (val!=null && val >= +lo)) && (hi==null || hi==="" || (val!=null && val <= +hi)); };
+  const list = rows.filter(r=>(!v.grp || grp(r)===v.grp) && inR("kg", r.kg) && inR("age", age(r)));
+  const n = Math.max(0, Math.round(+v.split || 0));
+  if (which==="all" && !n) return list.map(r=>r.id).sort(byNum);
+  const sorted = list.slice().sort((a, b)=>b.kg - a.kg || byNum(a.id, b.id));
+  return (which==="a" ? sorted.slice(0, n) : which==="b" ? sorted.slice(n) : sorted).map(r=>r.id);
 }
 function tnAppCard(d, rows){
   const a = d.app, sup = tnSupplies(), cats = [...new Set(sup.map(m=>m.category||"Otro"))].sort((x,y)=>x.localeCompare(y));
@@ -3385,6 +3438,9 @@ $("tnBody").addEventListener("input", e=>{
   tnSave();
 });
 $("tnBody").addEventListener("change", e=>{
+  const rr = e.target.closest("[data-tnr]");
+  if (rr){ const [k, i] = rr.dataset.tnr.split("|"); (tnView.rng[k] ||= [null, null])[+i] = rr.value==="" ? null : +rr.value; renderWeigh(); return; }
+  if (e.target.matches("[data-tnsplit]")){ tnView.split = e.target.value; renderWeigh(); return; }
   const ck = e.target.closest("[data-tnchk]");
   if (ck){ tnDraft.rows[+ck.dataset.tnchk].noApp = !ck.checked; tnSave(); renderWeigh(); return; }
   const el = e.target.closest("[data-tni]"); if (!el || !tnDraft.app) return;
@@ -3400,6 +3456,12 @@ $("tnBody").addEventListener("keydown", e=>{
 $("tnBody").addEventListener("click", async e=>{
   const t = e.target;
   if (t.id==="tnAdd") return tnAdd();
+  const od = t.closest("[data-tnord]"); if (od){ tnView.ord = od.dataset.tnord; if (tnView.ord!=="kgd") tnView.split = ""; renderWeigh(); return; }
+  const gp = t.closest("[data-tngrp]"); if (gp){ tnView.grp = gp.dataset.tngrp; renderWeigh(); return; }
+  if (t.id==="tnClear"){ tnView = { ord:tnView.ord, grp:"", rng:{}, split:"" }; renderWeigh(); return; }
+  const cp = t.closest("[data-tncopy]"); if (cp){ const ids = tnShownIds(cp.dataset.tncopy);
+    try{ await navigator.clipboard.writeText(ids.join(" ")); toast(`${ids.length} números copiados (se pueden pegar en Ingreso rápido)`); }
+    catch(err){ prompt("Copia los números:", ids.join(" ")); } return; }
   const tr = t.closest("[data-tnrow]"); if (tr){ const id = tr.dataset.tnrow; tnOpenRows.has(id) ? tnOpenRows.delete(id) : tnOpenRows.add(id); renderWeigh(); return; }
   const x = t.closest("[data-tndel]"); if (x){ tnDraft.rows.splice(+x.dataset.tndel, 1); tnSave(); renderWeigh(); return; }
   const kd = t.closest("[data-tnkind]");
@@ -4258,7 +4320,7 @@ function rcReglas(base, litros, prev, dim, dps, caida){
   if (prev!=null && cap==null && rac < prev - 2){ rac = prev - 2; motivo += ` (limitado: máx. bajada 2 kg vs previa ${prev} kg)`; }
   return { rac:rcPar(rac), tipo, motivo };
 }
-let rcState = { farm:null, pen:"", chg:"all", prevF:"", rng:{}, sort:{ k:"", dir:1 }, edit:{} }, rcData = null;
+let rcState = { farm:null, pen:"", chg:"all", prevF:"", rng:{}, sort:{ k:"", dir:1 }, edit:{}, sel:new Set() }, rcData = null;
 // filtros para revisar a mano: qué cambió, ración previa, rangos (DIM, último peso, prom 3) y orden por columna
 const RC_CHG = [["all","Todas"],["cambio","Cambian de collar"],["baja","Bajan"],["sube","Suben"],["igual","Sin cambio"]];
 const RC_RNG = [["dim","DIM"],["litros","Último peso (L)"],["prom","Prom 3 (L)"],["caida","Caída %"]];
@@ -4310,8 +4372,9 @@ function rcCompute(){
   d.milk.forEach(([id, dt, t, a])=>(milk[id] ||= []).push({ d:dt, l:a ?? t, adj:a!=null }));
   // ración previa: la última hecha en Mykau o n8n; los listados de Interherd solo si no hay ninguna
   // (Interherd puede tener todavía la ración anterior mientras no se importa la nueva)
-  const own = src => src==="app" || /^n8n/.test(src || ""), ih = {};
-  d.conc.forEach(([id, dt, kg, src])=>{ if (own(src)) conc[id] = { d:dt, kg, src }; else ih[id] = { d:dt, kg, src }; });
+  const own = src => src==="app" || /^n8n/.test(src || ""), ih = {}, saved = {}, day = today();
+  // lo guardado hoy en la app es la ración vigente (sale en la tabla y en los PDF); la previa es la de antes de hoy
+  d.conc.forEach(([id, dt, kg, src])=>{ if (own(src) && dt===day) saved[id] = kg; else if (own(src)) conc[id] = { d:dt, kg, src }; else ih[id] = { d:dt, kg, src }; });
   Object.keys(ih).forEach(id=>{ if (!conc[id]) conc[id] = ih[id]; });
   d.ev.forEach(([id, dt, t])=>(ev[id] ||= []).push({ d:dt, t }));
   // las vacas con secado programado (Ingreso rápido o hoja de vida) salen de la suplementación
@@ -4333,8 +4396,8 @@ function rcCompute(){
       ? (dim!=null && dim < 100 ? { rac:8, tipo:"SIN", motivo:"Recién parida, sin pesaje todavía: 8 kg (DIM <100)" }
                                 : { rac:prev ?? 0, tipo:"SIN", motivo:"Sin pesaje en 75 días: se deja la previa" })
       : rcReglas(base, litros, prev, dim, dps, caida);
-    const fin = rcState.edit[c.id] ?? r.rac;
-    return { c, litros, adj:last?.adj, fecha:last?.d, prom, caida, dim, dps, dry, first, prev, prevFrom:conc[c.id], base, ...r, fin, manual: rcState.edit[c.id]!=null,
+    const fin = rcState.edit[c.id] ?? saved[c.id] ?? r.rac;
+    return { c, saved:saved[c.id] ?? null, litros, adj:last?.adj, fecha:last?.d, prom, caida, dim, dps, dry, first, prev, prevFrom:conc[c.id], base, ...r, fin, manual: rcState.edit[c.id]!=null,
       cambio: prev==null || rcPar(prev)!==fin };
   });
 }
@@ -4342,7 +4405,7 @@ function rcCompute(){
 // solo lo ven el administrador principal y María (perfil "Maria")
 const rcBagsSee = () => isMain() || myProfile==="Maria";
 function rcBagsCmp(pen, xs){
-  const kg = xs.reduce((a, x)=>a + (x.prev ?? 0), 0), need = Math.round(kg/40*2)/2;
+  const kg = xs.reduce((a, x)=>a + (x.saved ?? x.prev ?? 0), 0), need = Math.round(kg/40*2)/2;
   const dm = (rcData.tank || []).filter(t=>t.pen===pen && t.concentrate_bags!=null).sort((a, b)=>a.rec_date < b.rec_date ? -1 : 1).pop();
   if (!dm) return `<br>ración guardada: <b>${need} bultos</b>/día (${kg} kg) · Leche diaria: sin bultos anotados`;
   const got = +dm.concentrate_bags, d = got - need, ok = Math.abs(d) <= 0.5;
@@ -4379,7 +4442,14 @@ function renderRacion(){
       pesaje ${lastW ? fmt(lastW) : "—"}${ti ? ` · ajuste ×${ti.f.toFixed(3)} (${Math.round(ti.tank).toLocaleString("es-CO")} L tanque / ${Math.round(ti.sum).toLocaleString("es-CO")} pesados)`
         : lastW && xs.some(x=>x.fecha===lastW && x.adj) ? " · ya ajustada (Excel)" : lastW ? " · sin total del tanque ese día: sin ajustar" : ""}
       ${rcBagsSee() ? rcBagsCmp(p, xs) : ""}</span></div>`; }).join("");
-  const sel = v => `<select data-rck style="width:auto;padding:4px 6px;font-size:15px">${[0,2,4,6,8,10,12].map(k=>`<option ${k===v ? "selected" : ""}>${k}</option>`).join("")}</select>`;
+  s.sel = new Set([...s.sel].filter(id=>rows.some(x=>x.c.id===id)));   // solo las que se ven
+  const pm = (k, dis) => `<button data-rcpm="${k}" ${dis ? "disabled" : ""} style="width:32px;height:32px;padding:0;border-radius:9px;border:1px solid var(--line);background:transparent;color:var(--ink);font-size:19px;font-weight:800;line-height:1;opacity:${dis ? .3 : 1}">${k < 0 ? "−" : "+"}</button>`;
+  const nSaved = all.filter(x=>x.saved!=null).length, allSel = rows.length && rows.every(x=>s.sel.has(x.c.id));
+  const bar = s.sel.size ? `<div style="position:fixed;left:0;right:0;bottom:0;z-index:1400;background:var(--bg);padding:10px 14px calc(12px + env(safe-area-inset-bottom));border-top:2px solid var(--accent);box-shadow:0 -6px 18px rgba(0,0,0,.25)">
+      <b>${s.sel.size} vaca${s.sel.size===1 ? "" : "s"} marcada${s.sel.size===1 ? "" : "s"}</b> · poner:
+      <div class="ckpan" style="padding:0;margin-top:4px"><div class="chips sm">${[0,2,4,6,8,10,12].map(k=>`<button data-rcset="${k}">${k} kg</button>`).join("")}
+        <button data-rcadd="-2">− 2</button><button data-rcadd="2">+ 2</button></div></div>
+      <button class="lnk" id="rcSelNone" style="margin-top:4px">quitar marcas</button></div>` : "";
   $("rcBody").innerHTML = `<div class="card">${chips(farms.map(f=>[String(f.id), esc(farmLabel(f))]), String(s.farm), "data-rcf")}
       ${chips([["", "Todos los lotes"], ...pens.map(p=>[p, esc(p)])], s.pen, "data-rcp")}
       ${chips(RC_CHG, s.chg, "data-rco")}
@@ -4397,19 +4467,22 @@ function renderRacion(){
     <div class="card"><div class="row" style="gap:8px;flex-wrap:wrap">
         <button class="btn" id="rcPdf">📄 PDF suplementación</button><button class="btn ghost" id="rcPdfCh">📄 PDF cambios de collar</button>
         ${canDo("racion_registrar") ? `<button class="btn ghost" id="rcSave">💾 Guardar ración (queda como previa)</button>` : ""}</div>
-      <div class="sub" style="margin-top:6px">Litros = leche <b>ajustada</b> al total del tanque (si ese día hay Leche diaria). Toca los kg para cambiarlos a mano.
+      ${nSaved ? `<div style="margin-top:8px;padding:8px 10px;border-radius:10px;background:rgba(123,214,123,.18)"><b>💾 Ración de hoy guardada (${nSaved} vacas).</b> La tabla y los PDF muestran la ración guardada${Object.keys(s.edit).length ? " más los cambios nuevos sin guardar" : ""}.</div>` : ""}
+      <div class="sub" style="margin-top:6px">Litros = leche <b>ajustada</b> al total del tanque (si ese día hay Leche diaria). Para cambiar los kg marca las vacas ☑ (una o varias) y elige los kg en la barra de abajo. Los PDF salen con lo que ves en la columna Nueva.
         ${Object.keys(s.edit).length ? `<b>${Object.keys(s.edit).length} cambiadas a mano</b> (quedan en el celular hasta guardar) · <button class="lnk" id="rcUndo">deshacer cambios a mano</button>` : ""}</div></div>
-    <div class="card" style="overflow-x:auto"><table style="font-size:13px">
-      <tr>${[["id","Vaca"],["litros","Litros"],["prom","Prom 3"],["caida","Caída"],["dim","DIM"],["dps","Secado"],["prev","Previa"],["fin","Nueva"]].map(([k,t])=>
+    <div class="card" style="overflow-x:auto">${bar}<table style="font-size:13px">
+      <tr><th><input type="checkbox" id="rcSelAll" ${allSel ? "checked" : ""} style="width:20px;height:20px"></th>${[["id","Vaca"],["fin","Nueva"],["prev","Previa"],["litros","Litros"],["prom","Prom 3"],["caida","Caída"],["dim","DIM"],["dps","Secado"]].map(([k,t])=>
         `<th data-rcs="${k}" style="cursor:pointer;white-space:nowrap">${t}${s.sort.k===k ? (s.sort.dir > 0 ? " ▲" : " ▼") : ""}</th>`).join("")}<th>Motivo</th></tr>
-      ${rows.map(x=>`<tr data-rcid="${esc(x.c.id)}" style="${x.tipo==="FUERTE" ? "background:rgba(248,203,173,.35)" : x.tipo==="MODERADA" ? "background:rgba(255,242,204,.35)" : ""}">
+      ${rows.map(x=>`<tr data-rcid="${esc(x.c.id)}" data-fin="${x.fin}" style="${s.sel.has(x.c.id) ? "background:rgba(124,198,242,.25)" : x.tipo==="FUERTE" ? "background:rgba(248,203,173,.35)" : x.tipo==="MODERADA" ? "background:rgba(255,242,204,.35)" : ""}">
+        <td><input type="checkbox" data-rcsel ${s.sel.has(x.c.id) ? "checked" : ""} style="width:20px;height:20px"></td>
         <td><button class="lnk" data-cow="${esc(x.c.id)}">${esc(x.c.id)}</button><div class="sub">${esc(x.c.pen)}${x.first ? " · 1er parto" : ""}</div></td>
+        <td style="white-space:nowrap"><b style="display:inline-block;min-width:26px;text-align:center;font-size:15px;border-radius:6px;padding:1px 4px;background:${RC_COLOR[x.fin][1]};color:#222">${x.fin}</b> <span class="sub">${RC_COLOR[x.fin][0]}</span>${x.cambio ? " ●" : ""}</td>
+        <td>${x.prev ?? "—"}</td>
         <td>${x.litros!=null ? x.litros.toFixed(1) : "—"}${x.litros!=null && !x.adj ? `<div class="sub">sin ajustar</div>` : ""}</td>
         <td>${x.prom!=null ? x.prom.toFixed(1) : "—"}</td><td>${x.caida!=null ? x.caida.toFixed(0) + "%" : "—"}</td>
-        <td>${x.dim ?? "—"}</td><td>${x.dps!=null ? x.dps + " d" : "—"}</td><td>${x.prev ?? "—"}</td>
-        <td style="white-space:nowrap">${sel(x.fin)} <span class="tag" style="background:${RC_COLOR[x.fin][1]};color:#222">${RC_COLOR[x.fin][0]}</span>${x.cambio ? " ●" : ""}</td>
-        <td class="sub">${x.manual ? "✏️ cambiada a mano · " : ""}${esc(x.motivo)}</td></tr>`).join("") || `<tr><td colspan="9"><div class="empty">Sin vacas en ordeño</div></td></tr>`}
-    </table></div>`;
+        <td>${x.dim ?? "—"}</td><td>${x.dps!=null ? x.dps + " d" : "—"}</td>
+        <td class="sub" style="min-width:190px">${x.manual ? "✏️ cambiada a mano · " : x.saved!=null && x.saved!==x.rac ? "💾 guardada hoy · " : ""}${esc(x.motivo)}</td></tr>`).join("") || `<tr><td colspan="10"><div class="empty">Sin vacas en ordeño</div></td></tr>`}
+    </table>${s.sel.size ? `<div style="height:150px"></div>` : ""}</div>`;
 }
 // PDF como el de n8n: una hoja por lote, bloques [ID  KG  COLOR], total kg y bultos
 async function rcPdf(onlyChanges){
@@ -4445,7 +4518,7 @@ async function rcPdf(onlyChanges){
   });
   const name = `${onlyChanges ? "Cambios_collares" : "Suplementacion"}_${today()}${rcState.pen ? "_" + (LS_PEN_NAME[rcState.pen] || rcState.pen) : ""}.pdf`;
   const file = new File([doc.output("blob")], name, { type:"application/pdf" });
-  if (navigator.canShare?.({ files:[file] }) && /Android|iPhone|iPad/i.test(navigator.userAgent)){ try{ await navigator.share({ files:[file], title:name }); }catch(e){} return; }
+  if (navigator.canShare?.({ files:[file] }) && /Android|iPhone|iPad/i.test(navigator.userAgent)){ try{ await navigator.share({ files:[file], title:name }); return; }catch(e){ if (e?.name==="AbortError") return; } }
   const a = document.createElement("a"); a.href = URL.createObjectURL(file); a.download = name; document.body.appendChild(a); a.click();
   setTimeout(()=>{ URL.revokeObjectURL(a.href); a.remove(); }, 2000);
 }
@@ -4460,6 +4533,15 @@ $("rcBody").addEventListener("click", async e=>{
   if (t.id==="rcReload"){ await rcLoad(); return renderRacion(); }
   if (t.id==="rcUndo"){ if (!confirm("¿Volver a la ración calculada en todas las vacas?")) return; s.edit = {}; try{ localStorage.removeItem(rcEditKey()); }catch(x){} return renderRacion(); }
   if (q("data-cow")){ e.preventDefault(); return openCow(q("data-cow")); }
+  const putKg = (id, kg) => { s.edit[id] = rcPar(kg); };
+  if (q("data-rcpm")){ const tr = t.closest("[data-rcid]"); putKg(tr.dataset.rcid, +tr.dataset.fin + +q("data-rcpm")); jset(rcEditKey(), s.edit); return renderRacion(); }
+  if (t.matches("[data-rcsel]")){ const id = t.closest("[data-rcid]").dataset.rcid; t.checked ? s.sel.add(id) : s.sel.delete(id); return renderRacion(); }
+  if (t.id==="rcSelAll"){ const vis = rcCompute().filter(rcPass).map(x=>x.c.id); s.sel = t.checked ? new Set(vis) : new Set(); return renderRacion(); }
+  if (t.id==="rcSelNone"){ s.sel = new Set(); return renderRacion(); }
+  if (q("data-rcset")!=null || q("data-rcadd")!=null){
+    const fin = Object.fromEntries(rcCompute().map(x=>[x.c.id, x.fin])), n = s.sel.size;
+    s.sel.forEach(id=>putKg(id, q("data-rcset")!=null ? +q("data-rcset") : (fin[id] ?? 0) + +q("data-rcadd")));
+    jset(rcEditKey(), s.edit); toast(`${n} vaca${n===1 ? "" : "s"} cambiada${n===1 ? "" : "s"}`); return renderRacion(); }
   if (t.id==="rcPdf" || t.id==="rcPdfCh"){ t.disabled = true; await rcPdf(t.id==="rcPdfCh"); t.disabled = false; return; }
   if (t.id==="rcSave"){
     const xs = rcCompute(), day = today();
@@ -4469,7 +4551,8 @@ $("rcBody").addEventListener("click", async e=>{
     let err = null; for (let i = 0; i < rows.length; i += 500){ ({ error:err } = await sb.from("cow_concentrate").upsert(rows.slice(i, i + 500), { onConflict:"cow_id,rec_date" })); if (err) break; }
     t.disabled = false;
     if (err) return toast(/row-level|permission/i.test(err.message) ? "Sin permiso (¿falta correr SQL/ajuste_y_racion.sql?)" : "No se pudo guardar: " + err.message);
-    toast(`Ración de ${rows.length} vacas guardada ✓`); s.edit = {}; try{ localStorage.removeItem(rcEditKey()); }catch(x){} await rcLoad(); renderRacion();
+    toast(`Ración de ${rows.length} vacas guardada ✓`); s.edit = {}; s.sel = new Set(); try{ localStorage.removeItem(rcEditKey()); }catch(x){} await rcLoad(); renderRacion();
+    await rcPdf(false);   // PDF con la ración que se acaba de guardar
   }
 });
 $("rcBody").addEventListener("change", e=>{
