@@ -2604,8 +2604,11 @@ async function loadRegistros(){
   $("rgBody").innerHTML = `<div class="card"><div class="empty">Cargando…</div></div>`;
   if (!navigator.onLine){ $("rgBody").innerHTML = `<div class="card"><div class="empty">Los registros necesitan señal.</div></div>`; return; }
   const s = rgState, pend = s.status==="pend", want = k => pend ? ["vacas","pesaje"].includes(k) : true;   // la categoría se filtra al dibujar
-  const byEv = s.by!=="registro", qFrom = byEv ? addDays(s.from, -120) : s.from;
-  const t1 = byEv ? addDays(today(), 1) : addDays(s.to, 1), rows = [], notes = [];
+  const byEv = s.by!=="registro", dFrom = byEv ? addDays(s.from, -120) : s.from;
+  // límites del día en hora de Colombia: Supabase guarda la hora universal (5 h más), y sin esto lo registrado
+  // después de las 7 p. m. no salía hasta el día siguiente (Juan, 11/11/2026: corte de La Isla 18 y 19)
+  const locTs = d => new Date(d + "T00:00:00-05:00").toISOString();
+  const qFrom = locTs(dFrom), t1 = locTs(byEv ? addDays(today(), 1) : addDays(s.to, 1)), rows = [], notes = [];
   const all = canSee("registros_todos"), who = all ? s.user : me;   // sin "ver todos": solo lo que registró esta persona
   const add = r => { if ((!s.farm || +s.farm===r.farm) && (!who || who===r.who)) rows.push(r); };
   const jobs = [];
@@ -2658,7 +2661,7 @@ async function loadRegistros(){
     const [w, g, r] = await Promise.all([
       sb.from("paddock_works").select("id,farm_id,work_date,activity,product,value,created_by,created_at,paddocks(predio,number)").eq("source", "app").gte("created_at", qFrom).lt("created_at", t1).limit(2000),
       sb.from("grazing").select("id,farm_id,grp,entry_date,animals,created_by,created_at,paddocks(predio,number)").eq("source", "app").gte("created_at", qFrom).lt("created_at", t1).limit(2000),
-      sb.from("rainfall").select("id,farm_id,rain_date,mm,created_by").eq("source", "app").gte("rain_date", byEv ? s.from : qFrom).lte("rain_date", s.to).limit(2000),
+      sb.from("rainfall").select("id,farm_id,rain_date,mm,created_by").eq("source", "app").gte("rain_date", byEv ? s.from : dFrom).lte("rain_date", s.to).limit(2000),
     ]);
     const pn = p => p ? `${p.predio} ${p.number}` : "";
     const wk = {};   // una labor en varios potreros = un registro
@@ -2677,7 +2680,7 @@ async function loadRegistros(){
       q("cow_plans", "id,cow_id,farm_id,plan_type,due_date,note,status,created_by,created_at"),
       q("supply_entries", "id,entry_date,farm_id,kind,supply_code,qty,notes,created_by,created_at,supplies(name,unit)").eq("source", "app"),
       q("ultrasound_exams", "id,farm_id,exam_date,score,animal_id,created_by,created_at,animals(calf_id)").eq("source", "app"),
-      sb.from("cow_concentrate").select("rec_date,cows!inner(farm_id)").eq("source", "app").gte("rec_date", since).lte("rec_date", s.to).limit(5000),
+      sb.from("cow_concentrate").select("rec_date,cows!inner(farm_id)").eq("source", "app").gte("rec_date", dFrom).lte("rec_date", s.to).limit(5000),
     ]);
     // reporte de ganadería: una ronda (finca, día, persona) = un registro
     const rd = {}; (lr.data || []).forEach(x=>{ const k = x.farm_id + "|" + x.report_date + "|" + x.created_by; (rd[k] ||= { ...x, grps:[] }).grps.push(x.grp); });
@@ -2736,7 +2739,8 @@ function rgDraw(){
   const byWho = all.filter(r=>!rgPick.title || r.title===rgPick.title).reduce((g,r)=>{ const n = rgWho(r.who); g[n] = (g[n]||0) + 1; return g; }, {});
   const pill = st => st==="pendiente" ? `<span class="tag">⏳ pendiente Interherd</span>` : st==="en Interherd" ? `<span class="tag" style="background:var(--s0);color:#fff">✓ en Interherd</span>`
     : st==="borrado" ? `<span class="tag" style="background:var(--line);color:var(--ink)">borrado</span>` : "";
-  const days = [...new Set(rows.map(r=>String(r.when).slice(0,10)))];
+  const rgDay = w => String(w).length===10 ? String(w) : new Date(w).toLocaleDateString("en-CA", { timeZone:"America/Bogota" });   // día en Colombia
+  const days = [...new Set(rows.map(r=>rgDay(r.when)))];
   $("rgBody").innerHTML = `${notes.map(n=>`<div class="warn" style="margin-bottom:10px">${esc(n)}</div>`).join("")}
     <div class="rpk" style="margin-bottom:14px"><div><b>${rows.length}</b><span>${pend ? "pendientes de pasar a Interherd" : "registros"}</span></div>
       <div><b>${pendRows.length}</b><span>pendientes de Interherd</span></div>
@@ -2748,7 +2752,7 @@ function rgDraw(){
     <div class="card"><div style="display:flex;justify-content:space-between;align-items:center;gap:8px"><b>Registros</b>
       ${rows.length ? `<button class="btn ghost" id="rgTxt" style="width:auto;padding:6px 12px">⬇️ Exportar .txt (${rows.length})</button>` : ""}</div>${rgPick.title || rgPick.who ? ` <span class="sub">· ${[rgPick.title, rgPick.who].filter(Boolean).map(esc).join(" · ")} (${rows.length}) · <button class="lnk" data-rgclear="1">quitar filtro</button></span>` : ""}
       ${days.map(d=>`<div class="ckpen">${d.length===10 ? new Date(d + "T12:00").toLocaleDateString("es-CO", { weekday:"long", day:"numeric", month:"long" }) : esc(d)}</div>
-        ${rows.filter(r=>String(r.when).startsWith(d)).map(r=>`<div class="hscard"><div style="display:flex;justify-content:space-between;gap:8px;align-items:baseline">
+        ${rows.filter(r=>rgDay(r.when)===d).map(r=>`<div class="hscard"><div style="display:flex;justify-content:space-between;gap:8px;align-items:baseline">
           <div>${r.icon} <b>${esc(r.title)}</b>${r.cow ? ` · <button class="lnk" data-cow="${esc(r.cow)}">${esc(r.cow)}</button>` : ""}</div>
           <div class="sub" style="text-align:right;white-space:nowrap">${rgTime(r.when)}</div></div>
           <div class="sub">${esc(r.detail)}</div>
