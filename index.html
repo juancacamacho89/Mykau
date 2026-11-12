@@ -6522,7 +6522,8 @@ async function cowPlans(d){
   box.innerHTML = `<div class="card"><b>📅 Eventos programados</b>
     ${pend.map(line).join("") || `<div class="sub" style="margin-top:4px">Nada programado</div>`}
     ${done.length ? `<details style="margin-top:6px"><summary class="sub">Hechos (${done.length})</summary>${done.map(line).join("")}</details>` : ""}
-    ${plCan() && c.active ? `<div class="addbar" style="margin-top:8px"><button data-plnew>＋ Programar / agregar evento</button></div>` : ""}</div>`;
+    ${c.active && (plCan() || canDo("chequeo")) ? `<div class="addbar" style="margin-top:8px">${plCan() ? `<button data-plnew>📅 Programar</button>` : ""}${canDo("chequeo") ? `<button data-ckgo="${esc(c.id)}|${c.farm_id}">🩺 Ejecutar</button>` : ""}</div>
+      <div class="sub" style="margin-top:4px">Programar: queda para una fecha. Ejecutar: registrar hoy un EXREP, ECO, ECO2, DPR, DP5 o DPSEC como en el chequeo.</div>` : ""}</div>`;
 }
 function plOpen(){
   const d = lastCowData, c = d.cow;
@@ -6532,7 +6533,7 @@ function plOpen(){
   const sug = t => t==="descarte" ? (dryAt && dryAt > today() ? dryAt : addDays(today(), 30)) : PL_CK_CAT[t] ? today() : addDays(today(), 7);
   const bg = document.createElement("div"); bg.className = "sheet-bg";
   bg.innerHTML = `<form class="sheet" autocomplete="off">
-    <h3>Programar / agregar evento · vaca ${esc(c.id)}</h3>
+    <h3>Programar · vaca ${esc(c.id)}</h3>
     <label>Qué</label>${seg("pltype", PL_TYPES, "descarte")}
     <label>Fecha</label><input type="date" name="date" value="${sug("descarte")}" min="${today()}" required>
     <div class="sub" id="plHint">${dryAt ? `Secado esperado: ${fmt(dryAt)} · ` : ""}Al guardar, la vaca queda de una vez en estado DESCARTE.</div>
@@ -6560,6 +6561,8 @@ function plOpen(){
 }
 document.addEventListener("click", async e=>{
   if (e.target.closest("[data-plnew]")) return plOpen();
+  const go = e.target.closest("[data-ckgo]");
+  if (go){ const [id, farm] = go.dataset.ckgo.split("|"); ckGoto = { id, farm:+farm || 1 }; location.hash = "chequeo"; window.scrollTo({ top:0 }); return; }
   const uc = e.target.closest("[data-uncull]");
   if (uc && (e.target.closest('.pill[title^="Desc"]') || e.target.closest("[data-uncullbtn]"))){
     const id = uc.dataset.uncull;
@@ -7910,7 +7913,7 @@ function updCheckNet(){
 window.addEventListener("online", ()=>{ updCheckNet(); flushCheck(); });
 window.addEventListener("offline", ()=>updCheckNet());
 
-let ckReady = false;
+let ckReady = false, ckGoto = null, ckFromCow = null;   // Ejecutar desde la hoja de vida: { id, farm }
 function initCheck(){
   updCheckNet();
   if (!ckReady){
@@ -7923,7 +7926,19 @@ function initCheck(){
   }
   $("ckLoad").classList.toggle("hidden", !canDo("chequeo")); $("ckDate").classList.toggle("hidden", !canDo("chequeo"));
   if (navigator.onLine) hsCatalog().then(()=>{ if (ckOpen) ckRender(); });   // insumos para los tratamientos del chequeo
+  if (ckGoto && canDo("chequeo")) return ckOpenCow(ckGoto);
   ckShow();
+}
+async function ckOpenCow(g){
+  ckGoto = null;
+  const r = document.querySelector(`input[name="ckF"][value="${g.farm}"]`); if (r) r.checked = true;
+  jset("ckLast", { farm:g.farm }); $("ckDate").value = today();
+  ckMode = "pad"; ckPad = ""; ckOpen = g.id; ckFromCow = g.id;
+  const p = jget(`ckData:${g.farm}`, null);
+  // sin lista de esa finca, vieja (más de 2 h) o sin esta vaca: se descarga (con señal)
+  if (navigator.onLine && (!p || Date.now() - p.at > 2*36e5 || !p.cows.some(c=>c[0]===g.id))) await ckDownload();
+  else ckShow();
+  if (!ckData?.cows.some(c=>c.id===g.id)) toast(navigator.onLine ? "La vaca no está activa en esa finca" : "Sin señal: descarga la lista del chequeo primero");
 }
 const ckFarmSel = () => +document.querySelector('input[name="ckF"]:checked').value;
 
@@ -8391,7 +8406,7 @@ $("ckBody").addEventListener("click", e=>{
     if (v==="DEL") ckPad = ckPad.slice(0, -1); else if (v==="ABC") ckAbc = !ckAbc; else ckPad += v;
     ckRender(); return; }
   const pk = e.target.closest("[data-pick]"); if (pk){ ckOpen = pk.dataset.pick; ckRender(); window.scrollTo({ top:0 }); return; }
-  if (e.target.closest("[data-ckback]")){ ckOpen = null; ckPad = ""; ckRender(); return; }
+  if (e.target.closest("[data-ckback]")){ ckOpen = null; ckPad = ""; ckFromCow = null; ckRender(); return; }
   if (e.target.closest("[data-ckclear]")){
     const id = e.target.closest("[data-ck]").dataset.ck;
     if (!ckRes[id]?.up && confirm(`¿Borrar el resultado de la vaca ${id}?`)){ delete ckRes[id]; ckSave(); toast("Resultado borrado"); ckRender(); }
@@ -8482,6 +8497,9 @@ $("ckBody").addEventListener("input", e=>{
   const r = ckRes[ckOpen] ||= {}; r.note = e.target.value; ckSave();
 });
 function ckNext(id){
+  // vino de la hoja de vida (Ejecutar): se sube de una vez y vuelve a la vaca
+  if (ckFromCow===id){ ckFromCow = null; toast(`${id} ✓ guardada · subiendo…`); ckOpen = null;
+    return Promise.resolve(ckQueue()).then(()=>{ location.hash = "vaca/" + encodeURIComponent(id); loadCow(id); }); }
   if (ckMode==="pad"){ toast(`${id} ✓ guardada`); ckOpen = null; ckPad = ""; ckRender(); window.scrollTo({ top:0 }); return; }
   const list = ckList().filter(x=>(!ckPenF || (x.c.pen||"—")===ckPenF) && (!ckFilter || (ckFilter==="LATE" ? x.k.late : x.k.cat===ckFilter))), i = list.findIndex(x=>x.c.id===id);
   const nxt = list.slice(i+1).find(x=>!ckRes[x.c.id]?.res);
@@ -8492,7 +8510,7 @@ function ckQueue(){
   const key = ckKey(ckFarmSel(), $("ckDate").value || today());
   if (!Object.values(ckRes).some(r=>r.res && !r.up)) return toast("No hay resultados nuevos para subir");
   const ob = jget("ckOutbox", []); if (!ob.includes(key)) { ob.push(key); jset("ckOutbox", ob); }
-  flushCheck();
+  return flushCheck();
 }
 // convierte cada resultado en eventos con el mismo vocabulario de Interherd (quedan pendientes de pasar)
 function ckRows(D, id, r){
