@@ -1657,6 +1657,8 @@ async function loadPastos(){
   renderPastos();
 }
 function renderPastos(){
+  const tabs = `<div class="sheet" style="padding:0;background:none;max-height:none;margin-bottom:10px">${seg("psView", [["map","🌾 Potreros"],["dose","🧪 Dosificación"]], psView)}</div>`;
+  if (psView==="dose") return psDoseRender(tabs);
   const pens = (jget("mkFarms", []).find(f=>f.id===psFarm)?.pens) || [];
   const act = psList.filter(p=>p.active && !p.merged_into);
   const predios = [...new Set(act.map(p=>p.predio))].sort((a,b)=>a==="RECODO" ? -1 : b==="RECODO" ? 1 : a.localeCompare(b));
@@ -1672,7 +1674,7 @@ function renderPastos(){
     return `<button class="pstile" data-ps="${p.id}" style="--c:var(${psColor(p)})"><b>${esc(psName(p))}</b>
       <span>${r==null ? "—" : r === 0 ? "ocupado" : r + " d"}</span></button>`; };
   // la productividad está en Reportes → Pastos
-  $("psBody").innerHTML = `
+  $("psBody").innerHTML = `${tabs}
     ${psCanWork() ? `<div class="addbar">${psCanMove() ? `<button data-psnew="move">＋ Mover lote</button>` : ""}${psCanLabor() ? `<button data-psnew="labor">＋ Labor</button><button data-psnew="aforo">＋ Aforo</button><button data-psnew="rain">＋ Lluvia</button>` : ""}</div>` : ""}
     <div class="rpk" style="margin-bottom:14px"><div><b>${act.length}</b><span>potreros · ${ha.toLocaleString("es-CO", { maximumFractionDigits:1 })} ha</span></div>
       <div><b>${busy}</b><span>ocupados hoy</span></div><div><b>${ready}</b><span>con ≥ ${PS_TARGET} d de descanso</span></div>
@@ -1698,6 +1700,132 @@ function renderPastos(){
         <span><i style="background:var(--s2)"></i>&lt; ${PS_TARGET} d</span><span><i style="background:var(--s0)"></i>listo (≥ ${PS_TARGET} d)</span></div>`}</div>
     <div class="card" id="psMapBox"><b>🗺️ Mapa</b><div class="sub">Cargando…</div></div>`;
   renderMap($("psMapBox"));
+}
+// ── Pastos · 🧪 Dosificación: dosis estándar por hectárea de cada producto y cálculo para los potreros escogidos ──
+// La fumigadora de la finca (600 L ≈ 3 fanegadas) da los litros de agua por hectárea; con el área de cada potrero se
+// calcula cuánto producto va, cuánta agua y cuántas fumigadoras (con la mezcla de cada una). 1 fanegada = 6.400 m².
+const PS_FG = 0.64;   // hectáreas por fanegada
+let psView = "map", psDz = { farm:null, doses:null, cfg:null, prods:[], pads:[], predio:"", edit:null };
+const psDoseCan = () => isMain() || myProfile==="Gerente";
+const psNf = (v, d) => (+v || 0).toLocaleString("es-CO", { maximumFractionDigits:d });
+const psIsLiquid = u => /^(ml|l|cc|lt|litro)/i.test(u || "");
+function psAmt(v, unit){
+  const u = (unit || "").toLowerCase();
+  if (u==="ml") return v >= 1000 ? `${psNf(v/1000, 2)} L` : `${psNf(Math.round(v), 0)} mL`;
+  if (u==="bulto") return `${psNf(v, 1)} bulto${Math.round(v*10)/10===1 ? "" : "s"}`;
+  return `${psNf(v, 2)} ${unit || ""}`.trim();
+}
+const psRoundQty = (v, unit) => (unit || "").toLowerCase()==="ml" ? Math.round(v) : (unit || "").toLowerCase()==="bulto" ? Math.round(v*10)/10 : Math.round(v*100)/100;
+async function psDoseLoad(){
+  const key = `psDose:${psFarm}`;
+  if (navigator.onLine){
+    const [d, c] = await Promise.all([sb.from("spray_doses").select("*"), sb.from("spray_config").select("*").eq("farm_id", psFarm).maybeSingle()]);
+    if (!d.error) jset(key, { doses:d.data || [], cfg:c.data || null });
+    else { psDz.err = /does not exist|schema cache/i.test(d.error.message) ? "Falta correr la parte de DOSIFICACIÓN de SQL/crear_potreros.sql." : d.error.message; }
+    await hsCatalog();
+  }
+  const x = jget(key, { doses:[], cfg:null });
+  psDz.farm = psFarm; psDz.doses = x.doses; psDz.cfg = x.cfg;
+}
+async function psDoseRender(head){
+  if (!psDz.doses || psDz.farm!==psFarm){
+    $("psBody").innerHTML = head + `<div class="card"><div class="empty">Cargando dosis…</div></div>`;
+    psDz.pads = []; psDz.prods = []; await psDoseLoad();
+  }
+  const cfg = psDz.cfg || { tank_l:600, tank_fg:3 }, haTank = cfg.tank_fg*PS_FG, lHa = cfg.tank_l/haTank;
+  const sup = c => hsSupply(c) || { code:c, name:c, unit:"" };
+  const doses = Object.fromEntries((psDz.doses || []).map(d=>[d.supply_code, d]));
+  const withDose = Object.keys(doses).sort((a, b)=>sup(a).name.localeCompare(sup(b).name));
+  psDz.prods = psDz.prods.filter(c=>doses[c]);
+  const all = psList.filter(p=>p.active && !p.merged_into), predios = [...new Set(all.map(p=>p.predio))].sort();
+  if (!psDz.predio || !predios.includes(psDz.predio)) psDz.predio = predios[0] || "";
+  const pads = psDz.pads.map(id=>all.find(p=>p.id===id)).filter(Boolean);
+  const haOf = p => (+p.area_m2 || 0)/1e4, ha = pads.reduce((a, p)=>a + haOf(p), 0), noArea = pads.filter(p=>!p.area_m2);
+  const liq = psDz.prods.filter(c=>psIsLiquid(sup(c).unit)), tanks = ha/haTank, full = Math.floor(tanks + 1e-9), rest = tanks - full;
+  const can = psDoseCan();
+  // productos: cantidad por ha, total, por fumigadora
+  const prodRows = psDz.prods.map(c=>{ const d = +doses[c].dose_ha, u = sup(c).unit;
+    return `<tr><td><b>${esc(sup(c).name)}</b></td><td>${psAmt(d, u)}</td><td><b>${psAmt(d*ha, u)}</b></td><td>${psIsLiquid(u) ? psAmt(d*haTank, u) : "—"}</td></tr>`; }).join("");
+  const mix = (f, lab) => liq.length ? `<div style="margin-top:6px"><b>${lab}</b> (${psNf(cfg.tank_l*f, 0)} L de agua): ${liq.map(c=>`${esc(sup(c).name)} <b>${psAmt(+doses[c].dose_ha*haTank*f, sup(c).unit)}</b>`).join(" + ")}</div>` : "";
+  const padRows = pads.map(p=>{ const h = haOf(p);
+    return `<div class="hscard" style="margin-top:6px"><b>${esc(psName(p))}</b> <span class="sub">· ${h ? `${psNf(h, 2)} ha (${psNf(h/PS_FG, 1)} fanegadas)` : "sin área"}${h && liq.length ? ` · agua ${psNf(h*lHa, 0)} L (${psNf(h/haTank, 2)} fumigadora${Math.abs(h/haTank - 1) < 0.005 ? "" : "s"})` : ""}</span>
+      ${h && psDz.prods.length ? `<div class="sub">${psDz.prods.map(c=>`${esc(sup(c).name)} ${psAmt(+doses[c].dose_ha*h, sup(c).unit)}`).join(" · ")}</div>` : ""}</div>`; }).join("");
+  const cat = hsCatGet().supplies.filter(x=>x.active!==false && PS_SUPPLY.test(x.category || "")).sort((a, b)=>(a.category || "").localeCompare(b.category || "") || a.name.localeCompare(b.name));
+  const ed = psDz.edit || psDz.draft;
+  $("psBody").innerHTML = head + `${psDz.err ? `<div class="warn" style="margin-bottom:10px">${esc(psDz.err)}</div>` : ""}
+    <div class="card"><b>🚿 Fumigadora de la finca</b>
+      <div class="sub" style="margin-top:4px">${psNf(cfg.tank_l, 0)} L rinden ${psNf(cfg.tank_fg, 1)} fanegadas (${psNf(haTank, 2)} ha) → <b>${psNf(lHa, 0)} L de agua por hectárea</b> (${psNf(lHa*PS_FG, 0)} L por fanegada)</div>
+      ${can ? `<div class="row" style="gap:6px;margin-top:8px;align-items:center;flex-wrap:wrap"><input id="dzTankL" inputmode="decimal" value="${esc(cfg.tank_l)}" style="flex:0 0 80px"><span class="sub">L rinden</span>
+        <input id="dzTankFg" inputmode="decimal" value="${esc(cfg.tank_fg)}" style="flex:0 0 70px"><span class="sub">fanegadas</span><button class="btn ghost" data-dzcfg="1" style="width:auto">Guardar</button></div>` : ""}</div>
+    <div class="card"><b>🧮 Calcular</b>
+      <div class="sub" style="margin-top:6px">1 · Productos</div>
+      <div class="chips sm">${withDose.map(c=>`<button class="${psDz.prods.includes(c) ? "on" : ""}" data-dzprod="${esc(c)}">${esc(sup(c).name)}</button>`).join("") || `<span class="sub">Todavía no hay dosis estándar: agrégalas abajo.</span>`}</div>
+      <div class="sub" style="margin-top:8px">2 · Potreros</div>
+      <div class="chips sm ckpan" style="padding:0"><div class="chips sm">${predios.map(p=>`<button class="${psDz.predio===p ? "on" : ""}" data-dzpr="${esc(p)}">${esc(p)}</button>`).join("")}</div></div>
+      <div class="psgrid">${all.filter(p=>p.predio===psDz.predio).sort((a, b)=>byNumTxt(a.number, b.number)).map(p=>
+        `<button class="pstile ${psDz.pads.includes(p.id) ? "sel" : ""}" data-dzpick="${p.id}" style="--c:var(--line)"><b>${esc(p.number)}</b><span>${p.area_m2 ? psNf(haOf(p), 1) + " ha" : "—"}</span></button>`).join("")}</div>
+      <div class="row" style="gap:8px;margin-top:4px"><button class="lnk" data-dzallp="1">Todos los de ${esc(psDz.predio)}</button>${psDz.pads.length ? `<button class="lnk" data-dzclr="1">Quitar todos (${psDz.pads.length})</button>` : ""}</div>
+      ${pads.length && psDz.prods.length ? `<div class="hscard" style="margin-top:10px;border-left:4px solid var(--accent)">
+          <div><b>${pads.length} potrero${pads.length===1 ? "" : "s"} · ${psNf(ha, 2)} ha (${psNf(ha/PS_FG, 1)} fanegadas)</b></div>
+          ${liq.length ? `<div>Agua: <b>${psNf(ha*lHa, 0)} L</b> = <b>${psNf(tanks, 1)} fumigadoras</b> de ${psNf(cfg.tank_l, 0)} L</div>` : ""}
+          ${noArea.length ? `<div class="sub" style="color:var(--s4)">Sin área (no se cuentan): ${noArea.map(p=>esc(psName(p))).join(", ")}</div>` : ""}
+          <table class="ivt" style="font-size:13px;margin-top:6px"><tr><th>Producto</th><th>Por ha</th><th>Total</th><th>Por fumigadora</th></tr>${prodRows}</table>
+          ${liq.length && full ? mix(1, `Cada fumigadora llena (${full})`) : ""}${liq.length && rest > 0.05 ? mix(rest, `La última, ${psNf(rest, 2)} de fumigadora`) : ""}
+          ${psCanLabor() ? `<button class="btn" data-dzreg="1" style="margin-top:10px">🧪 Registrar la labor con estas cantidades</button>` : ""}
+          <div class="sub" style="margin-top:4px">Es aproximado: depende de cómo rinda la fumigadora en cada potrero.</div></div>
+        ${padRows}` : `<div class="sub" style="margin-top:8px">Escoge al menos un producto y un potrero.</div>`}</div>
+    <div class="card"><b>📋 Dosis estándar</b> <span class="sub">· por hectárea</span>
+      <table class="ivt" style="font-size:13px;margin-top:6px"><tr><th>Producto</th><th>Por ha</th><th>Por fanegada</th><th>Por fumigadora</th>${can ? "<th></th>" : ""}</tr>
+        ${withDose.map(c=>{ const d = +doses[c].dose_ha, u = sup(c).unit;
+          return `<tr><td><b>${esc(sup(c).name)}</b>${doses[c].notes ? `<div class="sub">${esc(doses[c].notes)}</div>` : ""}</td><td>${psAmt(d, u)}</td><td>${psAmt(d*PS_FG, u)}</td><td>${psIsLiquid(u) ? psAmt(d*haTank, u) : "—"}</td>
+            ${can ? `<td style="white-space:nowrap"><button class="lnk" data-dzedit="${esc(c)}">editar</button> <button class="del" data-dzdel="${esc(c)}">✕</button></td>` : ""}</tr>`; }).join("")
+        || `<tr><td colspan="5" class="sub">Sin dosis todavía</td></tr>`}</table>
+      ${can ? `<div class="hsform" style="margin-top:10px"><b>${ed ? "✏️ Cambiar dosis" : "＋ Agregar dosis"}</b>
+        <div class="row" style="margin-top:6px"><input class="supq" placeholder="🔍 nombre" autocomplete="off" style="flex:0 0 34%;min-width:0;padding:8px"><select data-supsel="1" id="dzSup" style="flex:1">${`<option value="">— Producto —</option>` + cat.map(m=>`<option value="${esc(m.code)}" ${ed?.code===m.code ? "selected" : ""}>${esc(m.name)} (${esc(m.unit || "")})</option>`).join("")}</select></div>
+        <div class="row" style="gap:6px;margin-top:6px;align-items:center"><input id="dzDose" inputmode="decimal" placeholder="cantidad" value="${esc(ed?.val ?? "")}" style="flex:0 0 100px">
+          <select id="dzBase" style="flex:1">${[["tank", `por fumigadora (${psNf(cfg.tank_l, 0)} L)`], ["fg", "por fanegada"], ["ha", "por hectárea"]].map(([v, t])=>`<option value="${v}" ${(ed?.base || "tank")===v ? "selected" : ""}>${t}</option>`).join("")}</select></div>
+        <input id="dzNote" placeholder="Nota (opcional): para qué, cada cuánto…" value="${esc(ed?.notes || "")}" style="margin-top:6px">
+        <div class="sub" style="margin-top:4px">La cantidad va en la unidad del inventario (mL, bulto…). Se guarda por hectárea.</div>
+        <div class="row" style="gap:8px;margin-top:6px"><button class="btn" data-dzsave="1">Guardar dosis</button>${ed ? `<button class="btn ghost" data-dzcancel="1">Cancelar</button>` : ""}</div></div>` : ""}</div>`;
+}
+// clics de la pestaña Dosificación (devuelve true si era de aquí)
+async function psDoseClick(t){
+  const q = a => t.closest(`[${a}]`)?.getAttribute(a), rer = () => { renderPastos(); return true; };
+  const tog = (arr, v) => arr.includes(v) ? arr.filter(x=>x!==v) : [...arr, v];
+  // lo que se va escribiendo en "Agregar dosis" no se pierde al tocar otra cosa
+  if ($("dzDose")){ const dr = { code:$("dzSup").value, val:$("dzDose").value, base:$("dzBase").value, notes:$("dzNote").value };
+    if (psDz.edit) Object.assign(psDz.edit, dr); else psDz.draft = dr; }
+  if (q("data-dzprod")!=null){ psDz.prods = tog(psDz.prods, q("data-dzprod")); return rer(); }
+  if (q("data-dzpr")!=null){ psDz.predio = q("data-dzpr"); return rer(); }
+  if (q("data-dzpick")!=null){ psDz.pads = tog(psDz.pads, +q("data-dzpick")); return rer(); }
+  if (q("data-dzallp")){ psList.filter(p=>p.active && !p.merged_into && p.predio===psDz.predio).forEach(p=>{ if (!psDz.pads.includes(p.id)) psDz.pads.push(p.id); }); return rer(); }
+  if (q("data-dzclr")){ psDz.pads = []; return rer(); }
+  if (q("data-dzcancel")){ psDz.edit = null; psDz.draft = null; return rer(); }
+  if (q("data-dzedit")!=null){ const c = q("data-dzedit"), d = psDz.doses.find(x=>x.supply_code===c);
+    psDz.edit = { code:c, val:String(+(+d.dose_ha).toFixed(3)), base:"ha", notes:d.notes || "" }; rer(); $("dzDose")?.scrollIntoView({ block:"center" }); return true; }
+  if (q("data-dzdel")!=null){ const c = q("data-dzdel"); if (!confirm(`¿Quitar la dosis estándar de ${hsSupply(c)?.name || c}?`)) return true;
+    const { error } = await sb.from("spray_doses").delete().eq("supply_code", c); if (error) toast("No se pudo: " + error.message);
+    psDz.doses = null; return rer(); }
+  if (q("data-dzcfg")){ const L = +String($("dzTankL").value).replace(",", "."), F = +String($("dzTankFg").value).replace(",", ".");
+    if (!(L > 0) || !(F > 0)) { toast("Escribe los litros y las fanegadas"); return true; }
+    const { error } = await sb.from("spray_config").upsert({ farm_id:psFarm, tank_l:L, tank_fg:F, updated_at:new Date().toISOString() });
+    if (error){ toast("No se pudo guardar: " + error.message); return true; }
+    toast("Fumigadora guardada ✓"); psDz.doses = null; return rer(); }
+  if (q("data-dzsave")){ const code = $("dzSup").value, v = +String($("dzDose").value).replace(",", "."), base = $("dzBase").value;
+    if (!code || !(v > 0)){ toast("Escoge el producto y la cantidad"); return true; }
+    const cfg = psDz.cfg || { tank_l:600, tank_fg:3 }, dose_ha = base==="ha" ? v : base==="fg" ? v/PS_FG : v/(cfg.tank_fg*PS_FG);
+    const { error } = await sb.from("spray_doses").upsert({ supply_code:code, dose_ha:Math.round(dose_ha*1000)/1000, notes:$("dzNote").value.trim() || null, updated_at:new Date().toISOString() });
+    if (error){ toast(/row-level|permission/i.test(error.message) ? "Solo el administrador o el gerente pueden cambiar las dosis" : "No se pudo guardar: " + error.message); return true; }
+    toast("Dosis guardada ✓"); psDz.edit = null; psDz.draft = null; psDz.doses = null; if (!psDz.prods.includes(code)) psDz.prods.push(code); return rer(); }
+  if (q("data-dzreg")){   // abre "Registrar labor" con los potreros y las cantidades calculadas (descuenta del inventario)
+    const doses = Object.fromEntries(psDz.doses.map(d=>[d.supply_code, d]));
+    const pads = psDz.pads.map(id=>psList.find(p=>p.id===id)).filter(p=>p?.area_m2), ha = pads.reduce((a, p)=>a + p.area_m2/1e4, 0);
+    psOpen("labor"); const s = psSheet;
+    s.act = psDz.prods.some(c=>psIsLiquid(hsSupply(c)?.unit)) ? "FUMIGADA" : "ABONADA";
+    s.pads = pads.map(p=>p.id); s.predio = pads[0]?.predio || s.predio;
+    s.items = psDz.prods.map(c=>({ code:c, qty:psRoundQty(+doses[c].dose_ha*ha, hsSupply(c)?.unit) }));
+    renderPsSheet(); return true; }
+  return false;
 }
 function psAvgRest(list){ const r = list.map(psRest).filter(x=>x!=null && x > 1); return r.length ? Math.round(r.reduce((a,b)=>a+b, 0)/r.length) : "—"; }
 
@@ -1951,10 +2079,12 @@ async function flushPastos(){
   if (ob.length > left.length) psData = {};
 }
 $("psBody").addEventListener("change", async e=>{ if (e.target.name==="psTabR"){ psTab = e.target.value; renderPastos(); }
+  if (e.target.name==="psView"){ psView = e.target.value; renderPastos(); return; }
   if (e.target.id==="psLabSel"){ psLab = e.target.value; if (psLab) await psLoadLast(psLab); renderPastos(); } });
 $("psBody").addEventListener("click", async e=>{
   const t = e.target, q = attr => t.closest(`[${attr}]`)?.getAttribute(attr);
   if (t.closest(".leaflet-container") && !t.closest("a")) return;
+  if (psView==="dose" && await psDoseClick(t)) return;
   if (q("data-psnew")){ psOpen(q("data-psnew"), q("data-pid")); return; }
   if (q("data-pspr")!=null){ psPredio = q("data-pspr"); renderPastos(); return; }
   if (q("data-pssort")){ psSort = q("data-pssort"); renderPastos(); return; }
@@ -6523,7 +6653,7 @@ async function cowPlans(d){
     ${pend.map(line).join("") || `<div class="sub" style="margin-top:4px">Nada programado</div>`}
     ${done.length ? `<details style="margin-top:6px"><summary class="sub">Hechos (${done.length})</summary>${done.map(line).join("")}</details>` : ""}
     ${c.active && (plCan() || canDo("chequeo")) ? `<div class="addbar" style="margin-top:8px">${plCan() ? `<button data-plnew>📅 Programar</button>` : ""}${canDo("chequeo") ? `<button data-ckgo="${esc(c.id)}|${c.farm_id}">🩺 Ejecutar</button>` : ""}</div>
-      <div class="sub" style="margin-top:4px">Programar: queda para una fecha. Ejecutar: registrar hoy un EXREP, ECO, ECO2, DPR, DP5 o DPSEC como en el chequeo.</div>` : ""}</div>`;
+      <div class="sub" style="margin-top:4px">Programar: queda para una fecha. Ejecutar: registrar ya un EXREP, ECO, ECO2, DPR, DP5 o DPSEC de esta vaca.</div>` : ""}</div>`;
 }
 function plOpen(){
   const d = lastCowData, c = d.cow;
@@ -6559,10 +6689,100 @@ function plOpen(){
     else { toast("Programado ✓"); cowPlans(lastCowData); }
   });
 }
+// ── Ejecutar (hoja de vida): registrar un EXREP, ECO, ECO2, DPR, DP5 o DPSEC de esta vaca sin abrir el Chequeo ──
+// Mismo formulario y mismas reglas del chequeo (resultado, Ovsynch / OVS2, tratamientos, ME automática, lactoinducción,
+// descarte); al guardar sube de una vez. Necesita señal.
+async function cvCheckOpen(){
+  const d = lastCowData, c = d?.cow; if (!c) return;
+  if (!navigator.onLine) return toast("Necesitas señal para registrar el examen");
+  await hsCatalog();
+  const cc = { id:c.id, pen:c.pen, status:c.status, lc:c.last_calving, ln:c.lactation_num, sex:c.sex, bd:c.birth_date,
+    ev:(d.events || []).filter(e=>!c.birth_date || e.event_date >= c.birth_date).map(e=>({ t:e.event_type, d:e.event_date, r:noSex(e.result), c:e.category, b:e.bull, w:e.weight_kg }))
+      .sort((a, b)=>a.d.localeCompare(b.d)) };
+  ckDOver = today();
+  const heifer = !(c.lactation_num > 0) && !c.last_calving && !cc.ev.some(e=>e.t==="calving");
+  const sugCat = () => { const k = ckClassify(cc, cc.ev, ckDOver); return k ? (k.cat==="REPETIR" ? k.stage : k.cat) : "EXREP"; };
+  let r = { cat:sugCat(), heifer };
+  const setG = () => { delete r.g; delete r.sv;
+    if (r.cat==="EXREP") return;
+    const sv = cc.ev.filter(x=>x.t==="service" && x.d <= ckDOver).pop(); if (sv){ r.g = days(sv.d, ckDOver); r.sv = sv.d; } };
+  setG();
+  const bg = document.createElement("div"); bg.className = "sheet-bg"; document.body.appendChild(bg);
+  const close = () => { ckDOver = null; bg.remove(); };
+  const render = () => {
+    const top = bg.querySelector(".sheet")?.scrollTop || 0, D = ckDOver;
+    const calv = cc.ev.filter(e=>e.t==="calving" && e.d <= D), C = calv.length ? calv[calv.length-1].d : cc.lc;
+    const sv = cc.ev.filter(e=>e.t==="service" && e.d > (C || "0") && e.d <= D).pop();
+    bg.innerHTML = `<div class="sheet hsform" data-ck="${esc(c.id)}"><h3>🩺 Ejecutar · vaca ${esc(c.id)}</h3>
+      <div class="sub">${C ? `${days(C, D)} días de parida` : "Novilla"}${sv ? ` · servida hace ${days(sv.d, D)} días (${fmt(sv.d)}${sv.b ? ", toro " + esc(sv.b) : ""})` : " · sin servicio"}</div>
+      <label>Fecha</label><input type="date" id="cvDate" value="${D}" max="${today()}">
+      <label>Examen</label><div class="chips">${["EXREP","ECO1","ECO2","DPR","DP5","DPSEC"].map(x=>`<button type="button" class="${r.cat===x ? "on" : ""}" data-cvcat="${x}">${x}</button>`).join("")}</div>
+      ${ckPanel(cc, { cat:r.cat }, r)}
+      <div class="err" id="cvErr"></div>
+      <div class="btns"><button type="button" class="btn ghost" data-close>Cancelar</button></div></div>`;
+    bg.querySelector(".sheet").scrollTop = top;
+  };
+  const err = m => { const x = bg.querySelector("#cvErr"); if (x) x.textContent = m; };
+  const toggle = (arr, v) => (arr || []).includes(v) ? arr.filter(x=>x!==v) : [...(arr || []), v];
+  async function save(btn){
+    r.res = ckResTxt(r); if (!r.res) return err("Escoge el resultado.");
+    if (!navigator.onLine) return err("Sin señal: no se pudo guardar.");
+    btn.disabled = true; const D = ckDOver;
+    const { error } = await sb.from("cow_events").insert(ckRows(D, c.id, r));
+    if (error){ btn.disabled = false; return err(/row-level|permission/i.test(error.message) ? "No tienes permiso para registrar en esta finca." : "No se pudo guardar: " + error.message); }
+    await ckCowExtras(c.farm_id, D, c.id, r);
+    // si ese día hubo chequeo en la finca, el reporte reproductivo se actualiza
+    const { data:rc } = await sb.from("repro_checks").select("id").eq("farm_id", c.farm_id).eq("check_date", D).maybeSingle();
+    if (rc){ const rr = await sb.rpc("repro_check_refresh", { p_farm:c.farm_id, p_date:D }); if (!rr.error) rpRows = null; }
+    close(); toast(`${r.cat} de la ${c.id} guardado ✓ (pendiente de pasar a Interherd)`); loadCow(c.id); loadPending();
+  }
+  bg.addEventListener("click", e=>{
+    const t = e.target, q = a => t.closest(`[${a}]`)?.getAttribute(a);
+    if (t===bg || t.closest("[data-close]")) return close();
+    if (q("data-cvcat")){ r = { cat:q("data-cvcat"), heifer, note:r.note }; setG(); return render(); }
+    if (t.closest("[data-cksave]")) return save(t.closest("[data-cksave]"));
+    if (t.closest("[data-ckclear]")){ r = { cat:r.cat, heifer }; setG(); return render(); }
+    if (t.closest("[data-cklacto]")){ if (r.lacto) delete r.lacto; else r.lacto = { date:ckDOver }; return render(); }
+    if (t.closest("[data-cksale]")){
+      if (r.sale) delete r.sale; else { const sv0 = cc.ev.filter(x=>x.t==="service" && x.d <= ckDOver).pop();
+        const dry = /(^|\/)PR(\/|$)/.test(c.status || "") && sv0 && !ckNegMain(r.cat, r.main) ? addDays(sv0.d, 283 - 60) : null;
+        r.sale = { date: dry && dry > today() ? dry : addDays(today(), 30), note:"" }; }
+      return render(); }
+    const res = q("data-res");
+    if (res!=null){
+      if (r.cat==="EXREP") r.sel = toggle(r.sel, res);
+      else { r.main = r.main===res ? null : res; if (!ckNegMain(r.cat, r.main)) delete r.fol;
+        const dx0 = cc.ev.filter(x=>r.sv && x.d > r.sv && x.d < ckDOver && ["ultrasound","preg_check","embryo_loss","abortion"].includes(x.t)).pop();
+        r.wasPos = !!(dx0 && ckIsPos(dx0)); }
+      return render(); }
+    const fol = q("data-fol");
+    if (fol!=null){ r.fol = toggle(r.fol, fol);
+      if (fol==="OVS2") r.fol = r.fol.filter(x=>x!=="OVSYNCH"); else if (fol==="OVSYNCH") r.fol = r.fol.filter(x=>x!=="OVS2");
+      return render(); }
+    const ext = q("data-ext");
+    if (ext!=null){ r.extras = (r.extras || []).some(x=>ckTxKey(x)===ext) ? r.extras.filter(x=>ckTxKey(x)!==ext) : [...(r.extras || []), ext]; return render(); }
+  });
+  bg.addEventListener("change", e=>{
+    const t = e.target;
+    if (t.id==="cvDate"){ ckDOver = t.value && t.value <= today() ? t.value : today(); setG(); delete r.wasPos; return render(); }
+    if (t.dataset.ckovs){ (r.ovs ||= {})[t.dataset.ckovs] = t.value; return; }
+    if (t.dataset.cksalek && r.sale){ r.sale[t.dataset.cksalek] = t.value; return; }
+    if (t.dataset.cklactod && r.lacto){ r.lacto.date = t.value; return; }
+    const k = t.dataset.cktx;
+    if (k){ (r.tx ||= {})[k] = { ...(r.tx[k] || {}), [t.dataset.k]: t.type==="checkbox" ? t.checked : t.value };
+      if (t.dataset.k!=="dose" || t.tagName==="SELECT") render(); }
+  });
+  bg.addEventListener("input", e=>{
+    const t = e.target;
+    if (t.matches('input[data-cktx][data-k="dose"]')){ const k = t.dataset.cktx; (r.tx ||= {})[k] = { ...(r.tx[k] || {}), dose:t.value }; return; }
+    if (t.matches("[data-cknote]")) r.note = t.value;
+  });
+  render();
+}
 document.addEventListener("click", async e=>{
   if (e.target.closest("[data-plnew]")) return plOpen();
   const go = e.target.closest("[data-ckgo]");
-  if (go){ const [id, farm] = go.dataset.ckgo.split("|"); ckGoto = { id, farm:+farm || 1 }; location.hash = "chequeo"; window.scrollTo({ top:0 }); return; }
+  if (go) return cvCheckOpen();
   const uc = e.target.closest("[data-uncull]");
   if (uc && (e.target.closest('.pill[title^="Desc"]') || e.target.closest("[data-uncullbtn]"))){
     const id = uc.dataset.uncull;
@@ -7913,7 +8133,7 @@ function updCheckNet(){
 window.addEventListener("online", ()=>{ updCheckNet(); flushCheck(); });
 window.addEventListener("offline", ()=>updCheckNet());
 
-let ckReady = false, ckGoto = null, ckFromCow = null;   // Ejecutar desde la hoja de vida: { id, farm }
+let ckReady = false;
 function initCheck(){
   updCheckNet();
   if (!ckReady){
@@ -7926,19 +8146,7 @@ function initCheck(){
   }
   $("ckLoad").classList.toggle("hidden", !canDo("chequeo")); $("ckDate").classList.toggle("hidden", !canDo("chequeo"));
   if (navigator.onLine) hsCatalog().then(()=>{ if (ckOpen) ckRender(); });   // insumos para los tratamientos del chequeo
-  if (ckGoto && canDo("chequeo")) return ckOpenCow(ckGoto);
   ckShow();
-}
-async function ckOpenCow(g){
-  ckGoto = null;
-  const r = document.querySelector(`input[name="ckF"][value="${g.farm}"]`); if (r) r.checked = true;
-  jset("ckLast", { farm:g.farm }); $("ckDate").value = today();
-  ckMode = "pad"; ckPad = ""; ckOpen = g.id; ckFromCow = g.id;
-  const p = jget(`ckData:${g.farm}`, null);
-  // sin lista de esa finca, vieja (más de 2 h) o sin esta vaca: se descarga (con señal)
-  if (navigator.onLine && (!p || Date.now() - p.at > 2*36e5 || !p.cows.some(c=>c[0]===g.id))) await ckDownload();
-  else ckShow();
-  if (!ckData?.cows.some(c=>c.id===g.id)) toast(navigator.onLine ? "La vaca no está activa en esa finca" : "Sin señal: descarga la lista del chequeo primero");
 }
 const ckFarmSel = () => +document.querySelector('input[name="ckF"]:checked').value;
 
@@ -7995,7 +8203,7 @@ function ckLoadData(farm){
 }
 
 function ckShow(){
-  const farm = ckFarmSel(), D = $("ckDate").value || today();
+  const farm = ckFarmSel(), D = ckD();
   ckData = ckLoadData(farm);
   if (!ckData){ $("ckInfo").textContent = canDo("chequeo") ? "Descarga la lista con señal antes de ir al corral." : "";
     ckRes = {}; if (!canDo("chequeo") || ckMode==="tx" || ckMode==="res") return ckRender(); $("ckBody").innerHTML = ""; return; }
@@ -8006,7 +8214,7 @@ function ckShow(){
   ckLoadLists().then(ch=>{ if (ckOpen || ch) ckRender(); });
 }
 function ckList(){
-  const D = $("ckDate").value || today();
+  const D = ckD();
   const list = ckData.cows.map(c=>({ c, k:ckClassify(c, c.ev, D) })).filter(x=>x.k);
   // EXREP programados para esa fecha o antes (si no se le ha hecho examen desde que se programó)
   // programados en la hoja de vida: EXREP, ECO, ECO2, DPR, DP5 o DPSEC (la etapa programada manda sobre la calculada)
@@ -8132,7 +8340,7 @@ function ckRenderPad(){
     <input id="ckQ" inputmode="numeric" autocomplete="off" autocapitalize="characters" placeholder="N° de vaca" value="${esc(ckPad)}" style="font-size:26px;font-weight:800">
     <div class="sub" style="margin-top:4px">Escribe el número y toca la vaca (Enter abre la primera). Con letras: cambia el teclado del celular.</div>
     <div class="cksug" id="ckSug">${ckSugHtml(list, doneN)}</div>
-    <div class="mkbar" style="position:static"><div>${fmt($("ckDate").value || today())}</div><button class="btn" id="ckUp" style="width:auto">Subir resultados</button></div>
+    <div class="mkbar" style="position:static"><div>${fmt(ckD())}</div><button class="btn" id="ckUp" style="width:auto">Subir resultados</button></div>
   </div>`;
   const q = $("ckQ"); q.focus(); q.setSelectionRange(q.value.length, q.value.length);
 }
@@ -8147,7 +8355,7 @@ function ckSugHtml(list, doneN){
 }
 // ficha de la vaca: lo de la última lactancia en grande y los botones del chequeo
 function ckCard(id, list){
-  const c = ckFind(id) || { id, pen:"—", ev:[], milk:[] }, D = $("ckDate").value || today();
+  const c = ckFind(id) || { id, pen:"—", ev:[], milk:[] }, D = ckD();
   const item = list.find(x=>x.c.id===id), r = ckRes[id] || {};
   const cat = r.cat || (item ? (item.k.cat==="REPETIR" ? item.k.stage : item.k.cat) : null);
   const calv = c.ev.filter(e=>e.t==="calving" && e.d <= D), C = calv.length ? calv[calv.length-1].d : c.lc;
@@ -8196,7 +8404,7 @@ function ckMoreInfo(c){
 }
 let ckPenF = "";   // filtro por lote en la lista
 function ckRenderList(){
-  const list = ckList(), D = $("ckDate").value || today();
+  const list = ckList(), D = ckD();
   const counts = {}; list.forEach(x=>counts[x.k.cat] = (counts[x.k.cat]||0) + 1);
   const pens = [...new Set(list.map(x=>x.c.pen||"—"))].sort(byNum);
   if (ckPenF && !pens.includes(ckPenF)) ckPenF = "";
@@ -8228,7 +8436,7 @@ function ckRenderList(){
 }
 // vacía con más de 250 días de parida: se puede programar lactoinducción o descarte (Juan, 11/11/2026). Devuelve los días o 0
 function ckLongOpen(c, r){
-  const D = $("ckDate").value || today(), calv = (c.ev || []).filter(e=>e.t==="calving" && e.d <= D), C = calv.length ? calv[calv.length-1].d : c.lc;
+  const D = ckD(), calv = (c.ev || []).filter(e=>e.t==="calving" && e.d <= D), C = calv.length ? calv[calv.length-1].d : c.lc;
   if (!C) return 0;
   const del = days(C, D), pos = /^(Positivo|Cargada)/.test(r.main || "");
   const preg = /(^|\/)PR(\/|$)/.test(c.status || "") && !ckNegMain(r.cat, r.main) && r.cat!=="EXREP";
@@ -8265,7 +8473,7 @@ function ckPanel(c, k, r){
       ${r.lacto ? `<div class="hscard" style="margin-top:6px"><b>🍼 Lactoinducción programada</b>
         <div class="row" style="gap:6px;margin-top:6px;align-items:center"><span class="sub" style="flex:0 0 60px">Inicia</span><input type="date" data-cklactod="1" value="${esc(r.lacto.date || "")}" style="flex:1;min-width:0;padding:8px"></div>
         <div class="sub" style="margin-top:4px">Sale del chequeo y queda programada en la hoja de vida.</div></div>` : ""}` : ""}
-    ${ckOvs(r) ? ckOvsHtml(r, $("ckDate").value || today()) : ""}
+    ${ckOvs(r) ? ckOvsHtml(r, ckD()) : ""}
     ${canDo("vacas_salida") || isMain() ? `${ckLongOpen(c, r) ? "" : `<div class="chips sm" style="margin-top:8px"><button class="${r.sale ? "on" : ""}" data-cksale="1">🚪 Programar venta</button></div>`}
       ${r.sale ? `<div class="hscard" style="margin-top:6px"><b>🚪 ${ckLongOpen(c, r) ? "Descarte" : "Venta"} programada</b>
         <div class="row" style="gap:6px;margin-top:6px;align-items:center"><span class="sub" style="flex:0 0 60px">Fecha</span><input type="date" data-cksalek="date" value="${esc(r.sale.date || "")}" min="${today()}" style="flex:1;min-width:0;padding:8px"></div>
@@ -8305,7 +8513,7 @@ function ckTxVal(k, r){
 // días (después del chequeo) de cada aplicación
 const ckTxDays = v => { const first = v.now ? 0 : 1; return Array.from({ length:Math.max(1, v.n) }, (_, i)=>first + i*v.every); };
 function ckTxPlanTxt(k, v){
-  const ds = ckTxDays(v), pend = ds.filter(x=>x > 0).length, last = addDays($("ckDate").value || today(), ds[ds.length - 1]);
+  const ds = ckTxDays(v), pend = ds.filter(x=>x > 0).length, last = addDays(ckD(), ds[ds.length - 1]);
   return `${v.n > 1 ? `${v.n} ${k==="Baño" ? "baños" : "aplicaciones"} ${v.every > 1 ? "día de por medio" : k==="Baño" ? "seguidos" : "seguidas"}` : k==="Baño" ? "1 baño" : "1 aplicación"} · `
     + (ds[0]===0 ? "la primera hoy" : "pendiente, empieza mañana") + (pend && ds[0]===0 ? ` · quedan ${pend} pendiente${pend===1 ? "" : "s"} (hasta ${fmt(last)})` : ds[0]!==0 && ds.length > 1 ? ` (hasta ${fmt(last)})` : "");
 }
@@ -8373,6 +8581,8 @@ function ckOvsHtml(r, D){
     <div class="sub">Cada dosis se descuenta del inventario el día que toca. Si se insemina antes, las que faltan se cancelan solas.</div></div>`;
 }
 let ckLists = {};
+let ckDOver = null;   // fecha del formulario "Ejecutar" de la hoja de vida (mientras está abierto)
+const ckD = () => ckDOver || $("ckDate").value || today();
 async function ckLoadLists(){
   const farm = ckFarmSel();
   if (navigator.onLine){
@@ -8392,7 +8602,7 @@ async function ckLoadLists(){
   }
   return false;
 }
-function ckSave(){ jset(ckKey(ckFarmSel(), $("ckDate").value || today()), ckRes); }
+function ckSave(){ jset(ckKey(ckFarmSel(), ckD()), ckRes); }
 $("ckBody").addEventListener("click", e=>{
   if (e.target.closest("#lsRp")){ const t = e.target, q = a => t.closest(`[${a}]`)?.getAttribute(a);
     if (q("data-lsrpf")!=null){ lsRp.f = q("data-lsrpf"); return lsRpRender(); }
@@ -8406,7 +8616,7 @@ $("ckBody").addEventListener("click", e=>{
     if (v==="DEL") ckPad = ckPad.slice(0, -1); else if (v==="ABC") ckAbc = !ckAbc; else ckPad += v;
     ckRender(); return; }
   const pk = e.target.closest("[data-pick]"); if (pk){ ckOpen = pk.dataset.pick; ckRender(); window.scrollTo({ top:0 }); return; }
-  if (e.target.closest("[data-ckback]")){ ckOpen = null; ckPad = ""; ckFromCow = null; ckRender(); return; }
+  if (e.target.closest("[data-ckback]")){ ckOpen = null; ckPad = ""; ckRender(); return; }
   if (e.target.closest("[data-ckclear]")){
     const id = e.target.closest("[data-ck]").dataset.ck;
     if (!ckRes[id]?.up && confirm(`¿Borrar el resultado de la vaca ${id}?`)){ delete ckRes[id]; ckSave(); toast("Resultado borrado"); ckRender(); }
@@ -8429,18 +8639,18 @@ $("ckBody").addEventListener("click", e=>{
   const sale = e.target.closest("[data-cksale]");
   if (r.up && (res||fol||ext||save||sale)) return;
   if (sale){   // venta: por defecto el secado esperado si está preñada, o en 30 días
-    if (r.sale) delete r.sale; else { const D0 = $("ckDate").value || today(), c0 = ckFind(id), sv0 = c0?.ev.filter(x=>x.t==="service" && x.d <= D0).pop();
+    if (r.sale) delete r.sale; else { const D0 = ckD(), c0 = ckFind(id), sv0 = c0?.ev.filter(x=>x.t==="service" && x.d <= D0).pop();
       const dry = /(^|\/)PR(\/|$)/.test(c0?.status || "") && sv0 && !ckNegMain(r.cat, r.main) ? addDays(sv0.d, 283 - 60) : null;
       r.sale = { date: dry && dry > today() ? dry : addDays(today(), 30), note:"" }; }
     ckSave(); ckRender(); return; }
   { const c0 = ckFind(id); if (c0) r.heifer = !(c0.ln > 0) && !c0.lc && !c0.ev.some(x=>x.t==="calving"); }   // vitaminas: 10 mL novillas
   if (e.target.closest("[data-cklacto]")){ if (r.up) return;
-    if (r.lacto) delete r.lacto; else r.lacto = { date: $("ckDate").value || today() };
+    if (r.lacto) delete r.lacto; else r.lacto = { date: ckD() };
     ckSave(); ckRender(); return; }
   if (item.k.g!=null){ r.g = item.k.g; r.sv = item.k.sv.d; }
   else if (!r.g && /^(ECO|DP)/.test(r.cat||"")){   // agregada a mano: días de gestación desde su último servicio
-    const c = ckFind(id), sv = c?.ev.filter(x=>x.t==="service" && x.d <= ($("ckDate").value || today())).pop();
-    if (sv){ r.g = days(sv.d, $("ckDate").value || today()); r.sv = sv.d; }
+    const c = ckFind(id), sv = c?.ev.filter(x=>x.t==="service" && x.d <= (ckD())).pop();
+    if (sv){ r.g = days(sv.d, ckD()); r.sv = sv.d; }
   }
   const toggle = (arr, v) => (arr||[]).includes(v) ? arr.filter(x=>x!==v) : [...(arr||[]), v];
   if (res){
@@ -8450,7 +8660,7 @@ $("ckBody").addEventListener("click", e=>{
       // tiene el Gestar del resincro: ECO negativa → OVS2 marcado de una vez (se puede quitar)
       else if (/^ECO/.test(r.cat || "") && /^(Negativo|ME)$/.test(r.main) && ckData?.rs?.[id] && !(r.fol || []).length) r.fol = ["OVS2"];
       // 6 · ¿venía con ECO + de este servicio? Si ahora sale negativa es muerte embrionaria
-      const c0 = ckFind(id), D0 = $("ckDate").value || today(), sv0 = r.sv || c0?.ev.filter(x=>x.t==="service" && x.d <= D0).pop()?.d;
+      const c0 = ckFind(id), D0 = ckD(), sv0 = r.sv || c0?.ev.filter(x=>x.t==="service" && x.d <= D0).pop()?.d;
       const dx0 = (c0?.ev || []).filter(x=>sv0 && x.d > sv0 && x.d < D0 && ["ultrasound","preg_check","embryo_loss","abortion"].includes(x.t)).pop();
       r.wasPos = !!(dx0 && ckIsPos(dx0)); }
     ckSave(); ckRender(); return;
@@ -8497,9 +8707,6 @@ $("ckBody").addEventListener("input", e=>{
   const r = ckRes[ckOpen] ||= {}; r.note = e.target.value; ckSave();
 });
 function ckNext(id){
-  // vino de la hoja de vida (Ejecutar): se sube de una vez y vuelve a la vaca
-  if (ckFromCow===id){ ckFromCow = null; toast(`${id} ✓ guardada · subiendo…`); ckOpen = null;
-    return Promise.resolve(ckQueue()).then(()=>{ location.hash = "vaca/" + encodeURIComponent(id); loadCow(id); }); }
   if (ckMode==="pad"){ toast(`${id} ✓ guardada`); ckOpen = null; ckPad = ""; ckRender(); window.scrollTo({ top:0 }); return; }
   const list = ckList().filter(x=>(!ckPenF || (x.c.pen||"—")===ckPenF) && (!ckFilter || (ckFilter==="LATE" ? x.k.late : x.k.cat===ckFilter))), i = list.findIndex(x=>x.c.id===id);
   const nxt = list.slice(i+1).find(x=>!ckRes[x.c.id]?.res);
@@ -8507,7 +8714,7 @@ function ckNext(id){
   if (nxt) document.querySelector(`[data-ck="${CSS.escape(nxt.c.id)}"]`)?.scrollIntoView({ block:"center", behavior:"smooth" });
 }
 function ckQueue(){
-  const key = ckKey(ckFarmSel(), $("ckDate").value || today());
+  const key = ckKey(ckFarmSel(), ckD());
   if (!Object.values(ckRes).some(r=>r.res && !r.up)) return toast("No hay resultados nuevos para subir");
   const ob = jget("ckOutbox", []); if (!ob.includes(key)) { ob.push(key); jset("ckOutbox", ob); }
   return flushCheck();
@@ -8535,6 +8742,41 @@ function ckRows(D, id, r){
   else if (ckAutoLoss(r)==="Aborto") rows.push({ ...base, event_type:"abortion", category:r.cat, comments:`Aborto en ${r.cat} (venía preñada)` });
   return [...rows, ...lacto];
 }
+// lo que acompaña el resultado de una vaca (chequeo o "Ejecutar" en la hoja de vida): tratamientos por día en Salud,
+// lactoinducción, Ovsynch / OVS2 con su inseminación programada y venta (descarte) programada
+async function ckCowExtras(farm, D, id, r){
+  const uid = () => crypto.randomUUID ? crypto.randomUUID() : String(Date.now()) + Math.random();
+  const plan = ckTxPlan(r);
+  if (plan.length){
+    const res = r.cat==="EXREP" ? (r.sel || []).join(" + ") : [r.main, ...(r.fol || [])].filter(Boolean).join(", ");
+    const tx = plan.map(b=>({ client_id:uid(), farm_id:farm, cow_id:id, start_date:addDays(D, b.off), diagnosis:`Chequeo ${r.cat || ""} · ${res || "—"}`,
+      protocol:"Chequeo · " + b.keys.join(" + "), prescribed_by: isAdmin ? "Juan (veterinario)" : "Chequeo", notes:b.txt.join(" + ") + (r.note ? " · " + r.note : "") }));
+    const { data:t, error:e2 } = await sb.from("treatments_cow").insert(tx).select("id,start_date");
+    if (e2 || !t?.length) toast("Los resultados subieron, pero un tratamiento no quedó en Salud: " + (e2?.message || ""));
+    else await sb.from("treatment_items").insert(t.flatMap(x=>(plan.find(b=>addDays(D, b.off)===x.start_date)?.items || [])
+      .map(i=>({ treatment_id:x.id, supply_code:i.code, dose:i.dose, unit:i.unit, route:i.route, every_hours:24, days:1 }))));
+  }
+  if (r.lacto){
+    const { error:e5 } = await sb.from("cow_plans").insert({ cow_id:id, farm_id:farm, plan_type:"otro", due_date:r.lacto.date || D, note:`Lactoinducción · Chequeo ${fmt(D)}` });
+    if (e5) toast(`Los resultados subieron, pero la lactoinducción de la ${id} no se programó: ${e5.message}`);
+  }
+  if (ckOvs(r)){
+    const code = st => st.k==="GnRH" ? (r.ovs?.gnrh || OVS_GNRH[0]) : (r.ovs?.pgf || OVS_PGF[0]), OP = ckOvsPlan(r);
+    const tx = OP.steps.map(st=>({ client_id:uid(), farm_id:farm, cow_id:id, start_date:addDays(D, st.d), diagnosis:"Ovsynch", protocol:"Ovsynch",
+      prescribed_by: isAdmin ? "Juan (veterinario)" : "Chequeo", notes:`Día ${st.n ?? st.d} del ${ckOvsName(r)} (${OP.steps===OVS2_STEPS ? "chequeo" : "inicio"} ${fmt(D)})` }));
+    const { data:t, error:e3 } = await sb.from("treatments_cow").insert(tx).select("id,start_date");
+    if (e3 || !t?.length) toast("Los resultados subieron, pero el Ovsynch no se programó: " + (e3?.message || ""));
+    else {
+      await sb.from("treatment_items").insert(t.map(x=>{ const st = OP.steps[tx.findIndex(y=>y.start_date===x.start_date)] || OP.steps[0];
+        return { treatment_id:x.id, supply_code:code(st), dose:OVS_DOSE, unit:"mL", route:"IM", every_hours:24, days:1 }; }));
+      await sb.from("cow_plans").insert({ cow_id:id, farm_id:farm, plan_type:"inseminar", due_date:addDays(D, OP.ia), note:`${ckOvsName(r)} del ${fmt(D)}` });
+    }
+  }
+  if (r.sale?.date){
+    const { error:e4 } = await sb.from("cow_plans").insert({ cow_id:id, farm_id:farm, plan_type:"descarte", due_date:r.sale.date, note:[r.sale.note, `Chequeo ${fmt(D)}`].filter(Boolean).join(" · ") });
+    if (e4) toast(`Los resultados subieron, pero la venta de la ${id} no se programó: ${e4.message}`);
+  }
+}
 let ckFlushing = false;
 async function flushCheck(){
   if (ckFlushing || !navigator.onLine){ updCheckNet(); return; }
@@ -8546,45 +8788,8 @@ async function flushCheck(){
     if (!rows.length) continue;
     const { error } = await sb.from("cow_events").insert(rows);
     if (error){ left.push(key); console.warn("chequeo", error.message); continue; }
-    // tratamientos: una fila por día de aplicación (la primera hoy, las pendientes con su fecha), con el resultado del chequeo
-    for (const [id, r] of todo){
-      const plan = ckTxPlan(r); if (!plan.length) continue;
-      const farm = +key.slice(3).split("|")[0] || ckFarmSel(), uid = () => crypto.randomUUID ? crypto.randomUUID() : String(Date.now()) + Math.random();
-      const res = r.cat==="EXREP" ? (r.sel || []).join(" + ") : [r.main, ...(r.fol || [])].filter(Boolean).join(", ");
-      const tx = plan.map(b=>({ client_id:uid(), farm_id:farm, cow_id:id, start_date:addDays(D, b.off), diagnosis:`Chequeo ${r.cat || ""} · ${res || "—"}`,
-        protocol:"Chequeo · " + b.keys.join(" + "), prescribed_by: isAdmin ? "Juan (veterinario)" : "Chequeo", notes:b.txt.join(" + ") + (r.note ? " · " + r.note : "") }));
-      const { data:t, error:e2 } = await sb.from("treatments_cow").insert(tx).select("id,start_date");
-      if (e2 || !t?.length){ toast("Los resultados subieron, pero un tratamiento no quedó en Salud: " + (e2?.message || "")); continue; }
-      await sb.from("treatment_items").insert(t.flatMap(x=>(plan.find(b=>addDays(D, b.off)===x.start_date)?.items || [])
-        .map(i=>({ treatment_id:x.id, supply_code:i.code, dose:i.dose, unit:i.unit, route:i.route, every_hours:24, days:1 }))));
-    }
-    // lactoinducción programada desde el chequeo (queda en la hoja de vida)
-    for (const [id, r] of todo){
-      if (!r.lacto) continue;
-      const farm = +key.slice(3).split("|")[0] || ckFarmSel();
-      const { error:e5 } = await sb.from("cow_plans").insert({ cow_id:id, farm_id:farm, plan_type:"otro", due_date:r.lacto.date || D, note:`Lactoinducción · Chequeo ${fmt(D)}` });
-      if (e5) toast(`Los resultados subieron, pero la lactoinducción de la ${id} no se programó: ${e5.message}`);
-    }
-    for (const [id, r] of todo){
-      if (!ckOvs(r)) continue;
-      const farm = +key.slice(3).split("|")[0] || ckFarmSel(), uid = () => crypto.randomUUID ? crypto.randomUUID() : String(Date.now()) + Math.random();
-      const code = st => st.k==="GnRH" ? (r.ovs?.gnrh || OVS_GNRH[0]) : (r.ovs?.pgf || OVS_PGF[0]);
-      const OP = ckOvsPlan(r);
-      const tx = OP.steps.map(st=>({ client_id:uid(), farm_id:farm, cow_id:id, start_date:addDays(D, st.d), diagnosis:"Ovsynch", protocol:"Ovsynch",
-        prescribed_by: isAdmin ? "Juan (veterinario)" : "Chequeo", notes:`Día ${st.n ?? st.d} del ${ckOvsName(r)} (${OP.steps===OVS2_STEPS ? "chequeo" : "inicio"} ${fmt(D)})` }));
-      const { data:t, error:e3 } = await sb.from("treatments_cow").insert(tx).select("id,start_date");
-      if (e3 || !t?.length){ toast("Los resultados subieron, pero el Ovsynch no se programó: " + (e3?.message || "")); continue; }
-      await sb.from("treatment_items").insert(t.map(x=>{ const st = OP.steps[tx.findIndex(y=>y.start_date===x.start_date)] || OP.steps[0];
-        return { treatment_id:x.id, supply_code:code(st), dose:OVS_DOSE, unit:"mL", route:"IM", every_hours:24, days:1 }; }));
-      await sb.from("cow_plans").insert({ cow_id:id, farm_id:farm, plan_type:"inseminar", due_date:addDays(D, OP.ia), note:`${ckOvsName(r)} del ${fmt(D)}` });
-    }
-    // venta programada desde el chequeo (descarte programado: la vaca pasa a DESCARTE)
-    for (const [id, r] of todo){
-      if (!r.sale?.date) continue;
-      const farm = +key.slice(3).split("|")[0] || ckFarmSel();
-      const { error:e4 } = await sb.from("cow_plans").insert({ cow_id:id, farm_id:farm, plan_type:"descarte", due_date:r.sale.date, note:[r.sale.note, `Chequeo ${fmt(D)}`].filter(Boolean).join(" · ") });
-      if (e4) toast(`Los resultados subieron, pero la venta de la ${id} no se programó: ${e4.message}`);
-    }
+    // tratamientos, lactoinducción, Ovsynch / OVS2 y venta de cada vaca
+    for (const [id, r] of todo) await ckCowExtras(+key.slice(3).split("|")[0] || ckFarmSel(), D, id, r);
     // 2 · el reporte de reproducción se actualiza solo con este chequeo
     { const farm = +key.slice(3).split("|")[0] || ckFarmSel(); const rr = await sb.rpc("repro_check_refresh", { p_farm:farm, p_date:D });
       if (rr.error) console.warn("reporte repro", rr.error.message); else rpRows = null; }
@@ -8593,7 +8798,7 @@ async function flushCheck(){
   jset("ckOutbox", left); ckFlushing = false; updCheckNet();
   if (sent){ toast(`${sent} resultados subidos ✓ (pendientes de pasar a Interherd)`); loadPending(); }
   else if (left.length) toast("No se pudo subir: queda guardado en el celular");
-  if (!$("tabChequeo").classList.contains("hidden") && ckData){ ckRes = jget(ckKey(ckFarmSel(), $("ckDate").value || today()), {}); ckRender(); }
+  if (!$("tabChequeo").classList.contains("hidden") && ckData){ ckRes = jget(ckKey(ckFarmSel(), ckD()), {}); ckRender(); }
 }
 
 // ═══════════════════════ REPORTE REPRODUCTIVO ═════════════════
