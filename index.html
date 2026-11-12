@@ -20,6 +20,7 @@
   --c1:#2a78d6; --c2:#eb6834; --c3:#1baf7a; --c4:#eda100; --c5:#e87ba4;
   --mq1:#f2c94c; --mq2:#f6a55e; --mq3:#e0661b; --mq4:#d62d20; --mqp:#8c939c;
   --nd1:#08519c; --nd2:#3182bd; --nd3:#9ecae1; --nd4:#f2f7fc;   /* humedad NDMI: azul (agua) → blanco (seco) */
+  --wt1:#2b0f8a; --wt2:#1f6fd1; --wt3:#5ec3e6; --wt4:#b9e3a8; --wt5:#c9a26b;   /* encharcamiento (radar): agua encima → seco */
 }
 @media (prefers-color-scheme: dark){ :root:not([data-theme="light"]){
   --bg:#12161b; --card:#1b2129; --ink:#e7ecf1; --muted:#9aa5b1; --line:#2b333d; --accent:#3cc2ad;
@@ -1162,13 +1163,14 @@ const MQ = { "0":["--s0","Negativo"], "1":["--mq1","CMT 1"], "2":["--mq2","CMT 2
 const qCell = (v, big) => { const m = MQ[v]; return `<span class="q${big?" big":""}" style="background:${m ? css(m[0]) : "var(--line)"}${v==="1" || v==="2" ? ";color:#3a2a00" : ""}" title="${esc(m ? m[1] : v||"sin dato")}">${esc(v ?? "·")}</span>`; };
 const udder = (c, big) => `<span class="udder${big?" big":""}">${["ai","ad","pi","pd"].map(k=>qCell(c[k], big)).join("")}</span>`;
 const QN = { ai:"anterior izquierdo (AI)", ad:"anterior derecho (AD)", pi:"posterior izquierdo (PI)", pd:"posterior derecho (PD)" };
-// cuartos reportados como perdidos (P): si después vuelve a tener valores, "se mejoró", pero sigue el aviso
+// cuartos perdidos (P): solo los que siguen perdidos. Si en un chequeo posterior el cuarto da leche
+// (normal o con mastitis: 0, 1, 2, 3, 4), ya no es perdido y no sale (Juan, 12/11/2026: vaca 115, AD perdido en 2021)
 function lostQuarters(list){
   return ["ai","ad","pi","pd"].map(k=>{
     const ps = list.filter(c=>c[k]==="P"); if (!ps.length) return null;
     const lastP = ps[ps.length-1].check_date;
-    const after = list.filter(c=>c.check_date > lastP && c[k] && c[k]!=="P");
-    return { k, first:ps[0].check_date, lastP, recovered: after.length ? after[after.length-1] : null };
+    if (list.some(c=>c.check_date > lastP && c[k] && c[k]!=="P")) return null;   // volvió a dar leche
+    return { k, first:ps[0].check_date, lastP, recovered:null };
   }).filter(Boolean);
 }
 const isClin = c => ["ai","ad","pi","pd"].some(k=>c[k]==="4");
@@ -1701,57 +1703,89 @@ function renderPastos(){
     <div class="card" id="psMapBox"><b>🗺️ Mapa</b><div class="sub">Cargando…</div></div>`;
   renderMap($("psMapBox"));
 }
-// ── Pastos · 🧪 Dosificación: dosis estándar por hectárea de cada producto y cálculo para los potreros escogidos ──
-// La fumigadora de la finca (600 L ≈ 3 fanegadas) da los litros de agua por hectárea; con el área de cada potrero se
-// calcula cuánto producto va, cuánta agua y cuántas fumigadoras (con la mezcla de cada una). 1 fanegada = 6.400 m².
+// ── Pastos · 🧪 Dosificación: dosis estándar de cada producto y cálculo para los potreros escogidos ──
+// Dosis por hectárea (o por litro de agua: coadyuvantes), en la unidad que se usa en el campo (L, cc, g, lb, bulto);
+// inv_factor la lleva a la unidad del inventario. La fumigadora de la finca (600 L ≈ 3 fanegadas) da el agua por hectárea.
+// El orden de mezcla sale de la formulación de cada producto (spray_mix_order). Se cargan con potreros/cargar_dosis.py.
+// 1 fanegada = 6.400 m² · 1 bulto de semilla = 50 lb.
 const PS_FG = 0.64;   // hectáreas por fanegada
-let psView = "map", psDz = { farm:null, doses:null, cfg:null, prods:[], pads:[], predio:"", edit:null };
+const PS_TYPES = ["Insecticida","Fungicida","Herbicida","Foliar","Coadyuvante","Fertilizante","Semilla","Otro"];
+const PS_UNITS = [["mL","cc / mL"],["L","L"],["g","g"],["kg","kg"],["lb","lb"],["bulto","bulto"]];
+let psView = "map", psDz = { farm:null, doses:null, cfg:null, mix:[], prods:[], pads:[], predio:"", edit:null, draft:null, vars:{} };
 const psDoseCan = () => isMain() || myProfile==="Gerente";
 const psNf = (v, d) => (+v || 0).toLocaleString("es-CO", { maximumFractionDigits:d });
-const psIsLiquid = u => /^(ml|l|cc|lt|litro)/i.test(u || "");
 function psAmt(v, unit){
   const u = (unit || "").toLowerCase();
-  if (u==="ml") return v >= 1000 ? `${psNf(v/1000, 2)} L` : `${psNf(Math.round(v), 0)} mL`;
-  if (u==="bulto") return `${psNf(v, 1)} bulto${Math.round(v*10)/10===1 ? "" : "s"}`;
+  if (u==="ml") return v >= 1000 ? `${psNf(v/1000, 2)} L` : `${psNf(Math.round(v), 0)} cc`;
+  if (u==="g") return v >= 1000 ? `${psNf(v/1000, 2)} kg` : `${psNf(Math.round(v), 0)} g`;
+  if (u==="bulto") return `${psNf(v, 2)} bulto${Math.round(v*100)/100===1 ? "" : "s"}`;
   return `${psNf(v, 2)} ${unit || ""}`.trim();
 }
-const psRoundQty = (v, unit) => (unit || "").toLowerCase()==="ml" ? Math.round(v) : (unit || "").toLowerCase()==="bulto" ? Math.round(v*10)/10 : Math.round(v*100)/100;
+const psRoundQty = (v, unit) => /^(ml|g)$/i.test(unit || "") ? Math.round(v) : Math.round(v*100)/100;
+// dosis escrita → unidad del inventario (igual que cargar_dosis.py)
+const PS_FACTOR = { "L|mL":1000, "mL|mL":1, "mL|L":0.001, "L|L":1, "g|g":1, "kg|g":1000, "g|kg":0.001, "kg|kg":1, "bulto|bulto":1, "lb|bulto":1/50, "lb|lb":1 };
+const psSup = c => hsSupply(c) || { code:c, name:c, unit:"" };
+const psDName = d => psSup(d.supply_code).name + (d.label ? ` (${d.label})` : "");
+const psInTank = d => d.ptype!=="Semilla" && !/^(bulto|lb)$/i.test(d.dose_unit || "");   // va en la fumigadora
+const psDoseTxt = (d, v) => v==null ? "variable" : `${psNf(v, 2)} ${d.dose_unit==="mL" ? "cc" : d.dose_unit} / ${d.per==="l_agua" ? "L de agua" : "ha"}`;
+// cantidad (en unidad del inventario) para un área en ha y unos litros de agua
+const psQty = (d, v, ha, water) => v==null ? 0 : v * (+d.inv_factor || 1) * (d.per==="l_agua" ? water : ha);
+const psQtyTxt = (d, q) => psAmt(q, psSup(d.supply_code).unit) + (d.dose_unit==="lb" ? ` (${psNf(q/(+d.inv_factor || 1), 1)} lb)` : "");
+function psMixRank(d){
+  const mx = psDz.mix || [], f = d.formulation || (d.ptype==="Foliar" ? "Fertilizante foliar" : d.ptype==="Coadyuvante" ? "Coadyuvante / adherente" : "");
+  const r = mx.find(x=>x.formulation===f); return r ? r : { formulation:f || "sin clasificación", step:4.5, sort:50, how:"" };
+}
 async function psDoseLoad(){
-  const key = `psDose:${psFarm}`;
+  const key = `psDose2:${psFarm}`;
   if (navigator.onLine){
-    const [d, c] = await Promise.all([sb.from("spray_doses").select("*"), sb.from("spray_config").select("*").eq("farm_id", psFarm).maybeSingle()]);
-    if (!d.error) jset(key, { doses:d.data || [], cfg:c.data || null });
-    else { psDz.err = /does not exist|schema cache/i.test(d.error.message) ? "Falta correr la parte de DOSIFICACIÓN de SQL/crear_potreros.sql." : d.error.message; }
+    const [d, c, x] = await Promise.all([sb.from("spray_doses").select("*").order("id"), sb.from("spray_config").select("*").eq("farm_id", psFarm).maybeSingle(),
+      sb.from("spray_mix_order").select("*").order("sort")]);
+    if (!d.error){ jset(key, { doses:d.data || [], cfg:c.data || null, mix:x.data || [] }); psDz.err = ""; }
+    else psDz.err = /does not exist|schema cache/i.test(d.error.message) ? "Falta correr la parte de DOSIFICACIÓN de SQL/crear_potreros.sql." : d.error.message;
     await hsCatalog();
   }
-  const x = jget(key, { doses:[], cfg:null });
-  psDz.farm = psFarm; psDz.doses = x.doses; psDz.cfg = x.cfg;
+  const x = jget(key, { doses:[], cfg:null, mix:[] });
+  psDz.farm = psFarm; psDz.doses = x.doses; psDz.cfg = x.cfg; psDz.mix = x.mix || [];
 }
 async function psDoseRender(head){
   if (!psDz.doses || psDz.farm!==psFarm){
     $("psBody").innerHTML = head + `<div class="card"><div class="empty">Cargando dosis…</div></div>`;
     psDz.pads = []; psDz.prods = []; await psDoseLoad();
   }
-  const cfg = psDz.cfg || { tank_l:600, tank_fg:3 }, haTank = cfg.tank_fg*PS_FG, lHa = cfg.tank_l/haTank;
-  const sup = c => hsSupply(c) || { code:c, name:c, unit:"" };
-  const doses = Object.fromEntries((psDz.doses || []).map(d=>[d.supply_code, d]));
-  const withDose = Object.keys(doses).sort((a, b)=>sup(a).name.localeCompare(sup(b).name));
-  psDz.prods = psDz.prods.filter(c=>doses[c]);
+  const cfg = psDz.cfg || { tank_l:600, tank_fg:3 }, haTank = cfg.tank_fg*PS_FG, lHa = cfg.tank_l/haTank, can = psDoseCan();
+  const doses = psDz.doses || [], byId = Object.fromEntries(doses.map(d=>[d.id, d]));
+  psDz.prods = psDz.prods.filter(i=>byId[i]);
+  const vOf = d => d.dose!=null ? +d.dose : (psDz.vars[d.id]!=null && psDz.vars[d.id]!=="" ? +String(psDz.vars[d.id]).replace(",", ".") : null);
+  const typeOf = d => PS_TYPES.includes(d.ptype) ? d.ptype : (d.ptype || "Otro");
+  const types = [...new Set([...PS_TYPES, ...doses.map(typeOf)])].filter(t=>doses.some(d=>typeOf(d)===t));
   const all = psList.filter(p=>p.active && !p.merged_into), predios = [...new Set(all.map(p=>p.predio))].sort();
   if (!psDz.predio || !predios.includes(psDz.predio)) psDz.predio = predios[0] || "";
   const pads = psDz.pads.map(id=>all.find(p=>p.id===id)).filter(Boolean);
   const haOf = p => (+p.area_m2 || 0)/1e4, ha = pads.reduce((a, p)=>a + haOf(p), 0), noArea = pads.filter(p=>!p.area_m2);
-  const liq = psDz.prods.filter(c=>psIsLiquid(sup(c).unit)), tanks = ha/haTank, full = Math.floor(tanks + 1e-9), rest = tanks - full;
-  const can = psDoseCan();
-  // productos: cantidad por ha, total, por fumigadora
-  const prodRows = psDz.prods.map(c=>{ const d = +doses[c].dose_ha, u = sup(c).unit;
-    return `<tr><td><b>${esc(sup(c).name)}</b></td><td>${psAmt(d, u)}</td><td><b>${psAmt(d*ha, u)}</b></td><td>${psIsLiquid(u) ? psAmt(d*haTank, u) : "—"}</td></tr>`; }).join("");
-  const mix = (f, lab) => liq.length ? `<div style="margin-top:6px"><b>${lab}</b> (${psNf(cfg.tank_l*f, 0)} L de agua): ${liq.map(c=>`${esc(sup(c).name)} <b>${psAmt(+doses[c].dose_ha*haTank*f, sup(c).unit)}</b>`).join(" + ")}</div>` : "";
+  const sel = psDz.prods.map(i=>byId[i]), tank = sel.filter(psInTank), water = ha*lHa;
+  const tanks = water/cfg.tank_l, full = Math.floor(tanks + 1e-9), rest = tanks - full;
+  const pend = sel.filter(d=>d.pending), novar = sel.filter(d=>vOf(d)==null);
+  const chip = d => `<button class="${psDz.prods.includes(d.id) ? "on" : ""}" data-dzprod="${d.id}">${esc(psDName(d))}${d.pending ? " ⚠️" : ""}</button>`;
+  // instrucciones de mezcla: por formulación (orden del archivo), con la cantidad de una fumigadora llena y de la última
+  const steps = tank.slice().sort((a, b)=>psMixRank(a).sort - psMixRank(b).sort || psDName(a).localeCompare(psDName(b)));
+  const perTank = (d, f) => psQtyTxt(d, psQty(d, vOf(d), haTank*f, cfg.tank_l*f));
+  const mixHtml = steps.length ? `<div class="hscard" style="margin-top:10px;border-left:4px solid var(--s2)"><b>🧪 Cómo preparar la fumigadora (${psNf(cfg.tank_l, 0)} L)</b>
+      <ol style="margin:6px 0 0;padding-left:20px;font-size:14px">
+        <li>Llenar el tanque a 1/2 o 2/3 con agua y prender la agitación.</li>
+        ${steps.map(d=>{ const r = psMixRank(d);
+          return `<li><b>${esc(psDName(d))}</b>: ${full ? `<b>${perTank(d, 1)}</b>${full > 1 ? " por fumigadora" : ""}` : ""}${rest > 0.05 ? `${full ? " · " : ""}la última (${psNf(rest, 2)}): <b>${perTank(d, rest)}</b>` : ""}
+            <div class="sub">${esc(r.formulation)}${r.how ? " — " + esc(r.how) : ""}${d.pending ? ` · <b style="color:var(--s3)">dosis por confirmar</b>` : ""}</div></li>`; }).join("")}
+        <li>Completar con agua hasta ${psNf(cfg.tank_l, 0)} L y seguir agitando mientras se aplica.</li></ol>
+      ${full + (rest > 0.05 ? 1 : 0) > 1 ? `<div class="sub" style="margin-top:4px">En total: ${full} llena${full===1 ? "" : "s"}${rest > 0.05 ? ` + una de ${psNf(rest*cfg.tank_l, 0)} L` : ""}.</div>` : ""}</div>` : "";
+  const prodRows = sel.map(d=>{ const v = vOf(d);
+    return `<tr><td><b>${esc(psDName(d))}</b>${d.pending ? ` <span class="tag" style="background:var(--s3);color:#fff">por confirmar</span>` : ""}</td><td>${psDoseTxt(d, v)}</td>
+      <td><b>${v==null ? "—" : psQtyTxt(d, psQty(d, v, ha, water))}</b></td><td>${psInTank(d) && v!=null ? psQtyTxt(d, psQty(d, v, haTank, cfg.tank_l)) : "—"}</td></tr>`; }).join("");
   const padRows = pads.map(p=>{ const h = haOf(p);
-    return `<div class="hscard" style="margin-top:6px"><b>${esc(psName(p))}</b> <span class="sub">· ${h ? `${psNf(h, 2)} ha (${psNf(h/PS_FG, 1)} fanegadas)` : "sin área"}${h && liq.length ? ` · agua ${psNf(h*lHa, 0)} L (${psNf(h/haTank, 2)} fumigadora${Math.abs(h/haTank - 1) < 0.005 ? "" : "s"})` : ""}</span>
-      ${h && psDz.prods.length ? `<div class="sub">${psDz.prods.map(c=>`${esc(sup(c).name)} ${psAmt(+doses[c].dose_ha*h, sup(c).unit)}`).join(" · ")}</div>` : ""}</div>`; }).join("");
+    return `<div class="hscard" style="margin-top:6px"><b>${esc(psName(p))}</b> <span class="sub">· ${h ? `${psNf(h, 2)} ha (${psNf(h/PS_FG, 1)} fanegadas)` : "sin área"}${h && tank.length ? ` · agua ${psNf(h*lHa, 0)} L (${psNf(h*lHa/cfg.tank_l, 2)} fumigadoras)` : ""}</span>
+      ${h && sel.length ? `<div class="sub">${sel.filter(d=>vOf(d)!=null).map(d=>`${esc(psDName(d))} ${psQtyTxt(d, psQty(d, vOf(d), h, h*lHa))}`).join(" · ")}</div>` : ""}</div>`; }).join("");
   const cat = hsCatGet().supplies.filter(x=>x.active!==false && PS_SUPPLY.test(x.category || "")).sort((a, b)=>(a.category || "").localeCompare(b.category || "") || a.name.localeCompare(b.name));
-  const ed = psDz.edit || psDz.draft;
+  const ed = psDz.edit || psDz.draft || {};
+  const opt = (v, t, on) => `<option value="${esc(v)}" ${on ? "selected" : ""}>${esc(t)}</option>`;
   $("psBody").innerHTML = head + `${psDz.err ? `<div class="warn" style="margin-bottom:10px">${esc(psDz.err)}</div>` : ""}
     <div class="card"><b>🚿 Fumigadora de la finca</b>
       <div class="sub" style="margin-top:4px">${psNf(cfg.tank_l, 0)} L rinden ${psNf(cfg.tank_fg, 1)} fanegadas (${psNf(haTank, 2)} ha) → <b>${psNf(lHa, 0)} L de agua por hectárea</b> (${psNf(lHa*PS_FG, 0)} L por fanegada)</div>
@@ -1759,77 +1793,123 @@ async function psDoseRender(head){
         <input id="dzTankFg" inputmode="decimal" value="${esc(cfg.tank_fg)}" style="flex:0 0 70px"><span class="sub">fanegadas</span><button class="btn ghost" data-dzcfg="1" style="width:auto">Guardar</button></div>` : ""}</div>
     <div class="card"><b>🧮 Calcular</b>
       <div class="sub" style="margin-top:6px">1 · Productos</div>
-      <div class="chips sm">${withDose.map(c=>`<button class="${psDz.prods.includes(c) ? "on" : ""}" data-dzprod="${esc(c)}">${esc(sup(c).name)}</button>`).join("") || `<span class="sub">Todavía no hay dosis estándar: agrégalas abajo.</span>`}</div>
-      <div class="sub" style="margin-top:8px">2 · Potreros</div>
+      ${types.map(t=>`<div class="sub" style="margin-top:6px;font-weight:700">${esc(t)}</div><div class="chips sm">${doses.filter(d=>typeOf(d)===t).sort((a, b)=>psDName(a).localeCompare(psDName(b))).map(chip).join("")}</div>`).join("")
+        || `<div class="sub">Todavía no hay dosis estándar: corre CARGAR_DOSIS_PASTOS.bat o agrégalas abajo.</div>`}
+      ${novar.length ? novar.map(d=>`<div class="row" style="gap:6px;margin-top:6px;align-items:center"><span class="sub" style="flex:1">${esc(psDName(d))}: dosis de hoy</span>
+        <input data-dzvar="${d.id}" inputmode="decimal" value="${esc(psDz.vars[d.id] ?? "")}" placeholder="cantidad" style="flex:0 0 90px"><span class="sub">${esc(d.dose_unit==="mL" ? "cc" : d.dose_unit)} / ha</span></div>`).join("") : ""}
+      <div class="sub" style="margin-top:10px">2 · Potreros</div>
       <div class="chips sm ckpan" style="padding:0"><div class="chips sm">${predios.map(p=>`<button class="${psDz.predio===p ? "on" : ""}" data-dzpr="${esc(p)}">${esc(p)}</button>`).join("")}</div></div>
       <div class="psgrid">${all.filter(p=>p.predio===psDz.predio).sort((a, b)=>byNumTxt(a.number, b.number)).map(p=>
         `<button class="pstile ${psDz.pads.includes(p.id) ? "sel" : ""}" data-dzpick="${p.id}" style="--c:var(--line)"><b>${esc(p.number)}</b><span>${p.area_m2 ? psNf(haOf(p), 1) + " ha" : "—"}</span></button>`).join("")}</div>
       <div class="row" style="gap:8px;margin-top:4px"><button class="lnk" data-dzallp="1">Todos los de ${esc(psDz.predio)}</button>${psDz.pads.length ? `<button class="lnk" data-dzclr="1">Quitar todos (${psDz.pads.length})</button>` : ""}</div>
-      ${pads.length && psDz.prods.length ? `<div class="hscard" style="margin-top:10px;border-left:4px solid var(--accent)">
+      ${pads.length && sel.length ? `<div class="hscard" style="margin-top:10px;border-left:4px solid var(--accent)">
           <div><b>${pads.length} potrero${pads.length===1 ? "" : "s"} · ${psNf(ha, 2)} ha (${psNf(ha/PS_FG, 1)} fanegadas)</b></div>
-          ${liq.length ? `<div>Agua: <b>${psNf(ha*lHa, 0)} L</b> = <b>${psNf(tanks, 1)} fumigadoras</b> de ${psNf(cfg.tank_l, 0)} L</div>` : ""}
+          ${tank.length ? `<div>Agua: <b>${psNf(water, 0)} L</b> = <b>${psNf(tanks, 1)} fumigadoras</b> de ${psNf(cfg.tank_l, 0)} L</div>` : ""}
           ${noArea.length ? `<div class="sub" style="color:var(--s4)">Sin área (no se cuentan): ${noArea.map(p=>esc(psName(p))).join(", ")}</div>` : ""}
-          <table class="ivt" style="font-size:13px;margin-top:6px"><tr><th>Producto</th><th>Por ha</th><th>Total</th><th>Por fumigadora</th></tr>${prodRows}</table>
-          ${liq.length && full ? mix(1, `Cada fumigadora llena (${full})`) : ""}${liq.length && rest > 0.05 ? mix(rest, `La última, ${psNf(rest, 2)} de fumigadora`) : ""}
+          ${pend.length ? `<div class="sub" style="color:var(--s3)">⚠️ Dosis por confirmar: ${pend.map(d=>esc(psDName(d))).join(", ")}</div>` : ""}
+          <table class="ivt" style="font-size:13px;margin-top:6px"><tr><th>Producto</th><th>Dosis</th><th>Total</th><th>Por fumigadora</th></tr>${prodRows}</table>
+          ${mixHtml}
           ${psCanLabor() ? `<button class="btn" data-dzreg="1" style="margin-top:10px">🧪 Registrar la labor con estas cantidades</button>` : ""}
           <div class="sub" style="margin-top:4px">Es aproximado: depende de cómo rinda la fumigadora en cada potrero.</div></div>
         ${padRows}` : `<div class="sub" style="margin-top:8px">Escoge al menos un producto y un potrero.</div>`}</div>
-    <div class="card"><b>📋 Dosis estándar</b> <span class="sub">· por hectárea</span>
-      <table class="ivt" style="font-size:13px;margin-top:6px"><tr><th>Producto</th><th>Por ha</th><th>Por fanegada</th><th>Por fumigadora</th>${can ? "<th></th>" : ""}</tr>
-        ${withDose.map(c=>{ const d = +doses[c].dose_ha, u = sup(c).unit;
-          return `<tr><td><b>${esc(sup(c).name)}</b>${doses[c].notes ? `<div class="sub">${esc(doses[c].notes)}</div>` : ""}</td><td>${psAmt(d, u)}</td><td>${psAmt(d*PS_FG, u)}</td><td>${psIsLiquid(u) ? psAmt(d*haTank, u) : "—"}</td>
-            ${can ? `<td style="white-space:nowrap"><button class="lnk" data-dzedit="${esc(c)}">editar</button> <button class="del" data-dzdel="${esc(c)}">✕</button></td>` : ""}</tr>`; }).join("")
-        || `<tr><td colspan="5" class="sub">Sin dosis todavía</td></tr>`}</table>
-      ${can ? `<div class="hsform" style="margin-top:10px"><b>${ed ? "✏️ Cambiar dosis" : "＋ Agregar dosis"}</b>
-        <div class="row" style="margin-top:6px"><input class="supq" placeholder="🔍 nombre" autocomplete="off" style="flex:0 0 34%;min-width:0;padding:8px"><select data-supsel="1" id="dzSup" style="flex:1">${`<option value="">— Producto —</option>` + cat.map(m=>`<option value="${esc(m.code)}" ${ed?.code===m.code ? "selected" : ""}>${esc(m.name)} (${esc(m.unit || "")})</option>`).join("")}</select></div>
-        <div class="row" style="gap:6px;margin-top:6px;align-items:center"><input id="dzDose" inputmode="decimal" placeholder="cantidad" value="${esc(ed?.val ?? "")}" style="flex:0 0 100px">
-          <select id="dzBase" style="flex:1">${[["tank", `por fumigadora (${psNf(cfg.tank_l, 0)} L)`], ["fg", "por fanegada"], ["ha", "por hectárea"]].map(([v, t])=>`<option value="${v}" ${(ed?.base || "tank")===v ? "selected" : ""}>${t}</option>`).join("")}</select></div>
-        <input id="dzNote" placeholder="Nota (opcional): para qué, cada cuánto…" value="${esc(ed?.notes || "")}" style="margin-top:6px">
-        <div class="sub" style="margin-top:4px">La cantidad va en la unidad del inventario (mL, bulto…). Se guarda por hectárea.</div>
-        <div class="row" style="gap:8px;margin-top:6px"><button class="btn" data-dzsave="1">Guardar dosis</button>${ed ? `<button class="btn ghost" data-dzcancel="1">Cancelar</button>` : ""}</div></div>` : ""}</div>`;
+    <div class="card"><b>📋 Dosis estándar</b>
+      ${types.map(t=>`<div class="ckpen">${esc(t)}</div><table class="ivt" style="font-size:13px"><tr><th>Producto</th><th>Dosis</th><th>Por fanegada</th><th>Por fumigadora</th>${can ? "<th></th>" : ""}</tr>
+        ${doses.filter(d=>typeOf(d)===t).sort((a, b)=>psDName(a).localeCompare(psDName(b))).map(d=>{ const v = d.dose==null ? null : +d.dose;
+          const fg = v==null ? "—" : psQtyTxt(d, psQty(d, v, PS_FG, PS_FG*lHa)), tk = v==null || !psInTank(d) ? "—" : psQtyTxt(d, psQty(d, v, haTank, cfg.tank_l));
+          return `<tr><td><b>${esc(psDName(d))}</b>${d.pending ? ` <span class="tag" style="background:var(--s3);color:#fff">por confirmar</span>` : ""}
+              <div class="sub">${[d.formulation, d.notes].filter(Boolean).map(esc).join(" · ")}</div></td><td>${psDoseTxt(d, v)}</td><td>${fg}</td><td>${tk}</td>
+            ${can ? `<td style="white-space:nowrap"><button class="lnk" data-dzedit="${d.id}">editar</button> <button class="del" data-dzdel="${d.id}">✕</button></td>` : ""}</tr>`; }).join("")}</table>`).join("")
+        || `<div class="sub" style="margin-top:6px">Sin dosis todavía</div>`}
+      ${psDz.mix.length ? `<details style="margin-top:8px"><summary class="sub">Orden de mezcla por formulación (${psDz.mix.length})</summary>
+        <table class="ivt" style="font-size:12px;margin-top:4px"><tr><th>Paso</th><th>Formulación</th><th>Cómo echarlo</th></tr>${psDz.mix.map(x=>`<tr><td>${x.step}</td><td>${esc(x.formulation)}</td><td>${esc(x.how || "")}</td></tr>`).join("")}</table></details>` : ""}
+      ${can ? `<div class="hsform" style="margin-top:10px"><b>${psDz.edit ? "✏️ Cambiar dosis" : "＋ Agregar dosis"}</b>
+        <div class="row" style="margin-top:6px"><input class="supq" placeholder="🔍 nombre" autocomplete="off" style="flex:0 0 34%;min-width:0;padding:8px"><select data-supsel="1" id="dzSup" style="flex:1">${opt("", "— Producto —", !ed.code)}${cat.map(m=>opt(m.code, `${m.name} (${m.unit || ""})`, ed.code===m.code)).join("")}</select></div>
+        <input id="dzLabel" placeholder="Variante o marca (opcional, ej. Impulsemillas)" value="${esc(ed.label || "")}" style="margin-top:6px">
+        <div class="row" style="gap:6px;margin-top:6px;align-items:center"><input id="dzDose" inputmode="decimal" placeholder="cantidad (vacío = variable)" value="${esc(ed.val ?? "")}" style="flex:0 0 120px">
+          <select id="dzUnit" style="flex:0 0 90px">${PS_UNITS.map(([v, t])=>opt(v, t, (ed.unit || "mL")===v)).join("")}</select>
+          <select id="dzBase" style="flex:1">${[["ha","por hectárea"],["fg","por fanegada"],["tank",`por fumigadora (${psNf(cfg.tank_l, 0)} L)`],["l_agua","por litro de agua"]].map(([v, t])=>opt(v, t, (ed.base || "ha")===v)).join("")}</select></div>
+        <div class="row" style="gap:6px;margin-top:6px"><select id="dzType" style="flex:1">${PS_TYPES.map(t=>opt(t, t, (ed.ptype || "")===t)).join("")}</select>
+          <select id="dzForm" style="flex:1">${opt("", "— Formulación (orden de mezcla) —", !ed.form)}${psDz.mix.map(x=>opt(x.formulation, `${x.step} · ${x.formulation}`, ed.form===x.formulation)).join("")}</select></div>
+        <label style="display:flex;gap:8px;align-items:center;margin-top:6px;font-weight:400"><input type="checkbox" id="dzPend" ${ed.pending ? "checked" : ""} style="width:20px;height:20px">Dosis por confirmar</label>
+        <input id="dzNote" placeholder="Nota (opcional)" value="${esc(ed.notes || "")}" style="margin-top:6px">
+        <div class="sub" style="margin-top:4px">Las semillas en bultos por ha (la achicoria en lb; 1 bulto = 50 lb). Los coadyuvantes por litro de agua.</div>
+        <div class="row" style="gap:8px;margin-top:6px"><button class="btn" data-dzsave="1">Guardar dosis</button>${psDz.edit ? `<button class="btn ghost" data-dzcancel="1">Cancelar</button>` : ""}</div></div>` : ""}</div>`;
 }
 // clics de la pestaña Dosificación (devuelve true si era de aquí)
 async function psDoseClick(t){
   const q = a => t.closest(`[${a}]`)?.getAttribute(a), rer = () => { renderPastos(); return true; };
   const tog = (arr, v) => arr.includes(v) ? arr.filter(x=>x!==v) : [...arr, v];
+  const rd = id => $(id)?.value ?? "";
   // lo que se va escribiendo en "Agregar dosis" no se pierde al tocar otra cosa
-  if ($("dzDose")){ const dr = { code:$("dzSup").value, val:$("dzDose").value, base:$("dzBase").value, notes:$("dzNote").value };
+  if ($("dzDose")){ const dr = { code:rd("dzSup"), label:rd("dzLabel"), val:rd("dzDose"), unit:rd("dzUnit"), base:rd("dzBase"), ptype:rd("dzType"), form:rd("dzForm"),
+      pending:!!$("dzPend")?.checked, notes:rd("dzNote") };
     if (psDz.edit) Object.assign(psDz.edit, dr); else psDz.draft = dr; }
-  if (q("data-dzprod")!=null){ psDz.prods = tog(psDz.prods, q("data-dzprod")); return rer(); }
+  document.querySelectorAll("[data-dzvar]").forEach(el=>{ psDz.vars[el.dataset.dzvar] = el.value; });
+  if (q("data-dzprod")!=null){ psDz.prods = tog(psDz.prods, +q("data-dzprod")); return rer(); }
   if (q("data-dzpr")!=null){ psDz.predio = q("data-dzpr"); return rer(); }
   if (q("data-dzpick")!=null){ psDz.pads = tog(psDz.pads, +q("data-dzpick")); return rer(); }
   if (q("data-dzallp")){ psList.filter(p=>p.active && !p.merged_into && p.predio===psDz.predio).forEach(p=>{ if (!psDz.pads.includes(p.id)) psDz.pads.push(p.id); }); return rer(); }
   if (q("data-dzclr")){ psDz.pads = []; return rer(); }
   if (q("data-dzcancel")){ psDz.edit = null; psDz.draft = null; return rer(); }
-  if (q("data-dzedit")!=null){ const c = q("data-dzedit"), d = psDz.doses.find(x=>x.supply_code===c);
-    psDz.edit = { code:c, val:String(+(+d.dose_ha).toFixed(3)), base:"ha", notes:d.notes || "" }; rer(); $("dzDose")?.scrollIntoView({ block:"center" }); return true; }
-  if (q("data-dzdel")!=null){ const c = q("data-dzdel"); if (!confirm(`¿Quitar la dosis estándar de ${hsSupply(c)?.name || c}?`)) return true;
-    const { error } = await sb.from("spray_doses").delete().eq("supply_code", c); if (error) toast("No se pudo: " + error.message);
+  if (q("data-dzedit")!=null){ const d = psDz.doses.find(x=>x.id===+q("data-dzedit")); if (!d) return true;
+    psDz.edit = { id:d.id, code:d.supply_code, label:d.label || "", val: d.dose==null ? "" : String(+(+d.dose).toFixed(4)), unit:d.dose_unit, base:d.per==="l_agua" ? "l_agua" : "ha",
+      ptype:d.ptype || "Otro", form:d.formulation || "", pending:!!d.pending, notes:d.notes || "" };
+    rer(); $("dzDose")?.scrollIntoView({ block:"center" }); return true; }
+  if (q("data-dzdel")!=null){ const d = psDz.doses.find(x=>x.id===+q("data-dzdel")); if (!d || !confirm(`¿Quitar la dosis estándar de ${psDName(d)}?`)) return true;
+    const { error } = await sb.from("spray_doses").delete().eq("id", d.id); if (error) toast("No se pudo: " + error.message);
     psDz.doses = null; return rer(); }
-  if (q("data-dzcfg")){ const L = +String($("dzTankL").value).replace(",", "."), F = +String($("dzTankFg").value).replace(",", ".");
-    if (!(L > 0) || !(F > 0)) { toast("Escribe los litros y las fanegadas"); return true; }
+  if (q("data-dzcfg")){ const L = +String(rd("dzTankL")).replace(",", "."), F = +String(rd("dzTankFg")).replace(",", ".");
+    if (!(L > 0) || !(F > 0)){ toast("Escribe los litros y las fanegadas"); return true; }
     const { error } = await sb.from("spray_config").upsert({ farm_id:psFarm, tank_l:L, tank_fg:F, updated_at:new Date().toISOString() });
     if (error){ toast("No se pudo guardar: " + error.message); return true; }
     toast("Fumigadora guardada ✓"); psDz.doses = null; return rer(); }
-  if (q("data-dzsave")){ const code = $("dzSup").value, v = +String($("dzDose").value).replace(",", "."), base = $("dzBase").value;
-    if (!code || !(v > 0)){ toast("Escoge el producto y la cantidad"); return true; }
-    const cfg = psDz.cfg || { tank_l:600, tank_fg:3 }, dose_ha = base==="ha" ? v : base==="fg" ? v/PS_FG : v/(cfg.tank_fg*PS_FG);
-    const { error } = await sb.from("spray_doses").upsert({ supply_code:code, dose_ha:Math.round(dose_ha*1000)/1000, notes:$("dzNote").value.trim() || null, updated_at:new Date().toISOString() });
-    if (error){ toast(/row-level|permission/i.test(error.message) ? "Solo el administrador o el gerente pueden cambiar las dosis" : "No se pudo guardar: " + error.message); return true; }
-    toast("Dosis guardada ✓"); psDz.edit = null; psDz.draft = null; psDz.doses = null; if (!psDz.prods.includes(code)) psDz.prods.push(code); return rer(); }
+  if (q("data-dzsave")){
+    const e = psDz.edit || psDz.draft || {}, s = psSup(e.code), v = e.val==="" ? null : +String(e.val).replace(",", ".");
+    if (!e.code){ toast("Escoge el producto"); return true; }
+    if (v!=null && !(v > 0)){ toast("La cantidad no es válida"); return true; }
+    const f = PS_FACTOR[`${e.unit}|${s.unit}`];
+    if (!f){ toast(`La unidad ${e.unit} no se puede pasar a la del inventario (${s.unit || "sin unidad"})`); return true; }
+    const cfg = psDz.cfg || { tank_l:600, tank_fg:3 };
+    const dose = v==null ? null : e.base==="fg" ? v/PS_FG : e.base==="tank" ? v/(cfg.tank_fg*PS_FG) : v;
+    const row = { supply_code:e.code, label:(e.label || "").trim() || null, dose: dose==null ? null : Math.round(dose*10000)/10000, dose_unit:e.unit,
+      per: e.base==="l_agua" ? "l_agua" : "ha", inv_factor:f, formulation:e.form || null, ptype:e.ptype || null, pending:!!e.pending,
+      notes:(e.notes || "").trim() || null, updated_at:new Date().toISOString() };
+    const { error } = psDz.edit?.id ? await sb.from("spray_doses").update(row).eq("id", psDz.edit.id) : await sb.from("spray_doses").insert(row);
+    if (error){ toast(/row-level|permission/i.test(error.message) ? "Solo el administrador o el gerente pueden cambiar las dosis" : /duplicate|unique/i.test(error.message) ? "Ese producto ya tiene esa dosis: edítala o pon otra variante" : "No se pudo guardar: " + error.message); return true; }
+    toast("Dosis guardada ✓"); psDz.edit = null; psDz.draft = null; psDz.doses = null; return rer(); }
   if (q("data-dzreg")){   // abre "Registrar labor" con los potreros y las cantidades calculadas (descuenta del inventario)
-    const doses = Object.fromEntries(psDz.doses.map(d=>[d.supply_code, d]));
+    const cfg = psDz.cfg || { tank_l:600, tank_fg:3 }, lHa = cfg.tank_l/(cfg.tank_fg*PS_FG);
+    const sel = psDz.prods.map(i=>psDz.doses.find(d=>d.id===i)).filter(Boolean);
     const pads = psDz.pads.map(id=>psList.find(p=>p.id===id)).filter(p=>p?.area_m2), ha = pads.reduce((a, p)=>a + p.area_m2/1e4, 0);
+    const vOf = d => d.dose!=null ? +d.dose : (psDz.vars[d.id] ? +String(psDz.vars[d.id]).replace(",", ".") : null);
+    const tot = {}; sel.forEach(d=>{ const qv = psQty(d, vOf(d), ha, ha*lHa); if (qv > 0) tot[d.supply_code] = (tot[d.supply_code] || 0) + qv; });
     psOpen("labor"); const s = psSheet;
-    s.act = psDz.prods.some(c=>psIsLiquid(hsSupply(c)?.unit)) ? "FUMIGADA" : "ABONADA";
+    s.act = sel.some(psInTank) ? "FUMIGADA" : sel.every(d=>d.ptype==="Semilla") ? "SIEMBRA" : "ABONADA";
     s.pads = pads.map(p=>p.id); s.predio = pads[0]?.predio || s.predio;
-    s.items = psDz.prods.map(c=>({ code:c, qty:psRoundQty(+doses[c].dose_ha*ha, hsSupply(c)?.unit) }));
+    s.items = Object.entries(tot).map(([code, qv])=>({ code, qty:psRoundQty(qv, psSup(code).unit) }));
     renderPsSheet(); return true; }
   return false;
 }
 function psAvgRest(list){ const r = list.map(psRest).filter(x=>x!=null && x > 1); return r.length ? Math.round(r.reduce((a,b)=>a+b, 0)/r.length) : "—"; }
 
 // ── Hoja de vida del potrero ───────────────────────────────
+// pasto sembrado: variedades de la última SIEMBRA (texto de la labor o semilla del inventario) → "Ryegrass (Boxer) + achicoria"
+const PS_RY = [["TETRABLEND","Tetrablend híbrido"],["BOXER","Boxer"],["DORCAS","Dorcas"],["BAREXTRA","Barextra"],["MAXIMUS","Maximus"],["MAGNUM","Magnum"],
+  ["MATHILDE","Mathilde"],["BISON","Bison"],["DORELLA","Dorella"],["H[EÉ]RCULES","Hércules"],["SANS[OÓ]N","Sansón"],["BARENBRUG","Barenbrug"]];
+const PS_SEEDRX = /BOXER|DORCAS|BAREXTRA|MAXIMUS|TETRABLEND|MAGNUM|MATHILDE|BISON|DORELLA|H[EÉ]RCULES|SANS[OÓ]N|BARENBRUG|ACHICORIA|AVENA|TR[EÉ]BOL|R[AEY]+[YI]?GRAS/i;
+function psSown(works, forage){
+  const txt = w => [w.product, w.supply_code ? (hsSupply(w.supply_code)?.name || w.supply_code) : ""].filter(Boolean).join(" ").toUpperCase();
+  const sw = works.filter(w=>w.activity==="SIEMBRA" || (PS_SEEDRX.test(txt(w)) && /SIEMBRA|RESIEMBRA|RENOVAD/i.test(w.activity || "")) || (w.supply_code && /semilla/i.test(hsSupply(w.supply_code)?.category || "")));
+  if (!sw.length) return null;
+  const d = sw.map(w=>w.work_date).sort().pop(), t = sw.filter(w=>w.work_date===d).map(txt).join(" ");
+  const ry = PS_RY.filter(([rx])=>new RegExp("\\b" + rx, "i").test(t)).map(x=>x[1]);
+  const parts = [];
+  if (ry.length) parts.push(`Ryegrass (${ry.join(" + ")})`); else if (/R[AEY]+[YI]?GRAS/i.test(t)) parts.push("Ryegrass");
+  if (/ACHICORIA/i.test(t)) parts.push("achicoria");
+  if (/AVENA/i.test(t)) parts.push("avena" + (/DORADA/i.test(t) ? " Dorada" : "") + (/GR[EI]+N\s*MASTER/i.test(t) ? (/DORADA/i.test(t) ? " + Green Master" : " Green Master") : ""));
+  if (/TR[EÉ]BOL/i.test(t)) parts.push("trébol");
+  return { d, label: parts.join(" + ") || (forage ? forage[0] + forage.slice(1).toLowerCase() : "") };
+}
 // ciclos de pastoreo = días ocupados seguidos (cualquier lote); rotación = entre inicios de ciclo; descanso = salida → entrada
 function psCycles(occ){
   const rows = occ.slice().sort((a,b)=>a.entry_date.localeCompare(b.entry_date)), out = [];
@@ -1868,6 +1948,9 @@ async function loadPaddock(id){
     sb.from("grazing").select("id,grp,entry_date,source,created_by").in("paddock_id", ids).eq("source", "app").gte("entry_date", addDays(today(), -400)),
   ]);
   const cyc = psCycles(oc.data || []), works = wk.data || [], t0 = today(), y1 = addDays(t0, -365);
+  // encharcamiento (radar): si falta la tabla, no sale la tarjeta
+  const wq = await sb.from("paddock_wet").select("obs_date,orbit,water_pct,wet_idx").eq("paddock_id", id).gte("obs_date", addDays(t0, -400)).order("obs_date");
+  const wo = (wq.data || []).map(x=>({ d:x.obs_date, w:+x.water_pct || 0, i:x.wet_idx==null ? null : +x.wet_idx }));
   const last = cyc[cyc.length-1], recent = cyc.filter(c=>c.start >= y1 && c.rot);
   const avg = (arr, k) => arr.length ? Math.round(arr.reduce((a,c)=>a + c[k], 0)/arr.length) : "—";
   const ha = (+p.area_m2||0)/10000, milkYear = cyc.filter(c=>c.start >= y1).reduce((a,c)=>a + c.milk, 0);
@@ -1891,7 +1974,9 @@ async function loadPaddock(id){
   $("psBody").innerHTML = `<div class="card">
       <div style="display:flex;justify-content:space-between;align-items:baseline;gap:8px"><h2>${esc(p.predio)} ${esc(p.number)}</h2>
         <button class="lnk" data-pshome>‹ Potreros</button></div>
-      <div class="sub">${[psHa(p), p.forage].filter(Boolean).map(esc).join(" · ") || "Sin área registrada"}</div>
+      <div class="sub">${(()=>{ const sown = psSown(works, p.forage), fg = p.forage ? p.forage[0] + p.forage.slice(1).toLowerCase() : "";
+        return [psHa(p) ? esc(psHa(p)) : "Sin área registrada", sown?.label ? `<b style="color:var(--ink)">🌱 ${esc(sown.label)}</b>` : esc(fg),
+          sown ? `sembrado el ${fmt(sown.d)}${days(sown.d, today()) >= 365 ? ` (hace ${(days(sown.d, today())/365).toLocaleString("es-CO", { maximumFractionDigits:1 })} años)` : ` (hace ${days(sown.d, today())} días)`}` : ""].filter(Boolean).join(" · "); })()}</div>
       ${(olds||[]).length ? `<div class="calf-note">Incluye ${olds.map(o=>`${esc(o.predio.toLowerCase())} ${esc(o.number)}`).join(", ")} (unido desde ${fmt(olds[0].merged_on)})</div>` : ""}
       ${into ? `<div class="warn">Se unió a <button class="lnk" data-ps="${into.id}">${esc(into.predio)} ${esc(into.number)}</button> el ${fmt(p.merged_on)}</div>` : ""}
       <div class="rpk" style="margin-top:12px">
@@ -1918,7 +2003,14 @@ async function loadPaddock(id){
           <span class="sub">${c[2]} · imagen del ${fmt(lv.d)}${days(lv.d, today()) > 12 ? " (las nubes no dejan ver desde entonces)" : ""}</span></div>
         <div id="psNdmiChart" style="margin-top:6px"></div>
         <div class="legend" style="margin-top:6px">${PS_NDMI.map(x=>`<span><i style="background:var(${x[1]})"></i>${x[2]}</span>`).join("")}</div>
-        <div class="sub" style="margin-top:4px">NDMI de Sentinel-2 (20 m): mide el agua en las hojas. Baja cuando el pasto se seca (verano, falta de riego) y sube con lluvia o riego. La franja azul son los días con ganado.</div></div>`; })() : ""}
+        <div class="sub" style="margin-top:4px">NDMI de Sentinel-2 (20 m): mide el agua en las hojas, no la del suelo. Baja cuando el pasto se seca, recién pastoreado (poca hoja) o con agua encima. La franja azul son los días con ganado.</div></div>`; })() : ""}
+    ${wo.length ? (()=>{ const lw = wo[wo.length-1], c = psWetCls(lw.i, lw.w);
+      return `<div class="card"><b>🌊 Encharcamiento y humedad del suelo (radar)</b>
+        <div class="row" style="align-items:baseline;gap:10px;margin-top:4px"><b style="font-size:26px;color:var(${c[1]})">${c[2]}</b>
+          <span class="sub">suelo ${lw.i ?? "—"}/100 · agua encima en ${Math.round(lw.w)} % del potrero · radar del ${fmt(lw.d)}</span></div>
+        <div id="psWetChart" style="margin-top:6px"></div>
+        <div class="legend" style="margin-top:6px">${PS_WET.map(x=>`<span><i style="background:var(${x[1]})"></i>${x[2]}</span>`).join("")}</div>
+        <div class="sub" style="margin-top:4px">Radar Sentinel-1 (10 m): ve a través de las nubes. La línea es la humedad del suelo 0–100 comparada con este mismo potrero en el último año (100 = lo más húmedo que se ha visto). Es aproximada: el pasto alto también la sube un poco.</div></div>`; })() : ""}
     <div class="card"><b>Historia</b>
       ${years.map((y, i)=>`<details class="lac" ${i===0 ? "open" : ""}><summary><b>${y}</b> · ${ev.filter(e=>e.d.startsWith(y) && e.kind==="PASTOREO").length} pastoreos · ${ev.filter(e=>e.d.startsWith(y) && e.kind!=="PASTOREO").length} labores</summary>
         <table>${ev.filter(e=>e.d.startsWith(y)).map(e=>`<tr${e.sw ? ` data-swdel="${e.sw}"` : ""}><td>${fmt(e.d)}</td><td>${PS_ICON[e.kind] || "🔧"}</td><td>${e.html}</td></tr>`).join("")}</table></details>`).join("")
@@ -1926,6 +2018,8 @@ async function loadPaddock(id){
   if (nd.data?.length && $("psNdviChart")) psNdviChart($("psNdviChart"), nd.data.map(x=>({ d:x.obs_date, v:+x.ndvi })), oc.data || []);
   if ($("psNdmiChart")) psNdviChart($("psNdmiChart"), nd.data.filter(x=>x.ndmi!=null).map(x=>({ d:x.obs_date, v:+x.ndmi })), oc.data || [],
     { lo:-0.2, hi:0.6, ref:PS_NDMI[1][0], cls:psNdmiCls, color:"--milk" });
+  if ($("psWetChart")) psNdviChart($("psWetChart"), wo.filter(x=>x.i!=null).map(x=>({ d:x.d, v:x.i/100, w:x.w })), oc.data || [],
+    { lo:0, hi:1, ref:0.75, cls:v=>psWetCls(v*100, 0), color:"--wt2" });
 }
 
 // ── Formularios: labor · mover lote · aforo · lluvia (sin señal quedan en el celular) ──
@@ -2080,6 +2174,7 @@ async function flushPastos(){
 }
 $("psBody").addEventListener("change", async e=>{ if (e.target.name==="psTabR"){ psTab = e.target.value; renderPastos(); }
   if (e.target.name==="psView"){ psView = e.target.value; renderPastos(); return; }
+  if (e.target.dataset.dzvar){ psDz.vars[e.target.dataset.dzvar] = e.target.value; renderPastos(); return; }   // dosis variable de hoy
   if (e.target.id==="psLabSel"){ psLab = e.target.value; if (psLab) await psLoadLast(psLab); renderPastos(); } });
 $("psBody").addEventListener("click", async e=>{
   const t = e.target, q = attr => t.closest(`[${attr}]`)?.getAttribute(attr);
@@ -2215,6 +2310,18 @@ const psNdviCls = v => PS_NDVI.find(x=>v >= x[0]);
 // escala de azul (mucha agua) a blanco (seco), Juan 11/11/2026
 const PS_NDMI = [[0.4, "--nd1", "bien de agua"], [0.3, "--nd2", "normal"], [0.2, "--nd3", "secándose"], [-1, "--nd4", "seco / estrés"]];
 const psNdmiCls = v => PS_NDMI.find(x=>v >= x[0]);
+// encharcamiento y humedad del suelo (radar Sentinel-1, ve a través de las nubes): potreros/satelite/encharcamiento.py
+//   agua encima = % del potrero con VV < -18 dB · humedad 0–100 = VV de esa fecha entre el más seco y el más húmedo de ese potrero
+const PS_WET = [["water", "--wt1", "agua encima"], [75, "--wt2", "muy húmedo"], [50, "--wt3", "húmedo"], [25, "--wt4", "normal"], [-1, "--wt5", "seco"]];
+const PS_WATER_PCT = 15;   // % del potrero con agua encima para marcarlo encharcado
+const psWetCls = (idx, water) => water >= PS_WATER_PCT ? PS_WET[0] : PS_WET.slice(1).find(x=>(idx ?? 0) >= x[0]);
+let psWet = {};
+async function psLoadWet(farm){
+  if (psWet[farm]) return psWet[farm];
+  const r = await psAll(()=>sb.from("paddock_wet").select("paddock_id,obs_date,orbit,water_pct,wet_idx").eq("farm_id", farm)
+    .gte("obs_date", addDays(today(), -400)).order("obs_date"));
+  return psWet[farm] = r.error ? [] : r.data.map(x=>({ id:x.paddock_id, d:x.obs_date, w:+x.water_pct || 0, i:x.wet_idx==null ? null : +x.wet_idx }));
+}
 async function psLoadNdvi(farm){
   if (psNdvi[farm]) return psNdvi[farm];
   let r = await psAll(()=>sb.from("paddock_ndvi").select("paddock_id,obs_date,ndvi,ndmi").eq("farm_id", farm).eq("haze", false)
@@ -2257,13 +2364,13 @@ async function renderMap(box){
   box.innerHTML = `<b>🗺️ Mapa</b>
     <div class="row" style="align-items:center;margin:6px 0"><button class="btn ghost" data-psday="-1" style="flex:0 0 52px">‹</button>
       <input type="date" id="psDay" value="${psMapDay}" max="${today()}"><button class="btn ghost" data-psday="1" style="flex:0 0 52px">›</button></div>
-    <div class="sheet" style="padding:0;background:none;max-height:none;margin-bottom:6px">${seg("psMapM", [["rest","Días de descanso"],["ndvi","🛰️ Verdor"],["ndmi","💧 Humedad"]], psMapMode)}</div>
+    <div class="sheet" style="padding:0;background:none;max-height:none;margin-bottom:6px">${seg("psMapM", [["rest","Días de descanso"],["ndvi","🛰️ Verdor"],["ndmi","💧 Humedad"],["wet","🌊 Encharcamiento"]], psMapMode)}</div>
     <div id="psMap" style="height:420px;border-radius:12px;overflow:hidden"></div>
     <div class="legend" id="psMapLeg" style="margin-top:8px"></div>
     <div class="sub" id="psDayTxt" style="margin-top:4px"></div>`;
   try{ await psLeaflet(); }catch(e){ $("psMap").innerHTML = `<div class="empty">No se pudo cargar el mapa</div>`; return; }
   const d = await psLoadYear(); if (d.error) return;
-  const nd = await psLoadNdvi(psFarm);
+  const nd = await psLoadNdvi(psFarm), wt = await psLoadWet(psFarm);
   if (psMapObj){ psMapObj.remove(); psMapObj = null; }
   const m = psMapObj = L.map("psMap", { zoomControl:true, attributionControl:true, zoomSnap:0.5 });
   L.tileLayer("https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}", { maxZoom:19, attribution:"Esri" }).addTo(m);
@@ -2295,16 +2402,22 @@ async function renderMap(box){
       const sat = psMapMode==="ndvi" || psMapMode==="ndmi", hum = psMapMode==="ndmi";
       const nv = sat ? nd.filter(x=>x.id===g.id && x.d <= D && days(x.d, D) <= 20 && (!hum || x.m!=null)).pop() : null;
       const val = nv ? (hum ? nv.m : nv.v) : null;
-      const c = sat ? (nv ? (hum ? psNdmiCls(val) : psNdviCls(val))[1] : "--line")
+      // encharcamiento: la imagen de radar más reciente hasta ese día (máx. 14 días antes)
+      const wet = psMapMode==="wet", wv = wet ? wt.filter(x=>x.id===g.id && x.d <= D && days(x.d, D) <= 14).pop() : null;
+      const c = wet ? (wv ? psWetCls(wv.i, wv.w)[1] : "--line") : sat ? (nv ? (hum ? psNdmiCls(val) : psNdviCls(val))[1] : "--line")
         : lots ? "--milk" : rest==null ? "--line" : rest < PS_TARGET*0.6 ? "--s4" : rest < PS_TARGET ? "--s2" : "--s0";
-      const poly = L.polygon(g.geom, { color: lots ? "#fff" : hum ? css("--nd1") : css(c), weight: lots ? 3 : hum ? 1 : 1.5, fillColor: css(c), fillOpacity: lots ? .25 : hum ? .8 : .4 }).addTo(layer);
-      poly.bindTooltip(`${esc(p.number)}${lots ? " · " + esc([...lots].join(" + ")) : ""}${nv ? " · " + val.toFixed(2) : ""}`, { permanent:true, direction:"center", className:"psmaplbl" + (lots ? " on" : "") });
-      poly.bindPopup(`<b>${esc(p.predio)} ${esc(p.number)}</b><br>${lots ? "Con " + esc([...lots].join(" + ")) + (heads[g.id] ? ` · ${heads[g.id]} animales` : "") : rest==null ? "Sin pastoreos" : rest + " d de descanso"}${nv ? `<br>Verdor ${nv.v.toFixed(2)} (${psNdviCls(nv.v)[2]}, imagen ${fmt(nv.d)})${nv.m!=null ? `<br>Humedad ${nv.m.toFixed(2)} (${psNdmiCls(nv.m)[2]})` : ""}` : ""}<br><a href="#pastos/${p.id}">Ver hoja de vida</a>`);
+      const poly = L.polygon(g.geom, { color: lots ? "#fff" : hum ? css("--nd1") : wet ? "#fff" : css(c), weight: lots ? 3 : hum || wet ? 1 : 1.5, fillColor: css(c), fillOpacity: lots ? .25 : hum || wet ? .8 : .4 }).addTo(layer);
+      poly.bindTooltip(`${esc(p.number)}${lots ? " · " + esc([...lots].join(" + ")) : ""}${wet ? (wv ? " · " + (wv.w >= PS_WATER_PCT ? Math.round(wv.w) + "% agua" : (wv.i ?? "—")) : "") : nv ? " · " + val.toFixed(2) : ""}`, { permanent:true, direction:"center", className:"psmaplbl" + (lots ? " on" : "") });
+      poly.bindPopup(`<b>${esc(p.predio)} ${esc(p.number)}</b><br>${lots ? "Con " + esc([...lots].join(" + ")) + (heads[g.id] ? ` · ${heads[g.id]} animales` : "") : rest==null ? "Sin pastoreos" : rest + " d de descanso"}${nv ? `<br>Verdor ${nv.v.toFixed(2)} (${psNdviCls(nv.v)[2]}, imagen ${fmt(nv.d)})${nv.m!=null ? `<br>Humedad ${nv.m.toFixed(2)} (${psNdmiCls(nv.m)[2]})` : ""}` : ""}${wv ? `<br>🌊 ${psWetCls(wv.i, wv.w)[2]} · suelo ${wv.i ?? "—"}/100 · agua encima ${Math.round(wv.w)} % (radar ${fmt(wv.d)})` : ""}<br><a href="#pastos/${p.id}">Ver hoja de vida</a>`);
       if (lots) psCowsIn(g, heads[g.id]).forEach(([pt, flip])=>L.marker(pt, { icon:L.divIcon({ className:"pscow", html:PS_COW(flip), iconSize:[26, 18], iconAnchor:[13, 9] }),
         interactive:false, keyboard:false }).addTo(layer));
     });
     const hum = psMapMode==="ndmi", lastImg = nd.filter(x=>x.d <= D && (!hum || x.m!=null)).map(x=>x.d).pop();
-    $("psMapLeg").innerHTML = psMapMode==="ndvi" || hum
+    const lastWet = wt.filter(x=>x.d <= D).map(x=>x.d).pop();
+    $("psMapLeg").innerHTML = psMapMode==="wet"
+      ? PS_WET.map(x=>`<span><i style="background:var(${x[1]})"></i>${x[2]}</span>`).join("") + `<span><i style="background:var(--line)"></i>sin dato</span>`
+        + `<span class="sub" style="width:100%">${lastWet ? "Última imagen de radar hasta ese día: " + fmt(lastWet) : wt.length ? "Sin radar hasta ese día" : "Aún no hay datos de radar: corre ACTUALIZAR_SATELITE.bat"} · Radar Sentinel-1 (ve a través de las nubes). El número es la humedad del suelo 0–100 comparada con el mismo potrero en el último año; "agua encima" = parte del potrero con agua quieta.</span>`
+      : psMapMode==="ndvi" || hum
       ? (hum ? PS_NDMI : PS_NDVI).map(x=>`<span><i style="background:var(${x[1]})"></i>${x[2]}</span>`).join("") + `<span><i style="background:var(--line)"></i>sin imagen (nubes)</span>`
         + `<span class="sub" style="width:100%">${lastImg ? "Última imagen hasta ese día: " + fmt(lastImg) : nd.length ? "Sin imágenes hasta ese día" : "Aún no hay datos satelitales: corre ACTUALIZAR_SATELITE.bat"}${hum ? " · Humedad = NDMI (agua en las hojas)" : ""}</span>`
       : `<span><i style="background:var(--milk)"></i>con ganado ese día</span><span><i style="background:var(--s4)"></i>&lt; ${Math.round(PS_TARGET*0.6)} d</span>
