@@ -3669,6 +3669,7 @@ const rqShown = () => { const tk = rqTokens(), dry = rq.type==="dry_off";
   const L = rqShown0(tk, dry);
   // secado: ordenar por la última leche (las más bajitas primero; sin pesaje al final)
   if (dry && rq.dryOrd==="milk"){ const kg = c => rqDryInfo(c).lastKg ?? 1e9; return L.sort((a, b)=>kg(a) - kg(b) || byNum(a.id, b.id)); }
+  if (dry) return L.sort((a, b)=>byNum(a.id, b.id));   // secado "por número": de menor a mayor
   return L; };
 const rqShown0 = (tk, dry) => { 
   return rqCows.filter(c=>(!rq.pen || (c.pen||"—")===rq.pen) && (!tk.length || (tk.length > 1 ? tk.includes(c.id) : c.id.includes(tk[0])))
@@ -4288,16 +4289,18 @@ async function rcLoad(){
   if (!navigator.onLine){ rcData = jget(`rcData:${farm}`, null); return; }
   $("rcBody").innerHTML = `<div class="card"><div class="empty">Descargando vacas, pesajes y ración actual…</div></div>`;
   const since = addDays(today(), -75);
-  const [c, m, k, e, dm] = await Promise.all([
+  const [c, m, k, e, dm, dp] = await Promise.all([
     psAll(()=>sb.from("cows").select("id,pen,status,lactation_num,last_calving").eq("farm_id", farm).eq("active", true).order("id")),
     psAll(()=>sb.from("cow_milk").select("cow_id,test_date,total_kg,adjusted_kg,cows!inner(farm_id)").eq("cows.farm_id", farm).gte("test_date", since).not("total_kg", "is", null).order("test_date")),
     psAll(()=>sb.from("cow_concentrate").select("cow_id,rec_date,kg_day,source,cows!inner(farm_id)").eq("cows.farm_id", farm).gte("rec_date", addDays(today(), -180)).order("rec_date")),
     psAll(()=>sb.from("cow_events").select("cow_id,event_date,event_type,cows!inner(farm_id)").eq("cows.farm_id", farm).in("event_type", ["service","calving"]).gte("event_date", addDays(today(), -420)).order("event_date")),
     sb.from("daily_milk").select("pen,rec_date,total_l,concentrate_bags").eq("farm_id", farm).gte("rec_date", since),
+    sb.from("cow_plans").select("cow_id,due_date").eq("farm_id", farm).eq("plan_type", "secado").eq("status", "pending"),   // secados programados
   ]);
   if (c.error || m.error){ $("rcBody").innerHTML = `<div class="card"><div class="empty">No se pudo cargar: ${esc((c.error || m.error).message)}</div></div>`; rcData = null; return; }
   rcData = { farm, at:Date.now(), cows:c.data, milk:m.data.map(x=>[x.cow_id, x.test_date, +x.total_kg, x.adjusted_kg!=null ? +x.adjusted_kg : null]),
-    conc:(k.data||[]).map(x=>[x.cow_id, x.rec_date, +x.kg_day, x.source]), ev:(e.data||[]).map(x=>[x.cow_id, x.event_date, x.event_type]), tank:dm.data || [] };
+    conc:(k.data||[]).map(x=>[x.cow_id, x.rec_date, +x.kg_day, x.source]), ev:(e.data||[]).map(x=>[x.cow_id, x.event_date, x.event_type]), tank:dm.data || [],
+    dryPlans:dp.error ? [] : (dp.data || []).map(x=>[x.cow_id, x.due_date]) };
   try{ jset(`rcData:${farm}`, rcData); }catch(err){}
 }
 // cada vaca en ordeño de los lotes de producción: litros ajustados, caída, DIM, secado, previa → ración
@@ -4311,7 +4314,9 @@ function rcCompute(){
   d.conc.forEach(([id, dt, kg, src])=>{ if (own(src)) conc[id] = { d:dt, kg, src }; else ih[id] = { d:dt, kg, src }; });
   Object.keys(ih).forEach(id=>{ if (!conc[id]) conc[id] = ih[id]; });
   d.ev.forEach(([id, dt, t])=>(ev[id] ||= []).push({ d:dt, t }));
-  return d.cows.filter(c=>pens.includes(c.pen) && /(^|\/)Lac/.test(c.status || "")).map(c=>{
+  // las vacas con secado programado (Ingreso rápido o hoja de vida) salen de la suplementación
+  const dryP = new Set((d.dryPlans || []).map(x=>x[0]));
+  return d.cows.filter(c=>pens.includes(c.pen) && /(^|\/)Lac/.test(c.status || "") && !dryP.has(c.id)).map(c=>{
     const C = c.last_calving, w = (milk[c.id] || []).filter(x=>!C || x.d >= C), last = w[w.length-1];   // solo esta lactancia
     const win = last ? w.filter(x=>x.d >= addDays(last.d, -30)).slice(-4) : [];
     const litros = last ? last.l : null, prevs = win.slice(0, -1).slice(-3).map(x=>x.l);
@@ -4384,6 +4389,8 @@ function renderRacion(){
         ${RC_RNG.map(([k, t])=>`<span class="sub">${t}</span><input type="number" inputmode="decimal" placeholder="desde" data-rcr="${k}|0" value="${esc((s.rng[k]||[])[0] ?? "")}" style="min-width:0;padding:8px">
           <input type="number" inputmode="decimal" placeholder="hasta" data-rcr="${k}|1" value="${esc((s.rng[k]||[])[1] ?? "")}" style="min-width:0;padding:8px">`).join("")}</div></details>
       ${nFilt ? `<div class="sub" style="margin-top:6px"><b>${rows.length}</b> vacas con estos filtros · <button class="lnk" id="rcClear">quitar filtros</button></div>` : ""}
+      ${(()=>{ const pp = (jget("mkFarms", []).find(f=>f.id===d.farm)?.pens) || [], out = d.cows.filter(c=>pp.includes(c.pen) && /(^|\/)Lac/.test(c.status || "") && (d.dryPlans || []).some(x=>x[0]===c.id));
+        return out.length ? `<div class="sub" style="margin-top:6px">🌙 Fuera por secado programado: ${out.sort((a, b)=>byNum(a.id, b.id)).map(c=>`<b>${esc(c.id)}</b> (${fmt((d.dryPlans.find(x=>x[0]===c.id) || [])[1] || "")})`).join(", ")}</div>` : ""; })()}
       <div class="sub" style="margin-top:6px">Datos de hace ${Math.round((Date.now() - d.at)/6e4)} min · <button class="lnk" id="rcReload">actualizar</button></div></div>
     <div id="rcFeed"></div>
     <div class="rpk" style="margin-bottom:14px">${penCards}</div>
