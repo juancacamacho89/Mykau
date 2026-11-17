@@ -381,6 +381,7 @@ details.lac td{padding:6px 8px}
         <div class="sub">Score ≥ 2 en la última sesión</div>
         <div id="watch" class="list"></div>
       </div>
+      <div class="card usHistOnly" id="usHistTx"></div>
     </section>
 
     <!-- ═══ PESAJE DE LECHE (funciona sin internet) ═══ -->
@@ -686,6 +687,8 @@ const adminNow = () => ADMIN_PROFILES.includes(myProfile) || perms.registros_tod
 let isAdmin = adminNow();
 // administrador principal: SOLO por nombre de perfil (corrige/borra todo y ve el sexo en el DPR)
 const isMain = () => ADMIN_PROFILES.includes(myProfile);
+// cambiar o borrar una foto que ya existe: solo Admin Principal y Gerente (los demás con permiso solo suben la primera)
+const photoBoss = () => isMain() || myProfile==="Gerente";
 // "Cargada Hembra/Macho" → "Cargada" para los demás perfiles
 const noSex = r => r == null || isMain() ? r : String(r).replace(/^(cargad[ao])\s+(hembra|macho)\b/i, "$1");
 async function loadRole(){
@@ -1051,8 +1054,8 @@ function renderCow(d){
     <div class="cowhead">
       <div class="photo" id="photoBox">
         ${photoUrl ? `<img src="${esc(photoUrl)}" alt="Foto de ${esc(c.id)}" id="cowImg">` : `Sin foto`}
-        ${canDo("vacas_foto") ? `<label>📷 ${photoUrl?"Cambiar":"Foto"}<input type="file" accept="image/*" id="photoIn" hidden></label>` : ""}
-        ${photoUrl && myProfile==="Admin Principal" ? `<button class="phdel" id="photoDel" title="Borrar foto">🗑</button>` : ""}
+        ${canDo("vacas_foto") && (!photoUrl || photoBoss()) ? `<label>📷 ${photoUrl?"Cambiar":"Foto"}<input type="file" accept="image/*" id="photoIn" hidden></label>` : ""}
+        ${photoUrl && photoBoss() ? `<button class="phdel" id="photoDel" title="Borrar foto">🗑</button>` : ""}
       </div>
       <div style="min-width:0">
         <h2>${esc(c.id)}</h2>
@@ -9649,13 +9652,15 @@ function usNew(keep){
   usCur = { date: k.date || today(), scorer: k.scorer || store.get("usScorer") || "", calf:"", birth:"", age:"", weight:"", score:null, lobes:[], jb2:false, comment:"" };
 }
 function usSetTab(t){
+  if (!isMain()) t = "hist";
   usTab = t;
-  $("usTabs").innerHTML = seg("usT", [["hist","Historial"], ...(canDo("terneras_registrar") ? [["reg","Registrar"]] : []), ["sug","Tratamientos"]], usTab);
+  $("usTabs").innerHTML = isMain() ? seg("usT", [["hist","Historial"], ...(canDo("terneras_registrar") ? [["reg","Registrar"]] : []), ["sug","Tratamientos"]], usTab) : "";
   document.querySelectorAll(".usHistOnly").forEach(el=>el.classList.toggle("hidden", usTab!=="hist"));
   $("usReg").classList.toggle("hidden", usTab!=="reg");
   $("usSug").classList.toggle("hidden", usTab!=="sug");
   if (usTab==="reg"){ if (!usCur) usNew(); renderUs(); usLoadToday(); }
   if (usTab==="sug") renderSug();
+  if (usTab==="hist") renderHistTx();
 }
 function renderUs(){
   const c = usCur, farm = $("finca").selectedOptions[0]?.textContent || "";
@@ -9820,7 +9825,7 @@ $("usReg").addEventListener("click", async e=>{
     try{ if (navigator.share) await navigator.share({ text:txt }); else { await navigator.clipboard.writeText(txt); toast("Resumen copiado"); } }catch(x){} }
 });
 $("usTabs").addEventListener("change", e=>{ if (e.target.name==="usT") usSetTab(e.target.value); });
-$("finca").addEventListener("change", ()=>{ if (usTab==="reg"){ usHist = {}; renderUs(); usLoadToday(); } if (usTab==="sug"){ sgDate = null; renderSug(true); } });
+$("finca").addEventListener("change", ()=>{ if (usTab==="hist") renderHistTx(); if (usTab==="reg"){ usHist = {}; renderUs(); usLoadToday(); } if (usTab==="sug"){ sgDate = null; renderSug(true); } });
 
 // ═══════════════════════ NEUMONÍA · SUGERENCIAS DE TRATAMIENTO ═══════════════
 // El mismo motor de neumonias/auto_import.py (get_recommendation + compute_drug_stats) y los niveles de protocolo.json:
@@ -9919,7 +9924,7 @@ async function renderSug(force){
   $("usSug").innerHTML = `<div class="card"><div class="row" style="align-items:center;gap:8px"><b style="flex:1">Sesión</b>
       <select id="sgDate" style="width:auto">${[...new Set([d, ...dates])].map(x=>`<option value="${x}" ${x===d ? "selected" : ""}>${fmt(x)}</option>`).join("")}</select></div>
       <div class="sub" style="margin-top:6px">${rows.length} terneras con score ≥ 2${pend ? ` · ⚠️ ${pend} ecografías de ese día aún no se han subido` : ""} · niveles: Primera línea → Intermedio (score 4 o 2ª vez) → Reserva (score 5 o 3ª vez)</div>
-      ${rows.length ? `<button class="btn ghost" id="sgShare" style="margin-top:8px">📄 Compartir reporte (PDF)</button>` : ""}</div>
+      ${rows.length && isMain() ? `<button class="btn ghost" id="sgShare" style="margin-top:8px">📄 Compartir reporte (PDF)</button>` : ""}</div>
     ${rows.map(e=>{ const h = sgHistory(e.animal_id, d, +e.score), r = sgRecommend(+e.score, h);
       const done = (sgData.txByA[e.animal_id] || []).filter(t=>t.treatment_date===d);
       return `<div class="card" data-sga="${e.animal_id}" data-sge="${e.id}">
@@ -9938,6 +9943,27 @@ async function renderSug(force){
       </div>`; }).join("") || `<div class="card"><div class="empty">Ninguna ternera con score ≥ 2 en esa sesión 👍</div></div>`}`;
 }
 $("usSug").addEventListener("change", e=>{ if (e.target.id==="sgDate"){ sgDate = e.target.value; renderSug(); } });
+// Historial: tratamientos de las sesiones pasadas (sencillo: ternera, score y lo que se le aplicó)
+let usHtDate = null;
+async function renderHistTx(){
+  const box = $("usHistTx"); if (!box) return;
+  if (!navigator.onLine){ box.innerHTML = `<b>💉 Tratamientos por sesión</b><div class="sub">Necesita señal</div>`; return; }
+  box.innerHTML = `<b>💉 Tratamientos por sesión</b><div class="sub">Cargando…</div>`;
+  await sgLoad(); if (!sgData){ box.innerHTML = ""; return; }
+  const dates = [...new Set(sgData.ex.map(e=>e.exam_date))].sort().reverse().slice(0, 15);
+  const d = usHtDate && dates.includes(usHtDate) ? usHtDate : dates[0];
+  if (!d){ box.innerHTML = `<b>💉 Tratamientos por sesión</b><div class="sub">Todavía no hay sesiones.</div>`; return; }
+  const rows = sgData.ex.filter(e=>e.exam_date===d && +e.score >= 2).sort((a, b)=>byNum(String(a.animals?.calf_id), String(b.animals?.calf_id)));
+  const all = sgData.ex.filter(e=>e.exam_date===d).length;
+  box.innerHTML = `<div class="row" style="align-items:center;gap:8px"><b style="flex:1">💉 Tratamientos por sesión</b>
+      <select id="usHtDate" style="width:auto">${dates.map(x=>`<option value="${x}" ${x===d ? "selected" : ""}>${fmt(x)}</option>`).join("")}</select></div>
+    <div class="sub" style="margin-top:4px">${all} terneras escaneadas · ${rows.length} con score ≥ 2</div>
+    <table style="font-size:14px;width:100%;margin-top:6px"><tr><th>Ternera</th><th>Score</th><th>Tratamiento</th></tr>
+      ${rows.map(e=>{ const tx = (sgData.txByA[e.animal_id] || []).filter(t=>t.treatment_date===d).map(t=>t.drugs?.name).filter(Boolean);
+        return `<tr><td><b>${esc(e.animals?.calf_id ?? "")}</b></td><td>${badge(+e.score)}</td><td>${tx.length ? `<b>${esc(tx.join(" + "))}</b>` : `<span class="sub">sin registrar</span>`}</td></tr>`; }).join("")
+        || `<tr><td colspan="3"><div class="empty">Ninguna ternera con score ≥ 2 👍</div></td></tr>`}</table>`;
+}
+document.addEventListener("change", e=>{ if (e.target.id==="usHtDate"){ usHtDate = e.target.value; renderHistTx(); } });
 // reporte en PDF (formato "Reporte de Ecografía Pulmonar"): escaneadas, con tratamiento, % sanas y la lista con su antibiótico
 async function sgPdf(){
   let JsPDF; try{ JsPDF = await lsLoadJsPdf(); }catch(e){ return toast("Se necesita señal la primera vez para armar el PDF"); }
