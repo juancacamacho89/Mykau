@@ -845,6 +845,23 @@ async function homeAbx(){
   const box = $("homeAbx"); if (!box) return;
   if (!canSee("inicio_antibiotico") || !navigator.onLine){ box.innerHTML = ""; return; }
   const t0 = today(), y = addDays(t0, -1);
+  // por lote: ✅ cuando todos los lotes de la finca ya registraron (tarde de ayer y mañana de hoy), 🟡 si falta alguno
+  const pz = await sb.rpc("abx_milk_pens", { p_day:t0 });
+  if (!pz.error && pz.data?.length){
+    const PEN_N = { JCAL:"Juncal", PARAI:"Paraíso" };
+    const fs = [...new Set(pz.data.map(r=>r.farm_id))].sort((a, b)=>b - a);
+    const rows = fs.map(f=>{
+      const ps = pz.data.filter(r=>r.farm_id===f).sort((a, b)=>a.sort - b.sort), done = r => r.pm_ok && r.am_ok;
+      const nDone = ps.filter(done).length, all = nDone===ps.length;
+      const icon = all ? `<span title="todos los lotes registrados" style="color:var(--s0)">✅</span>` : nDone || ps.some(r=>r.pm_ok || r.am_ok) ? `<span title="falta algún lote">🟡</span>` : `<span title="sin registrar">⏳</span>`;
+      const pm = ps.reduce((a, r)=>a + (+r.pm_l || 0), 0), am = ps.reduce((a, r)=>a + (+r.am_l || 0), 0);
+      const chip = r => `<span class="tag" style="${done(r) ? "background:var(--s0);color:#fff" : ""}" title="tarde de ayer ${r.pm_ok ? "✓" : "falta"} · mañana de hoy ${r.am_ok ? "✓" : "falta"}">${done(r) ? "✓" : r.pm_ok || r.am_ok ? "◐" : "⏳"} ${esc(PEN_N[r.pen] || r.pen)}${!done(r) && (r.pm_ok || r.am_ok) ? ` <small>falta ${r.pm_ok ? "mañana" : "tarde"}</small>` : ""}</span>`;
+      return `<div style="margin-top:8px"><div style="display:flex;justify-content:space-between;gap:8px;align-items:baseline">
+          <span>${icon} <b>${f===7 ? "La Isla" : "El Recodo"}</b> <span class="sub">tarde de ayer ${pm} L + mañana de hoy ${am} L</span></span><b style="font-size:20px;white-space:nowrap">${pm + am} L</b></div>
+        <div class="list" style="margin-top:4px">${ps.map(chip).join("")}</div></div>`; });
+    box.innerHTML = `<div class="card" style="margin:14px 0 0"><b>🍼 Leche de antibiótico para terneras</b>${rows.join("")}</div>`;
+    return;
+  }
   // todas las fincas (solo los litros de antibiótico), aunque el usuario no tenga acceso a la otra finca
   let { data, error } = await sb.rpc("abx_milk", { p_from:y, p_to:t0 });
   if (error) ({ data } = await sb.from("daily_milk").select("farm_id,pen,rec_date,am_abx_l,pm_abx_l").in("rec_date", [y, t0]));
@@ -7909,7 +7926,14 @@ function parseKg(t){
   if (!t.includes(".") && n > 60) n = n/10;
   return Math.round(n*10)/10;
 }
-let mkFarms = null, mkCur = null;   // mkCur = planilla abierta {key, ses, ...draft}
+let mkFarms = null, mkCur = null;
+// vacas activas de la finca {id: lote}, para comprobar los números (copia en el celular para usar sin señal)
+const mkAllC = {};
+const mkAll = farm => farm in mkAllC ? mkAllC[farm] : (mkAllC[farm] = jget(`mkAll:${farm}`, null));
+async function mkLoadAll(farm){
+  const r = await psAll(()=>sb.from("cows").select("id,pen").eq("farm_id", farm).eq("active", true).order("id"));
+  if (!r.error && r.data?.length){ mkAllC[farm] = Object.fromEntries(r.data.map(c=>[c.id, c.pen || ""])); jset(`mkAll:${farm}`, mkAllC[farm]); jset(`mkAllAt:${farm}`, Date.now()); }
+}   // mkCur = planilla abierta {key, ses, ...draft}
 let mkGoto = null;   // desde Registros: {farm, herd, pen, date} → abre esa planilla con lo que está en Mykau
 async function mkOpenSaved(g){
   if (!navigator.onLine) return toast("Para editar una planilla subida necesitas señal");
@@ -8016,6 +8040,7 @@ async function loadLot(farm, pen, date){
           .in("cow_id", ids.slice(i,i+150)).gte("test_date", since).lt("test_date", date).order("test_date");
         (m||[]).forEach(r=>{ prev[r.cow_id] = { d:r.test_date, am:r.am_kg, pm:r.pm_kg, t:r.total_kg }; });
       }
+      await mkLoadAll(farm);
       const lot = { cows:ids, prev, at:Date.now() }; jset(ck, lot); return lot;
     }
   }
@@ -8027,6 +8052,8 @@ function openSheet(key, ses, d0){
   const d = jget(key, null) || d0;
   if (!d?.cows) return toast("No se pudo abrir la planilla: vuelve a intentar con señal");
   mkCur = { key, ses, am:{}, pm:{}, note:{}, prev:{}, ...d };
+  if (navigator.onLine && !(Date.now() - jget(`mkAllAt:${d.farm}`, 0) < 6*3600e3))
+    mkLoadAll(d.farm).then(()=>{ if (mkCur?.key===key) renderSheet(); }, ()=>{});
   $("mkSetup").classList.add("hidden"); $("mkSheet").classList.remove("hidden");
   renderSheet(); window.scrollTo({top:0});
   const first = $("mkSheet").querySelector("input.kg:not(:disabled)"); first && first.focus();
@@ -8043,8 +8070,8 @@ function renderSheet(){
       <button class="lnk" id="mkBack">Cerrar</button></div>
     <div class="sub" style="margin:6px 0">Escribe <b>168</b> y queda 16.8. Amarillo = muy distinto al control anterior.</div>
     <table><tr><th>Vaca</th><th>Anterior</th><th>${SES[s]} kg</th><th>${SES[other]}</th><th>Nota</th></tr>
-    ${d.cows.map(id=>{ const p = d.prev[id], v = d[s][id], nt = d.note[id] || "";
-      return `<tr class="${MK_SKIP.test(nt)?"off":""}"><td class="n">${esc(id)}</td>
+    ${d.cows.map(id=>{ const p = d.prev[id], v = d[s][id], nt = d.note[id] || "", all = mkAll(d.farm), nope = all && !(id in all);
+      return `<tr class="${MK_SKIP.test(nt)?"off":""}"${nope ? ` style="background:rgba(224,0,0,.12)"` : ""}><td class="n">${esc(id)}${nope ? `<div style="font-size:10px;color:var(--s4);font-weight:800">no existe</div><button class="del" data-mkrm="${esc(id)}" tabindex="-1">✕ quitar</button>` : ""}</td>
         <td class="prev">${p ? `${p[s]??"—"}<br><span style="font-size:10px">${fmt(p.d)}</span>` : "—"}</td>
         <td style="white-space:nowrap"><input class="kg" inputmode="decimal" enterkeyhint="next" data-id="${esc(id)}" value="${v??""}" ${MK_SKIP.test(nt)?"disabled":""}><button class="mkalt hidden" data-id="${esc(id)}" tabindex="-1"></button></td>
         <td class="prev">${d[other][id] ?? ""}</td>
@@ -8106,11 +8133,23 @@ $("mkSheet").addEventListener("click", async e=>{
   const alt = e.target.closest(".mkalt");
   if (alt){ e.preventDefault(); const inp = alt.parentElement.querySelector("input.kg"), v = +alt.dataset.v;
     inp.value = v; mkCur[mkCur.ses][inp.dataset.id] = v; saveCur(); sumSheet(); markKg(inp); return; }
+  const rm = e.target.closest("[data-mkrm]");
+  if (rm){ const id = rm.dataset.mkrm; if (!confirm(`¿Quitar la vaca ${id} de esta planilla?`)) return;
+    mkCur.cows = mkCur.cows.filter(x=>x!==id); delete mkCur.am[id]; delete mkCur.pm[id]; delete mkCur.note[id]; saveCur(); renderSheet(); return; }
   if (e.target.id==="mkSwap"){ mkCur.ses = mkCur.ses==="am" ? "pm" : "am"; renderSheet(); return; }
   if (e.target.id==="mkBack"){ mkCur = null; $("mkSheet").classList.add("hidden"); $("mkSetup").classList.remove("hidden"); renderDrafts(); return; }
   if (e.target.id==="mkAdd"){
-    const id = $("mkAddId").value.trim().toUpperCase(); if (!id) return;
-    if (!mkCur.cows.includes(id)){ mkCur.cows.push(id); mkCur.cows.sort(byNum); saveCur(); }
+    const id = $("mkAddId").value.trim().toUpperCase().replace(/\s+/g, ""); if (!id) return;
+    if (!mkCur.cows.includes(id)){
+      const all = mkAll(mkCur.farm);
+      // número con forma rara (p. ej. "608..13.2": la vaca y los kilos en la misma casilla)
+      if (!/^[A-Z0-9][A-Z0-9'\-]*(\.[0-9])?$/.test(id))
+        return alert(`⚠️ "${id}" no es un número de vaca.\nEscribe solo el número (los kilos van en la casilla de la vaca).`);
+      if (all && !(id in all))
+        return alert(`⚠️ La vaca ${id} NO existe en Mykau en esta finca.\nRevisa el número. Si es una vaca nueva, primero hay que registrarla (parto o ingreso).`);
+      if (!all && !confirm(`No pude comprobar si la vaca ${id} existe (sin señal). ¿Agregarla igual?`)) return;
+      if (all && all[id] !== mkCur.pen && !confirm(`La vaca ${id} está en el lote ${all[id] || "(sin lote)"}, no en ${mkCur.pen}.\n¿Agregarla igual a esta planilla?`)) return;
+      mkCur.cows.push(id); mkCur.cows.sort(byNum); (mkCur.added ||= []).push(id); saveCur(); }
     renderSheet(); const inp = $("mkSheet").querySelector(`input.kg[data-id="${CSS.escape(id)}"]`); inp && inp.focus(); return;
   }
   if (e.target.id==="mkSave"){
@@ -8120,6 +8159,8 @@ $("mkSheet").addEventListener("click", async e=>{
         && !confirm("Estás guardando el ordeño de la TARDE y todavía es de mañana.\n¿Seguro que es la tarde? (Cancelar para revisar)")) return;
     if (d.date===today() && d.ses==="am" && new Date().getHours() >= 16
         && !confirm("Estás guardando el ordeño de la MAÑANA y ya es de tarde.\n¿Seguro que es la mañana? (Cancelar para revisar)")) return;
+    const all = mkAll(d.farm), nope = all ? d.cows.filter(id=>!(id in all)) : [];
+    if (nope.length) return alert(`⚠️ Estas vacas no existen en Mykau: ${nope.join(", ")}.\nCorrige el número o quítalas (✕ quitar, en rojo). Si se dejan, la planilla no se puede subir.`);
     const bad = $("mkSheet").querySelectorAll("input.kg.warn").length;
     if ((todo.length || bad) && !confirm([todo.length && `Faltan ${todo.length} vacas sin kilos (${todo.slice(0,8).join(", ")}${todo.length>8?"…":""}).`,
         bad && `${bad} valores en amarillo.`, "¿Guardar así?"].filter(Boolean).join("\n"))) return;
@@ -8151,7 +8192,9 @@ async function flushMilk(){
     if (error && mkPenCol && /pen/.test(error.message)){ mkPenCol = false; left.push(key); continue; }
     // leche ajustada: se recalcula con el total del tanque de ese día y lote
     if (!error) sb.rpc("recalc_milk_adjust", { p_farm:d.farm, p_pen:d.pen, p_date:d.date }).then(()=>{}, ()=>{});
-    if (error){ left.push(key); console.warn("leche", key, error.message); continue; }
+    if (error){ left.push(key); console.warn("leche", key, error.message);
+      if (/foreign key|violates|cow_id/i.test(error.message)) toast(`La planilla ${d.pen} ${fmt(d.date)} tiene una vaca que no existe: ábrela y quítala (sale en rojo)`);
+      continue; }
     d.uploaded = Date.now(); d.dirty = false; jset(key, d); sent++;
   }
   jset("mkOutbox", left); flushing = false; updNet();
