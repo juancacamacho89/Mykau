@@ -2444,11 +2444,12 @@ let rgReady = false, rgNames = null, rgState = null;
 async function initRegistros(){
   if (!rgReady){
     rgReady = true;
-    rgState = { farm:"", cat:"", status:"all", user:"", by:"evento", q:"", from:addDays(today(), -30), to:today() };
+    rgState = { farm:"", cat:"", status:"all", user:"", by:"evento", q:"", from:addDays(today(), -30), to:today(), view:jget("rgView", "tablas") };
     $("rgFilters").addEventListener("change", e=>{
       const t = e.target;
       if (t.name==="rgSt") rgState.status = t.value;
       if (t.name==="rgBy") rgState.by = t.value;
+      if (t.name==="rgVw"){ rgState.view = t.value; jset("rgView", t.value); renderRgFilters(); if (rgLast) rgDraw(); return; }
       if (t.name==="rgFa") rgState.farm = t.value;
       if (t.id==="rgUser") rgState.user = t.value;
       if (t.id==="rgFrom") rgState.from = t.value || rgState.from;
@@ -2460,6 +2461,13 @@ async function initRegistros(){
     $("rgFilters").addEventListener("click", e=>{ const fa = e.target.closest("[data-rgfa]");
       if (fa){ const n = farmFlip(rgState.farm, fa.dataset.rgfa, ""); if (n!==rgState.farm){ rgState.farm = n; renderRgFilters(); loadRegistros(); } return; } });
     $("rgFilters").addEventListener("click", e=>{ const b = e.target.closest("[data-rgk]"); if (b){ rgState.cat = b.dataset.rgk; rgPick = { title:"", who:"" }; renderRgFilters(); if (rgLast) rgDraw(); } });
+    $("rgBody").addEventListener("toggle", async e=>{
+      const d = e.target; if (!d.matches?.("[data-rgmkd]") || !d.open) return;
+      const box = d.querySelector("[data-rgmkbody]"); if (!box || box.dataset.done) return;
+      box.dataset.done = "1"; box.innerHTML = `<div class="sub" style="margin-top:6px">Cargando…</div>`;
+      const [farm, herd, pen, date, who] = d.dataset.rgmkd.split("|");
+      box.innerHTML = await rgMkSheet(herd, pen, date, who);
+    }, true);
     $("rgBody").addEventListener("click", async e=>{
       const t = e.target, dl = t.closest("[data-rgdel]"), ed = t.closest("[data-rged]"), dm = t.closest("[data-rgdm]");
       if (dl){
@@ -2502,6 +2510,7 @@ async function initRegistros(){
 function renderRgFilters(){
   const s = rgState, users = Object.entries(rgNames || {}).sort((a,b)=>a[1].localeCompare(b[1]));
   $("rgFilters").innerHTML = `${seg("rgSt", [["all","Todo lo registrado"],["pend","Pendientes de Interherd"]], s.status)}
+    <div style="margin-top:8px">${seg("rgVw", [["tablas","📊 Tablas"],["lista","📋 Lista"]], s.view || "tablas")}</div>
     <div style="margin-top:8px">${farmToggle("data-rgfa", s.farm, "")}</div>
     ${s.status==="all" ? `<div class="chips sm ckpan" style="padding:0;margin-top:6px"><div class="chips sm">${RG_CATS.map(([k,t])=>`<button class="${s.cat===k?"on":""}" data-rgk="${k}">${t}</button>`).join("")}</div></div>
       <div style="margin-top:8px">${seg("rgBy", [["evento","Por fecha del evento"],["registro","Por fecha en que se registró"]], s.by || "evento")}</div>
@@ -2627,7 +2636,7 @@ async function loadRegistros(){
       title:EV[e.event_type] || e.event_type,
       detail:([e.bull && "Toro " + e.bull, noSex(e.result), e.category, e.operator, e.comments].filter(Boolean).join(" · ")
         + (e.event_type==="calving" ? calvingTxt(e).replace(/&amp;/g, "&").replace(/&quot;/g, '"') : "")).replace(/^ · /, ""),
-      status:e.status, raw:{ bull:e.bull, result:noSex(e.result), category:e.category, operator:e.operator, comments:e.comments } }));
+      status:e.status, raw:{ bull:e.bull, result:noSex(e.result), category:e.category, operator:e.operator, comments:e.comments, details:e.details } }));
   })());
   if (want("pesaje")) jobs.push((async()=>{
     // in_interherd: lo marca el importador cuando la "Ult. leche" del listado coincide (SQL/leche_en_interherd.sql)
@@ -2646,10 +2655,10 @@ async function loadRegistros(){
       title:"Pesaje de leche", detail:`${x.pen ? "Lote " + x.pen + " · " : ""}${x.n} vacas · mañana ${x.am} · tarde ${x.pm}`, status: x.app ? "pendiente" : "en Interherd" }));
   })());
   if (want("diaria")) jobs.push((async()=>{
-    const { data } = await sb.from("daily_milk").select("id,farm_id,pen,rec_date,total_l,cows,entered_by,entered_at").eq("source", "app")
+    const { data } = await sb.from("daily_milk").select("*").eq("source", "app")
       .gte("entered_at", qFrom).lt("entered_at", t1).limit(2000);
     (data||[]).forEach(d=>add({ kind:"diaria", icon:"🥛", when:d.entered_at, date:d.rec_date, farm:d.farm_id, who:d.entered_by, id:d.id, pen:d.pen,
-      title:"Leche diaria", detail:`${d.pen} · ${Math.round(d.total_l||0).toLocaleString("es-CO")} L${d.cows ? " · " + d.cows + " vacas" : ""}`, status:"app" }));
+      title:"Leche diaria", detail:`${d.pen} · ${Math.round(d.total_l||0).toLocaleString("es-CO")} L${d.cows ? " · " + d.cows + " vacas" : ""}`, status:"app", dm:d }));
   })());
   if (want("salud")) jobs.push((async()=>{
     const { data } = await sb.from("treatments_cow").select("id,farm_id,cow_id,start_date,diagnosis,protocol,prescribed_by,created_by,created_at,treatment_items(supply_code,dose,unit)")
@@ -2749,7 +2758,7 @@ function rgDraw(){
     ${Object.keys(byType).length ? `<div class="card"><b>${pend ? "⏳ Falta pasar a Interherd" : s.cat ? (RG_CATS.find(c=>c[0]===s.cat)[1] + " · subcategorías") : "Por tipo"}</b> <span class="sub">· toca para filtrar</span>
       <div class="list">${Object.entries(byType).sort((a,b)=>b[1]-a[1]).map(([t,n])=>`<button class="chip ${rgPick.title===t ? "on" : ""}" data-rgt="${esc(t)}">${esc(t)}: <b>${n}</b></button>`).join("")}</div></div>` : ""}
     ${!canSee("registros_todos") ? "" : `<div class="card"><b>👤 Quién registró</b><div class="list">${Object.entries(byWho).sort((a,b)=>b[1]-a[1]).map(([t,n])=>`<button class="chip ${rgPick.who===t ? "on" : ""}" data-rgw="${esc(t)}">${esc(t)}: <b>${n}</b></button>`).join("") || `<span class="sub">—</span>`}</div></div>`}
-    <div class="card"><div style="display:flex;justify-content:space-between;align-items:center;gap:8px"><b>Registros</b>
+    ${s.view==="tablas" ? rgTables(rows, pend) : `<div class="card"><div style="display:flex;justify-content:space-between;align-items:center;gap:8px"><b>Registros</b>
       ${rows.length ? `<button class="btn ghost" id="rgTxt" style="width:auto;padding:6px 12px">⬇️ Exportar .txt (${rows.length})</button>` : ""}</div>${rgPick.title || rgPick.who ? ` <span class="sub">· ${[rgPick.title, rgPick.who].filter(Boolean).map(esc).join(" · ")} (${rows.length}) · <button class="lnk" data-rgclear="1">quitar filtro</button></span>` : ""}
       ${days.map(d=>`<div class="ckpen">${d.length===10 ? new Date(d + "T12:00").toLocaleDateString("es-CO", { weekday:"long", day:"numeric", month:"long" }) : esc(d)}</div>
         ${rows.filter(r=>rgDay(r.when)===d).map(r=>`<div class="hscard"><div style="display:flex;justify-content:space-between;gap:8px;align-items:baseline">
@@ -2757,7 +2766,105 @@ function rgDraw(){
           <div class="sub" style="text-align:right;white-space:nowrap">${rgTime(r.when)}</div></div>
           <div class="sub">${esc(r.detail)}</div>
           <div class="sub" style="margin-top:2px">Para el ${fmt(r.date)} · <b style="color:var(--ink)">${esc(rgWho(r.who))}</b>${r.farm ? " · " + (r.farm===7 ? "La Isla" : "El Recodo") : ""} ${pill(r.status)}${rgActs(r)}</div></div>`).join("")}`).join("")
-        || `<div class="empty">${pend ? "Nada pendiente de pasar a Interherd 👍" : "Sin registros en esas fechas"}</div>`}</div>`;
+        || `<div class="empty">${pend ? "Nada pendiente de pasar a Interherd 👍" : "Sin registros en esas fechas"}</div>`}</div>`}`;
+  if (s.view==="tablas") rgTablesFill(rows);
+}
+// ── Registros en tablas: cada tipo en su tabla desplegable (nacimientos, partos, servicios, secados, pesajes, leche diaria…)
+const RG_T_ORDER = ["Nacimientos","Parto","Servicio","Secado","Pesaje de leche","Leche diaria","Celo"];
+const rgCowB = id => id ? `<button class="lnk" data-cow="${esc(id)}" style="font-weight:800">${esc(id)}</button>` : "—";
+const rgStI = r => r.status==="pendiente" ? `<span title="pendiente de Interherd">⏳</span>` : r.status==="en Interherd" ? `<span title="ya en Interherd" style="color:var(--s0)">✓</span>` : "";
+const rgN = v => v==null || v==="" ? "—" : (+v).toLocaleString("es-CO", { maximumFractionDigits:1 });
+const RG_SEX = { H:"Hembra", M:"Macho" }, RG_FATE = { keep:"queda", sell:"venta", sold:"venta", dead:"muerta" };
+function rgTbl(key, icon, title, rows, cols, open){
+  if (!rows.length) return "";
+  const acts = rows.some(r=>r._r && rgActs(r._r));
+  return `<details class="card rgt" data-rgtk="${esc(key)}" ${open ? "open" : ""} style="padding:0">
+    <summary style="padding:12px 14px;cursor:pointer;font-weight:800;list-style:none;display:flex;justify-content:space-between;gap:8px">
+      <span>${icon} ${esc(title)}</span><span class="tag">${rows.length}</span></summary>
+    <div style="overflow-x:auto;padding:0 10px 12px"><table style="font-size:13px;width:100%;white-space:nowrap">
+      <tr>${cols.map(c=>`<th style="text-align:${c.r ? "right" : "left"}">${c.t}</th>`).join("")}${acts ? "<th></th>" : ""}</tr>
+      ${rows.map(r=>`<tr>${cols.map(c=>`<td style="${c.r ? "text-align:right;" : ""}${c.w ? "white-space:normal;min-width:" + c.w + "px" : ""}">${c.v(r)}</td>`).join("")}
+        ${acts ? `<td style="white-space:nowrap">${r._r ? rgActs(r._r) : ""}</td>` : ""}</tr>`).join("")}
+    </table></div></details>`;
+}
+function rgTables(rows, pend){
+  if (!rows.length) return `<div class="card"><div class="empty">${pend ? "Nada pendiente de pasar a Interherd 👍" : "Sin registros en esas fechas"}</div></div>`;
+  const by = {}; rows.forEach(r=>{ (by[r.title] ||= []).push(r); });
+  const dsc = (a, b)=>String(b.date || "").localeCompare(String(a.date || "")) || byNum(String(a.cow || ""), String(b.cow || ""));
+  const who = { t:"Registró", v:r=>esc(rgWho(r.who)) }, fecha = { t:"Fecha", v:r=>fmt(r.date) };
+  const out = [];
+  const det = r => r.raw?.details || {};
+  // nacimientos: cada cría de los partos (con foto pequeña)
+  const calv = (by["Parto"] || []).slice().sort(dsc);
+  const births = calv.flatMap(r=>(det(r).calves || []).map(k=>({ ...r, _r:null, k })));
+  out.push(rgTbl("nac", "🐣", "Nacimientos", births, [
+    { t:"Cría", v:x=>x.k.calf_id && x.k.fate==="keep" && x.k.alive!==false ? rgCowB(x.k.calf_id) : `<span class="sub">${esc(x.k.calf_id || "sin número")}</span>` },
+    fecha,
+    { t:"Foto", v:x=>x.k.calf_id ? `<span data-rgph="${esc(String(x.k.calf_id).toUpperCase())}" style="display:inline-block;width:46px;height:46px;border-radius:8px;background:var(--line);overflow:hidden;vertical-align:middle"></span>` : "" },
+    { t:"Sexo", v:x=>RG_SEX[x.k.sex] || esc(x.k.sex || "—") },
+    { t:"Estado", v:x=>x.k.alive===false ? "muerta" : RG_FATE[x.k.fate] || esc(x.k.fate || "—") },
+    { t:"Madre", v:x=>rgCowB(x.cow) }, { t:"Toro", v:x=>esc(x.raw?.bull || "—") }, who], true));
+  out.push(rgTbl("par", "🐄", "Partos", calv.map(r=>({ ...r, _r:r })), [fecha, { t:"Vaca", v:r=>rgCowB(r.cow) },
+    { t:"Cría(s)", v:r=>(det(r).calves || []).map(k=>`${k.calf_id ? esc(k.calf_id) : "—"} ${k.sex ? esc(k.sex) : ""}${k.alive===false ? " †" : ""}`).join(", ") || "—", w:110 },
+    { t:"Toro", v:r=>esc(r.raw?.bull || "—") }, { t:"Parto", v:r=>esc(det(r).ease || "—") }, { t:"Lote", v:r=>esc(det(r).dest_pen || "—") },
+    { t:"", v:rgStI }, who], true));
+  out.push(rgTbl("ser", "💉", "Servicios", (by["Servicio"] || []).slice().sort(dsc).map(r=>({ ...r, _r:r })), [{ t:"Vaca", v:r=>rgCowB(r.cow) }, fecha,
+    { t:"Toro", v:r=>`<b>${esc(r.raw?.bull || "—")}</b>` }, { t:"Pajillas", v:r=>esc(det(r).straws || 1), r:1 },
+    { t:"Inseminador", v:r=>esc(r.raw?.operator || "—") }, { t:"Tipo", v:r=>esc(r.raw?.category || "—") }, { t:"", v:rgStI }, who], true));
+  out.push(rgTbl("sec", "🌙", "Secados", (by["Secado"] || []).slice().sort(dsc).map(r=>({ ...r, _r:r })), [fecha, { t:"Vaca", v:r=>rgCowB(r.cow) },
+    { t:"Producto", v:r=>`<span data-rgsec="${esc(r.cow)}|${esc(String(r.date).slice(0, 10))}" class="sub">…</span>`, w:120 },
+    { t:"Lote", v:r=>esc(det(r).dest_pen || "—") }, { t:"", v:rgStI }, who], true));
+  // pesajes de leche: una fila desplegable por pesaje; al abrirla se carga la planilla (vaca, mañana, tarde)
+  const pes = (by["Pesaje de leche"] || []).slice().sort(dsc);
+  if (pes.length) out.push(`<details class="card rgt" style="padding:0" open><summary style="padding:12px 14px;cursor:pointer;font-weight:800;list-style:none;display:flex;justify-content:space-between">
+      <span>⚖️ Planillas de leche (pesajes)</span><span class="tag">${pes.length}</span></summary><div style="padding:0 10px 12px">
+      ${pes.map(r=>{ const k = [r.farm, r.herd, r.pen, r.date, r.who].map(x=>esc(x ?? "")).join("|");
+        return `<details data-rgmkd="${k}" style="border-top:1px solid var(--line);padding:8px 2px"><summary style="cursor:pointer">
+          <b>📅 ${fmt(r.date)}</b> · ${esc(r.pen || r.herd || "")} <span class="sub">· ${esc(r.detail.replace(/^Lote [^·]+· /, ""))} · ${esc(rgWho(r.who))}</span></summary><div data-rgmkbody></div></details>`; }).join("")}
+    </div></details>`);
+  // leche diaria: la planilla del tanque con todos los campos
+  const dm = (by["Leche diaria"] || []).filter(r=>r.dm).slice().sort((a, b)=>String(b.date).localeCompare(String(a.date)) || byNum(a.dm.pen || "", b.dm.pen || ""));
+  const L = k => r => rgN(r.dm[k]), sum2 = (a, b) => r => rgN((+r.dm[a] || 0) + (+r.dm[b] || 0) || null);
+  out.push(rgTbl("dia", "🥛", "Leche diaria", dm.map(r=>({ ...r, _r:r })), [fecha, { t:"Lote", v:r=>`<b>${esc(r.dm.pen)}</b>` }, { t:"Vacas", v:L("cows"), r:1 },
+    { t:"Tanque AM", v:L("am_tank_l"), r:1 }, { t:"Tanque PM", v:L("pm_tank_l"), r:1 }, { t:"Terneras", v:sum2("am_calves_l", "pm_calves_l"), r:1 },
+    { t:"Antib.", v:sum2("am_abx_l", "pm_abx_l"), r:1 }, { t:"Personal", v:r=>rgN(r.dm.staff_l ?? ((+r.dm.am_staff_l || 0) + (+r.dm.pm_staff_l || 0) || null)), r:1 },
+    { t:"Total L", v:r=>`<b>${rgN(r.dm.total_l)}</b>`, r:1 }, { t:"L/vaca", v:r=>r.dm.cows ? rgN(r.dm.total_l/r.dm.cows) : "—", r:1 },
+    { t:"Potrero", v:r=>esc([r.dm.paddock_am, r.dm.paddock_pm].filter(Boolean).filter((x, i, a)=>a.indexOf(x)===i).join(" / ") || "—") },
+    { t:"Conc. bultos", v:L("concentrate_bags"), r:1 }, { t:"KAU", v:L("kau_bags"), r:1 }, { t:"Ensilaje", v:L("silage_bags"), r:1 },
+    { t:"Nota", v:r=>esc(r.dm.note || ""), w:120 }, who], true));
+  // los demás tipos: una tabla sencilla por tipo
+  Object.keys(by).filter(t=>!["Parto","Servicio","Secado","Pesaje de leche","Leche diaria"].includes(t))
+    .sort((a, b)=>(RG_T_ORDER.indexOf(a) + 1 || 99) - (RG_T_ORDER.indexOf(b) + 1 || 99) || a.localeCompare(b))
+    .forEach(t=>{ const xs = by[t].slice().sort(dsc).map(r=>({ ...r, _r:r }));
+      out.push(rgTbl("o_" + t, xs[0].icon, t, xs, [fecha, ...(xs.some(r=>r.cow) ? [{ t:"Vaca", v:r=>rgCowB(r.cow) }] : []),
+        { t:"Detalle", v:r=>esc(r.detail || ""), w:180 }, ...(xs.some(r=>r.status==="pendiente" || r.status==="en Interherd") ? [{ t:"", v:rgStI }] : []), who], false)); });
+  return out.join("");
+}
+// lo que se carga aparte: fotos de las crías y el producto de cada secado
+let rgTok = 0;
+async function rgTablesFill(rows){
+  const tok = ++rgTok;
+  const ph = [...document.querySelectorAll("#rgBody [data-rgph]")], ids = [...new Set(ph.map(e=>e.dataset.rgph))];
+  if (ids.length){
+    const { data } = await sb.from("cows").select("id,photo_path").in("id", ids);
+    const paths = (data || []).filter(c=>c.photo_path), urls = {};
+    if (paths.length){ const { data:su } = await sb.storage.from("cow-photos").createSignedUrls(paths.map(c=>c.photo_path), 3600);
+      (su || []).forEach((u, i)=>{ if (u?.signedUrl) urls[paths[i].id] = u.signedUrl; }); }
+    if (tok!==rgTok) return;
+    ph.forEach(e=>{ const u = urls[e.dataset.rgph];
+      e.innerHTML = u ? `<img src="${u}" loading="lazy" alt="" style="width:46px;height:46px;object-fit:cover;display:block">` : `<span class="sub" style="display:block;text-align:center;line-height:46px;font-size:18px" title="sin foto">📷</span>`; });
+  }
+  const sc = [...document.querySelectorAll("#rgBody [data-rgsec]")];
+  if (sc.length){
+    await hsCatalog();
+    const cows = [...new Set(sc.map(e=>e.dataset.rgsec.split("|")[0]))];
+    const ds = sc.map(e=>e.dataset.rgsec.split("|")[1]).sort();
+    const { data } = await sb.from("treatments_cow").select("cow_id,start_date,treatment_items(supply_code,dose,unit)").eq("diagnosis", "Secado")
+      .in("cow_id", cows).gte("start_date", ds[0]).lte("start_date", ds[ds.length - 1]);
+    if (tok!==rgTok) return;
+    const map = {}; (data || []).forEach(t=>{ map[t.cow_id + "|" + t.start_date] = (t.treatment_items || []).map(i=>`${hsSupply(i.supply_code)?.name || i.supply_code}${i.dose ? " × " + rgN(i.dose) : ""}`).join(", "); });
+    sc.forEach(e=>{ const v = map[e.dataset.rgsec]; e.textContent = v || "—"; e.classList.toggle("sub", !v); });
+  }
 }
 
 // ═══════════════════════ REPORTES · PRODUCCIÓN (Leche diaria) ═══════════════
@@ -4320,7 +4427,7 @@ function rcReglas(base, litros, prev, dim, dps, caida){
   if (prev!=null && cap==null && rac < prev - 2){ rac = prev - 2; motivo += ` (limitado: máx. bajada 2 kg vs previa ${prev} kg)`; }
   return { rac:rcPar(rac), tipo, motivo };
 }
-let rcState = { farm:null, pen:"", chg:"all", prevF:"", rng:{}, sort:{ k:"", dir:1 }, edit:{}, sel:new Set() }, rcData = null;
+let rcState = { farm:null, pen:"", chg:"all", prevF:"", rng:{}, sort:{ k:"", dir:1 }, edit:{}, sel:new Set(), mode:"vig", asOf:"" }, rcData = null;
 // filtros para revisar a mano: qué cambió, ración previa, rangos (DIM, último peso, prom 3) y orden por columna
 const RC_CHG = [["all","Todas"],["cambio","Cambian de collar"],["baja","Bajan"],["sube","Suben"],["igual","Sin cambio"]];
 const RC_RNG = [["dim","DIM"],["litros","Último peso (L)"],["prom","Prom 3 (L)"],["caida","Caída %"]];
@@ -4340,7 +4447,13 @@ function rcPass(x){
     return true; });
 }
 // los cambios a mano quedan en el celular hasta guardar la ración (por finca y día)
-const rcEditKey = () => `rcEdit:${rcState.farm}:${today()}`;
+const rcEditKey = () => `rcEdit:${rcState.farm}:${rcState.mode}:${today()}`;
+// fechas con ración guardada (Mykau o n8n), la más reciente primero, con cuántas vacas
+const rcOwn = src => src==="app" || /^n8n/.test(src || "");
+function rcSavedDates(){
+  const n = {}; (rcData?.conc || []).forEach(([id, dt, kg, src])=>{ if (rcOwn(src)) n[dt] = (n[dt] || 0) + 1; });
+  return Object.entries(n).sort((a, b)=>b[0].localeCompare(a[0]));
+}
 async function initRacion(){
   if (!rcState.farm){ const fs = await prodFarms(); rcState.farm = jget("rcLast", {}).farm || fs[0]?.id || 1; }
   rcState.edit = jget(rcEditKey(), {});
@@ -4368,14 +4481,14 @@ async function rcLoad(){
 // cada vaca en ordeño de los lotes de producción: litros ajustados, caída, DIM, secado, previa → ración
 function rcCompute(){
   const d = rcData, pens = (jget("mkFarms", []).find(f=>f.id===d.farm)?.pens) || [];
-  const milk = {}, conc = {}, ev = {};
+  const milk = {}, hist = {}, ihist = {}, ev = {};
   d.milk.forEach(([id, dt, t, a])=>(milk[id] ||= []).push({ d:dt, l:a ?? t, adj:a!=null }));
-  // ración previa: la última hecha en Mykau o n8n; los listados de Interherd solo si no hay ninguna
+  // ración de cada vaca: la última guardada en Mykau o n8n; la de Interherd solo si no hay ninguna
   // (Interherd puede tener todavía la ración anterior mientras no se importa la nueva)
-  const own = src => src==="app" || /^n8n/.test(src || ""), ih = {}, saved = {}, day = today();
-  // lo guardado hoy en la app es la ración vigente (sale en la tabla y en los PDF); la previa es la de antes de hoy
-  d.conc.forEach(([id, dt, kg, src])=>{ if (own(src) && dt===day) saved[id] = kg; else if (own(src)) conc[id] = { d:dt, kg, src }; else ih[id] = { d:dt, kg, src }; });
-  Object.keys(ih).forEach(id=>{ if (!conc[id]) conc[id] = ih[id]; });
+  d.conc.forEach(([id, dt, kg, src])=>(rcOwn(src) ? (hist[id] ||= []) : (ihist[id] ||= [])).push({ d:dt, kg, src }));
+  const vig = rcState.mode==="vig", asOf = vig ? (rcState.asOf || today()) : today();
+  const recAt = (id, lim, strict) => { const f = x=>strict ? x.d < lim : x.d <= lim, a = (hist[id] || []).filter(f), b = (ihist[id] || []).filter(f);
+    return a[a.length - 1] || b[b.length - 1] || null; };
   d.ev.forEach(([id, dt, t])=>(ev[id] ||= []).push({ d:dt, t }));
   // las vacas con secado programado (Ingreso rápido o hoja de vida) salen de la suplementación
   const dryP = new Set((d.dryPlans || []).map(x=>x[0]));
@@ -4390,14 +4503,18 @@ function rcCompute(){
     // secado = concepción (último servicio después del parto) + 283 − 60, si está preñada
     const preg = /(^|\/)PR(\/|$)/.test(c.status || ""), sv = (ev[c.id] || []).filter(x=>x.t==="service" && (!C || x.d > C)).pop();
     const dry = preg && sv ? addDays(sv.d, LS_GEST - LS_DRY) : null, dps = dry ? days(ref, dry) : null;
-    const first = +c.lactation_num === 1, prev = conc[c.id] ? conc[c.id].kg : null;
+    // ración guardada: la vigente a esa fecha y la anterior a ella · generar: la previa es la vigente hoy
+    const cur = vig ? recAt(c.id, asOf) : null, prevRec = vig ? (cur ? recAt(c.id, cur.d, true) : null) : recAt(c.id, today());
+    const first = +c.lactation_num === 1, prev = prevRec ? prevRec.kg : null;
     const base = rcTabla(litros, first);
-    const r = litros==null
+    const r = vig
+      ? { rac:cur ? rcPar(cur.kg) : 0, tipo:"", noRac:!cur, motivo: cur ? `ración del ${fmt(cur.d)}${rcOwn(cur.src) ? "" : " (Interherd)"}` : "⚠ sin ración guardada: márcala y ponle los kg" }
+      : litros==null
       ? (dim!=null && dim < 100 ? { rac:8, tipo:"SIN", motivo:"Recién parida, sin pesaje todavía: 8 kg (DIM <100)" }
                                 : { rac:prev ?? 0, tipo:"SIN", motivo:"Sin pesaje en 75 días: se deja la previa" })
       : rcReglas(base, litros, prev, dim, dps, caida);
-    const fin = rcState.edit[c.id] ?? saved[c.id] ?? r.rac;
-    return { c, saved:saved[c.id] ?? null, litros, adj:last?.adj, fecha:last?.d, prom, caida, dim, dps, dry, first, prev, prevFrom:conc[c.id], base, ...r, fin, manual: rcState.edit[c.id]!=null,
+    const fin = rcState.edit[c.id] ?? r.rac;
+    return { c, cur, litros, adj:last?.adj, fecha:last?.d, prom, caida, dim, dps, dry, first, prev, prevFrom:prevRec, base, ...r, fin, manual: rcState.edit[c.id]!=null,
       cambio: prev==null || rcPar(prev)!==fin };
   });
 }
@@ -4405,7 +4522,7 @@ function rcCompute(){
 // solo lo ven el administrador principal y María (perfil "Maria")
 const rcBagsSee = () => isMain() || myProfile==="Maria";
 function rcBagsCmp(pen, xs){
-  const kg = xs.reduce((a, x)=>a + (x.saved ?? x.prev ?? 0), 0), need = Math.round(kg/40*2)/2;
+  const kg = xs.reduce((a, x)=>a + ((x.cur ? x.cur.kg : x.prev) ?? 0), 0), need = Math.round(kg/40*2)/2;
   const dm = (rcData.tank || []).filter(t=>t.pen===pen && t.concentrate_bags!=null).sort((a, b)=>a.rec_date < b.rec_date ? -1 : 1).pop();
   if (!dm) return `<br>ración guardada: <b>${need} bultos</b>/día (${kg} kg) · Leche diaria: sin bultos anotados`;
   const got = +dm.concentrate_bags, d = got - need, ok = Math.abs(d) <= 0.5;
@@ -4443,14 +4560,20 @@ function renderRacion(){
         : lastW && xs.some(x=>x.fecha===lastW && x.adj) ? " · ya ajustada (Excel)" : lastW ? " · sin total del tanque ese día: sin ajustar" : ""}
       ${rcBagsSee() ? rcBagsCmp(p, xs) : ""}</span></div>`; }).join("");
   s.sel = new Set([...s.sel].filter(id=>rows.some(x=>x.c.id===id)));   // solo las que se ven
-  const pm = (k, dis) => `<button data-rcpm="${k}" ${dis ? "disabled" : ""} style="width:32px;height:32px;padding:0;border-radius:9px;border:1px solid var(--line);background:transparent;color:var(--ink);font-size:19px;font-weight:800;line-height:1;opacity:${dis ? .3 : 1}">${k < 0 ? "−" : "+"}</button>`;
-  const nSaved = all.filter(x=>x.saved!=null).length, allSel = rows.length && rows.every(x=>s.sel.has(x.c.id));
+  const vig = s.mode==="vig", dates = rcSavedDates(), nEd = Object.keys(s.edit).length, noRac = all.filter(x=>x.noRac).length, lastD = dates[0]?.[0];
+  const allSel = rows.length && rows.every(x=>s.sel.has(x.c.id));
   const bar = s.sel.size ? `<div style="position:fixed;left:0;right:0;bottom:0;z-index:1400;background:var(--bg);padding:10px 14px calc(12px + env(safe-area-inset-bottom));border-top:2px solid var(--accent);box-shadow:0 -6px 18px rgba(0,0,0,.25)">
       <b>${s.sel.size} vaca${s.sel.size===1 ? "" : "s"} marcada${s.sel.size===1 ? "" : "s"}</b> · poner:
       <div class="ckpan" style="padding:0;margin-top:4px"><div class="chips sm">${[0,2,4,6,8,10,12].map(k=>`<button data-rcset="${k}">${k} kg</button>`).join("")}
         <button data-rcadd="-2">− 2</button><button data-rcadd="2">+ 2</button></div></div>
       <button class="lnk" id="rcSelNone" style="margin-top:4px">quitar marcas</button></div>` : "";
   $("rcBody").innerHTML = `<div class="card">${chips(farms.map(f=>[String(f.id), esc(farmLabel(f))]), String(s.farm), "data-rcf")}
+      ${chips([["vig", "📋 Ración guardada"], ["new", "✨ Generar suplementación nueva"]], s.mode, "data-rcm")}
+      ${vig ? `<div class="row" style="align-items:center;gap:8px;margin-top:8px"><span class="sub">Ración</span>
+          <select id="rcAsOf" style="flex:1">${[["", `vigente hoy${lastD ? ` (última guardada ${fmt(lastD)})` : ""}`], ...dates.map(([dt, n])=>[dt, `del ${fmt(dt)} · ${n} vacas`])].map(([v, t])=>`<option value="${v}" ${s.asOf===v ? "selected" : ""}>${t}</option>`).join("")}</select></div>
+        <div class="sub" style="margin-top:4px">${dates.length ? "Cada vaca sale en el lote donde está hoy, con la ración que se le guardó. No se recalcula: para una ración nueva toca ✨ Generar." : "Todavía no hay ración guardada: toca ✨ Generar suplementación nueva."}</div>
+        ${noRac ? `<div class="sub" style="margin-top:4px;color:var(--s4)">⚠ ${noRac} vaca${noRac===1 ? "" : "s"} sin ración guardada (paridas o que entraron después): márcala${noRac===1 ? "" : "s"}, ponle${noRac===1 ? "" : "s"} los kg y toca Guardar correcciones.</div>` : ""}`
+      : `<div style="margin-top:8px;padding:8px 10px;border-radius:10px;background:rgba(245,227,138,.2)"><b>✨ Suplementación nueva</b> calculada con los últimos pesajes. Corrige lo que necesites y toca <b>Guardar ración nueva</b>. Hasta guardar sigue vigente la ración guardada${lastD ? ` (${fmt(lastD)})` : ""}.</div>`}
       ${chips([["", "Todos los lotes"], ...pens.map(p=>[p, esc(p)])], s.pen, "data-rcp")}
       ${chips(RC_CHG, s.chg, "data-rco")}
       ${chips([["", "Previa: todas"], ...prevs.map(v=>[String(v), `venía en ${v}`])], s.prevF, "data-rcpv")}
@@ -4466,12 +4589,11 @@ function renderRacion(){
     <div class="rpk" style="margin-bottom:14px">${penCards}</div>
     <div class="card"><div class="row" style="gap:8px;flex-wrap:wrap">
         <button class="btn" id="rcPdf">📄 PDF suplementación</button><button class="btn ghost" id="rcPdfCh">📄 PDF cambios de collar</button>
-        ${canDo("racion_registrar") ? `<button class="btn ghost" id="rcSave">💾 Guardar ración (queda como previa)</button>` : ""}</div>
-      ${nSaved ? `<div style="margin-top:8px;padding:8px 10px;border-radius:10px;background:rgba(123,214,123,.18)"><b>💾 Ración de hoy guardada (${nSaved} vacas).</b> La tabla y los PDF muestran la ración guardada${Object.keys(s.edit).length ? " más los cambios nuevos sin guardar" : ""}.</div>` : ""}
-      <div class="sub" style="margin-top:6px">Litros = leche <b>ajustada</b> al total del tanque (si ese día hay Leche diaria). Para cambiar los kg marca las vacas ☑ (una o varias) y elige los kg en la barra de abajo. Los PDF salen con lo que ves en la columna Nueva.
-        ${Object.keys(s.edit).length ? `<b>${Object.keys(s.edit).length} cambiadas a mano</b> (quedan en el celular hasta guardar) · <button class="lnk" id="rcUndo">deshacer cambios a mano</button>` : ""}</div></div>
+        ${canDo("racion_registrar") && (!vig || (nEd && !s.asOf)) ? `<button class="btn ${vig ? "" : "ghost"}" id="rcSave">💾 ${vig ? `Guardar correcciones (${nEd})` : "Guardar ración nueva"}</button>` : ""}</div>
+      <div class="sub" style="margin-top:6px">Litros = leche <b>ajustada</b> al total del tanque (si ese día hay Leche diaria). Para cambiar los kg marca las vacas ☑ (una o varias) y elige los kg en la barra de abajo. Los PDF salen con lo que ves en la columna ${vig ? "Ración" : "Nueva"}.
+        ${nEd ? `<b>${nEd} cambiadas a mano</b> (quedan en el celular hasta guardar) · <button class="lnk" id="rcUndo">deshacer cambios a mano</button>` : ""}</div></div>
     <div class="card" style="overflow-x:auto">${bar}<table style="font-size:13px">
-      <tr><th><input type="checkbox" id="rcSelAll" ${allSel ? "checked" : ""} style="width:20px;height:20px"></th>${[["id","Vaca"],["fin","Nueva"],["prev","Previa"],["litros","Litros"],["prom","Prom 3"],["caida","Caída"],["dim","DIM"],["dps","Secado"]].map(([k,t])=>
+      <tr><th><input type="checkbox" id="rcSelAll" ${allSel ? "checked" : ""} style="width:20px;height:20px"></th>${[["id","Vaca"],["fin", vig ? "Ración" : "Nueva"],["prev", vig ? "Anterior" : "Previa"],["litros","Litros"],["prom","Prom 3"],["caida","Caída"],["dim","DIM"],["dps","Secado"]].map(([k,t])=>
         `<th data-rcs="${k}" style="cursor:pointer;white-space:nowrap">${t}${s.sort.k===k ? (s.sort.dir > 0 ? " ▲" : " ▼") : ""}</th>`).join("")}<th>Motivo</th></tr>
       ${rows.map(x=>`<tr data-rcid="${esc(x.c.id)}" data-fin="${x.fin}" style="${s.sel.has(x.c.id) ? "background:rgba(124,198,242,.25)" : x.tipo==="FUERTE" ? "background:rgba(248,203,173,.35)" : x.tipo==="MODERADA" ? "background:rgba(255,242,204,.35)" : ""}">
         <td><input type="checkbox" data-rcsel ${s.sel.has(x.c.id) ? "checked" : ""} style="width:20px;height:20px"></td>
@@ -4481,7 +4603,7 @@ function renderRacion(){
         <td>${x.litros!=null ? x.litros.toFixed(1) : "—"}${x.litros!=null && !x.adj ? `<div class="sub">sin ajustar</div>` : ""}</td>
         <td>${x.prom!=null ? x.prom.toFixed(1) : "—"}</td><td>${x.caida!=null ? x.caida.toFixed(0) + "%" : "—"}</td>
         <td>${x.dim ?? "—"}</td><td>${x.dps!=null ? x.dps + " d" : "—"}</td>
-        <td class="sub" style="min-width:190px">${x.manual ? "✏️ cambiada a mano · " : x.saved!=null && x.saved!==x.rac ? "💾 guardada hoy · " : ""}${esc(x.motivo)}</td></tr>`).join("") || `<tr><td colspan="10"><div class="empty">Sin vacas en ordeño</div></td></tr>`}
+        <td class="sub" style="min-width:190px">${x.manual ? "✏️ cambiada a mano · " : ""}${esc(x.motivo)}</td></tr>`).join("") || `<tr><td colspan="10"><div class="empty">Sin vacas en ordeño</div></td></tr>`}
     </table>${s.sel.size ? `<div style="height:150px"></div>` : ""}</div>`;
 }
 // PDF como el de n8n: una hoja por lote, bloques [ID  KG  COLOR], total kg y bultos
@@ -4496,7 +4618,7 @@ async function rcPdf(onlyChanges){
     const sub = xs.filter(x=>x.c.pen===p).sort((a,b)=>byNum(a.c.id, b.c.id)), per = Math.ceil(sub.length/NB);
     const RH = Math.min(7.5, (297 - 2*M - 34)/per);
     doc.setFont("helvetica", "bold"); doc.setFontSize(15); doc.setTextColor(0);
-    doc.text(`${onlyChanges ? "CAMBIOS DE COLLAR" : "SUPLEMENTACION"} ${LS_PEN_NAME[p] || p} - ${fmt(today())}`, 105, M + 6, { align:"center" });
+    doc.text(`${onlyChanges ? "CAMBIOS DE COLLAR" : "SUPLEMENTACION"} ${LS_PEN_NAME[p] || p} - ${fmt(rcState.mode==="vig" && rcState.asOf ? rcState.asOf : today())}`, 105, M + 6, { align:"center" });
     sub.forEach((x, i)=>{
       const b = Math.floor(i/per), j = i % per, x0 = M + b*CW, y0 = M + 12 + j*RH, [name, h] = RC_COLOR[x.fin];
       doc.setDrawColor(0); doc.setLineWidth(0.2);
@@ -4516,7 +4638,7 @@ async function rcPdf(onlyChanges){
       doc.setFontSize(14); doc.text(`TOTAL HATO (todo el lote): ${lt.toFixed(1)} kg     BULTOS/DIA: ${bu(lt)}     (${lot.length} vacas)`, M, yT + 8);
     }
   });
-  const name = `${onlyChanges ? "Cambios_collares" : "Suplementacion"}_${today()}${rcState.pen ? "_" + (LS_PEN_NAME[rcState.pen] || rcState.pen) : ""}.pdf`;
+  const name = `${onlyChanges ? "Cambios_collares" : "Suplementacion"}_${rcState.mode==="vig" && rcState.asOf ? rcState.asOf : today()}${rcState.pen ? "_" + (LS_PEN_NAME[rcState.pen] || rcState.pen) : ""}.pdf`;
   const file = new File([doc.output("blob")], name, { type:"application/pdf" });
   if (navigator.canShare?.({ files:[file] }) && /Android|iPhone|iPad/i.test(navigator.userAgent)){ try{ await navigator.share({ files:[file], title:name }); return; }catch(e){ if (e?.name==="AbortError") return; } }
   const a = document.createElement("a"); a.href = URL.createObjectURL(file); a.download = name; document.body.appendChild(a); a.click();
@@ -4525,13 +4647,14 @@ async function rcPdf(onlyChanges){
 $("rcBody").addEventListener("click", async e=>{
   const t = e.target, q = a => t.closest(`[${a}]`)?.getAttribute(a), s = rcState;
   if (q("data-rcf")){ s.farm = +q("data-rcf"); s.pen = ""; jset("rcLast", { farm:s.farm }); s.edit = jget(rcEditKey(), {}); await rcLoad(); return renderRacion(); }
+  if (q("data-rcm")){ s.mode = q("data-rcm"); s.edit = jget(rcEditKey(), {}); s.sel = new Set(); s.chg = "all"; s.prevF = ""; return renderRacion(); }
   if (q("data-rcp")!=null){ s.pen = q("data-rcp"); return renderRacion(); }
   if (q("data-rco")!=null){ s.chg = q("data-rco"); return renderRacion(); }
   if (q("data-rcpv")!=null){ s.prevF = q("data-rcpv"); return renderRacion(); }
   if (q("data-rcs")){ const k = q("data-rcs"); s.sort = s.sort.k===k ? { k, dir:-s.sort.dir } : { k, dir:["id","dps"].includes(k) ? 1 : -1 }; return renderRacion(); }
   if (t.id==="rcClear"){ s.chg = "all"; s.prevF = ""; s.rng = {}; return renderRacion(); }
   if (t.id==="rcReload"){ await rcLoad(); return renderRacion(); }
-  if (t.id==="rcUndo"){ if (!confirm("¿Volver a la ración calculada en todas las vacas?")) return; s.edit = {}; try{ localStorage.removeItem(rcEditKey()); }catch(x){} return renderRacion(); }
+  if (t.id==="rcUndo"){ if (!confirm("¿Quitar los cambios a mano?")) return; s.edit = {}; try{ localStorage.removeItem(rcEditKey()); }catch(x){} return renderRacion(); }
   if (q("data-cow")){ e.preventDefault(); return openCow(q("data-cow")); }
   const putKg = (id, kg) => { s.edit[id] = rcPar(kg); };
   if (q("data-rcpm")){ const tr = t.closest("[data-rcid]"); putKg(tr.dataset.rcid, +tr.dataset.fin + +q("data-rcpm")); jset(rcEditKey(), s.edit); return renderRacion(); }
@@ -4544,18 +4667,22 @@ $("rcBody").addEventListener("click", async e=>{
     jset(rcEditKey(), s.edit); toast(`${n} vaca${n===1 ? "" : "s"} cambiada${n===1 ? "" : "s"}`); return renderRacion(); }
   if (t.id==="rcPdf" || t.id==="rcPdfCh"){ t.disabled = true; await rcPdf(t.id==="rcPdfCh"); t.disabled = false; return; }
   if (t.id==="rcSave"){
-    const xs = rcCompute(), day = today();
-    if (!confirm(`Guardar la ración de ${xs.length} vacas con fecha ${fmt(day)}?\nQueda como la ración previa para la próxima vez.`)) return;
+    const vig = s.mode==="vig", xs = rcCompute().filter(x=>!vig || x.manual), day = today();
+    if (!xs.length) return toast("No hay cambios para guardar");
+    if (!confirm(vig ? `Guardar ${xs.length} corrección${xs.length===1 ? "" : "es"} con fecha ${fmt(day)}?\nLas demás vacas siguen con su ración guardada.`
+      : `Guardar la ración nueva de ${xs.length} vacas con fecha ${fmt(day)}?\nQueda como la ración vigente.`)) return;
     t.disabled = true;
     const rows = xs.map(x=>({ cow_id:x.c.id, rec_date:day, kg_day:x.fin, source:"app" }));
     let err = null; for (let i = 0; i < rows.length; i += 500){ ({ error:err } = await sb.from("cow_concentrate").upsert(rows.slice(i, i + 500), { onConflict:"cow_id,rec_date" })); if (err) break; }
     t.disabled = false;
     if (err) return toast(/row-level|permission/i.test(err.message) ? "Sin permiso (¿falta correr SQL/ajuste_y_racion.sql?)" : "No se pudo guardar: " + err.message);
-    toast(`Ración de ${rows.length} vacas guardada ✓`); s.edit = {}; s.sel = new Set(); try{ localStorage.removeItem(rcEditKey()); }catch(x){} await rcLoad(); renderRacion();
+    toast(`Ración de ${rows.length} vacas guardada ✓`); try{ localStorage.removeItem(rcEditKey()); }catch(x){}
+    s.edit = {}; s.sel = new Set(); s.mode = "vig"; s.asOf = ""; s.chg = "all"; s.prevF = ""; await rcLoad(); renderRacion();
     await rcPdf(false);   // PDF con la ración que se acaba de guardar
   }
 });
 $("rcBody").addEventListener("change", e=>{
+  if (e.target.id==="rcAsOf"){ rcState.asOf = e.target.value; rcState.sel = new Set(); return renderRacion(); }
   const r = e.target.closest("[data-rcr]");
   if (r){ const [k, i] = r.dataset.rcr.split("|"); (rcState.rng[k] ||= [null, null])[+i] = r.value === "" ? null : +r.value; return renderRacion(); }
   const k = e.target.closest("[data-rck]"); if (!k) return;
