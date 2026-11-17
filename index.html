@@ -1058,7 +1058,7 @@ function renderCow(d){
         <h2>${esc(c.id)}</h2>
         <div style="margin:4px 0" ${c.active && /(^|\/)Desc\.?(\/|$)/.test(c.status || "") && plCan() ? `data-uncull="${esc(c.id)}" title="Tocar para quitar el descarte"` : ""}>${c.active ? statusPill(canSee("vacas_repro") ? status : String(status||"").split("/").filter(x=>!/^(PR|Ser|Nc|Palp-|Ca)$/.test(x)).join("/"), curSv?.event_date, curPr?.event_date) : `<span class="pill" style="background:${css("--muted")}">Fuera del hato</span>`}${c.active && /(^|\/)Desc\.?(\/|$)/.test(c.status || "") && plCan() ? ` <button class="lnk" data-uncullbtn>quitar descarte</button>` : ""}${
           (()=>{ const lq = canSee("vacas_salud") ? lostQuarters(d.mast||[]) : []; return lq.length ? `<span class="pill" style="background:${css("--s5")}" title="Cuarto perdido">⚠️ ${lq.map(q=>q.k.toUpperCase()).join(", ")} perdido${lq.length>1?"s":""}</span>` : ""; })()}</div>
-        <div class="sub">${!canSee("vacas_datos") ? "" : [newPen ? (String(newPen).endsWith(c.pen||"~") ? `Grupo <b>${esc(c.pen)}</b> ⏳` : `Grupo ${esc(c.pen||"—")} → <b>${esc(newPen)}</b> ⏳`) : c.pen&&`Grupo ${esc(c.pen)}`, c.herd&&`Hato ${esc(c.herd)}`, esc(c.breed||""), esc(c.sex||"")].filter(Boolean).join(" · ")}</div>
+        <div class="sub">${!canSee("vacas_datos") ? "" : [(g=>g ? `<button class="lnk" data-penhist="${esc(c.id)}" title="Ver el historial de grupos" style="color:inherit;font-weight:inherit">${g} <span style="color:var(--accent)">▾</span></button>` : g)(newPen ? (String(newPen).endsWith(c.pen||"~") ? `Grupo <b>${esc(c.pen)}</b> ⏳` : `Grupo ${esc(c.pen||"—")} → <b>${esc(newPen)}</b> ⏳`) : c.pen&&`Grupo ${esc(c.pen)}`), c.herd&&`Hato ${esc(c.herd)}`, esc(c.breed||""), esc(c.sex||"")].filter(Boolean).join(" · ")}</div>
       </div>
     </div>
     ${exitTxt ? `<div class="exit">${exitTxt}</div>` : ""}
@@ -4189,7 +4189,7 @@ async function trLoad(){
       sb.from("semen_stock").select("tank,bull_code,straws"),
       psAll(()=>sb.from("bulls").select("code,name,registration,company,breed,active,sexed").order("code"))
         .then(r=>r.error ? psAll(()=>sb.from("bulls").select("code,name,registration,company,breed,active").order("code")) : r),
-      sb.from("semen_moves").select("id,move_date,kind,bull_code,straws,from_tank,to_tank,price,notes,created_at")
+      sb.from("semen_moves").select("id,move_date,kind,bull_code,straws,from_tank,to_tank,price,notes,created_at,created_by")
         .order("move_date", { ascending:false }).order("id", { ascending:false }).limit(80)]);
     if (t.error){ trData = { err:"Falta correr SQL/crear_toros_semen.sql en Supabase." }; return; }
     trData = { at:Date.now(), tanks:t.data || [], stock:(s.data || []).filter(x=>+x.straws), bulls:b.data || [], moves:m.data || [] };
@@ -4242,7 +4242,8 @@ function trInvHtml(){
           <td style="text-align:right;font-size:17px"><b ${r.n < 0 || Object.values(r.by).some(v=>v < 0) ? `style="color:var(--s4)"` : ""}>${r.n}</b></td></tr>`; }).join("") || `<tr><td colspan="2"><div class="empty">Sin pajillas${s.tank ? " en este termo" : ""}</div></td></tr>`}</table>
       <div class="sub" style="margin-top:8px"><button class="lnk" id="trReload">actualizar</button></div></div>
     <div class="card"><b>Últimos movimientos</b>
-      <table class="ivt" style="font-size:13px;margin-top:6px">${mv.map(m=>`<tr><td>${fmt(m.move_date)}</td><td>${TR_KIND[m.kind] || m.kind}</td>
+      <div class="sub" style="margin-top:2px">Desliza a la izquierda para borrar una entrada o un traslado.</div>
+      <table class="ivt" style="font-size:13px;margin-top:6px">${mv.map(m=>`<tr${m.kind!=="servicio" && (isAdmin || (me && m.created_by===me)) ? ` data-swdel="semen_moves|${m.id}"` : ""}><td>${fmt(m.move_date)}</td><td>${TR_KIND[m.kind] || m.kind}</td>
         <td><b>${esc(m.bull_code)}</b> ${esc(trBull(m.bull_code)?.name || "")}<div class="sub">${m.from_tank ? esc(m.from_tank) + (m.to_tank ? " → " : "") : ""}${esc(m.to_tank || "")}${m.notes && m.kind==="servicio" ? " · " + esc(m.notes) : ""}${m.price ? " · $" + Number(m.price).toLocaleString("es-CO") : ""}</div></td>
         <td style="text-align:right">${m.straws}</td></tr>`).join("") || `<tr><td><div class="empty">Sin movimientos</div></td></tr>`}</table></div>`;
 }
@@ -6886,7 +6887,7 @@ async function openCalving(ev){
   const segs = lactations(c, others), cur = segs[segs.length-1];
   const sire = ev ? ev.bull || "" : (cur?.fertile || cur?.services[cur.services.length-1])?.bull || "";
   const x = ev?.details || {}, kv = ev?.category || "";
-  const kind0 = ev?.event_type==="embryo_loss" ? "me" : ev?.event_type==="abortion" || /ABORTO/i.test(kv) ? "aborto" : "parto";
+  const kind0 = ev?.event_type==="embryo_loss" ? "me" : ev?.event_type==="abortion" || /ABORTO/i.test(kv) ? "aborto" : x.lacto || /LACTOIND/i.test(kv) ? "lacto" : "parto";
   // ¿está en ordeño? último parto sin secado después (o la ficha dice lactancia). Un aborto en ordeño NO es parto:
   // sigue en su lactancia y su grupo. Si ya estaba seca, el aborto sí abre una nueva lactancia (se registra como parto).
   const lastC = others.filter(e=>e.event_type==="calving" && (!ev || e.event_date <= (ev.event_date || today()))).pop();
@@ -6918,7 +6919,7 @@ async function openCalving(ev){
     <h3>${ev ? "Editar" : "Parto / aborto"} · vaca ${esc(c.id)}</h3>
     ${warns.map(w=>`<div class="warn">⚠️ ${w}</div>`).join("")}
     <label>Fecha</label><input type="date" name="date" value="${ev?.event_date || today()}" max="${today()}" required>
-    <label>Tipo</label>${seg("kind", [["parto","Parto"],["aborto","Aborto"],["me","Muerte embrionaria"]], kind0)}
+    <label>Tipo</label>${seg("kind", [["parto","Parto"],["lacto","Lactoinducción"],["aborto","Aborto"],["me","Muerte embrionaria"]], kind0)}
     <div class="sub" id="cvKindNote" style="margin-top:6px"></div>
     <div id="cvPen"><label>Pasa al grupo</label>${o.groups.length ? seg("pen", o.groups.map(g=>[g,g]), x.dest_pen || "") : `<input name="pen" placeholder="Grupo" value="${esc(x.dest_pen||"")}" style="text-transform:uppercase">`}</div>
     <div id="cvParto">
@@ -6939,7 +6940,8 @@ async function openCalving(ev){
     const k = f.kind.value, noCalv = k==="me" || (k==="aborto" && milking);
     $("cvParto").classList.toggle("hidden", k!=="parto");
     $("cvPen").classList.toggle("hidden", noCalv);
-    $("cvKindNote").innerHTML = k==="aborto" ? abNote : k==="me" ? "La muerte embrionaria <b>no cuenta como parto</b>: la vaca queda vacía y sigue en su grupo." : "";
+    $("cvKindNote").innerHTML = k==="aborto" ? abNote : k==="me" ? "La muerte embrionaria <b>no cuenta como parto</b>: la vaca queda vacía y sigue en su grupo."
+      : k==="lacto" ? "Lactoinducción: <b>empieza una nueva lactancia sin cría</b> (cuenta como parto) y la vaca pasa al grupo de ordeño que escojas." : "";
     const n = +f.n.value, box = $("calves");
     while (box.children.length < n) box.insertAdjacentHTML("beforeend", calfBox(box.children.length));
     while (box.children.length > n) box.lastElementChild.remove();
@@ -6981,8 +6983,8 @@ async function openCalving(ev){
       if (error) return err(/row-level|permission/i.test(error.message) ? "No tienes permiso para registrar en esta finca." : "No se pudo guardar: " + error.message);
       bg.remove(); toast(`${kind==="me" ? "Muerte embrionaria" : "Aborto"} ${ev ? "corregido" : "guardado"} ✓`); loadCow(c.id); loadPending(); return;
     }
-    const pen = String(f.pen.value||"").trim().toUpperCase();
-    if (!aborto && !pen) return err("Elige el grupo al que pasa la vaca.");
+    const pen = String(f.pen.value||"").trim().toUpperCase(), lacto = kind==="lacto";
+    if ((!aborto || lacto) && !pen) return err("Elige el grupo al que pasa la vaca.");
     const calves = aborto ? [] : [...$("calves").children].map(el=>{ const i = el.dataset.i, alive = f["alive"+i].value==="1";
       return { sex:f["sex"+i].value, alive, fate: alive ? f["fate"+i].value : null,
                calf_id: alive ? f["cid"+i].value.trim().toUpperCase() || null : null }; });
@@ -7004,17 +7006,17 @@ async function openCalving(ev){
     }
     const ease = aborto ? null : f.ease.value;
     // categoría con el mismo formato de Interherd: H, M.MUERT, Gemelos, Distocia...
-    const cat = aborto ? ["ABORTO"] : calves.map(k=>k.sex + (k.alive ? "" : ".MUERT"));
+    const cat = lacto ? ["LACTOINDUCCION"] : aborto ? ["ABORTO"] : calves.map(k=>k.sex + (k.alive ? "" : ".MUERT"));
     if (calves.length > 1) cat.push("Gemelos");
     if (!aborto && f.pre.checked) cat.push("Pretérmino");
     if (ease==="Distocia" || ease==="Cesárea") cat.push(ease);
     const row = { cow_id:c.id, event_date:date, event_type:"calving", source:"app", sync_status:"pending",
                   category: cat.join("/"), bull, comments: f.note.value.trim() || null,
-                  details: { dest_pen: pen || null, ease, preterm: !aborto && f.pre.checked, calves } };
+                  details: { dest_pen: pen || null, ease, preterm: !aborto && f.pre.checked, calves, ...(lacto ? { lacto:true } : {}) } };
     const { error } = ev ? await sb.from("cow_events").update(editRow(row)).eq("id", ev.id)
                          : await sb.from("cow_events").insert(row);
     if (error) return err(/row-level|permission/i.test(error.message) ? "No tienes permiso para registrar en esta finca." : "No se pudo guardar: " + error.message);
-    bg.remove(); toast(`${aborto ? "Aborto (nueva lactancia)" : "Parto"} ${ev ? "corregido" : "guardado"} ✓`); loadCow(c.id); loadPending();
+    bg.remove(); toast(`${lacto ? "Lactoinducción" : aborto ? "Aborto (nueva lactancia)" : "Parto"} ${ev ? (lacto ? "corregida" : "corregido") : (lacto ? "guardada" : "guardado")} ✓`); loadCow(c.id); loadPending();
   });
 }
 
@@ -7175,7 +7177,124 @@ async function cvCheckOpen(){
   });
   render();
 }
+// ── Historial de grupos (hoja de vida → tocar el grupo): fecha, finca y grupo; se puede borrar un traslado mal hecho
+// o agregar uno a mano. Lo llena la base de datos (cow_pen_history): traslados, partos, secados y cambios de Interherd.
+const PH_SRC = { traslado:"Traslado", parto:"Parto", secado:"Secado", nacimiento:"Nacimiento", interherd:"Interherd", cambio:"Cambio (Interherd)", manual:"Agregado a mano" };
+let ph = null;
+async function phOpen(id){
+  if (!navigator.onLine) return toast("El historial de grupos necesita señal");
+  const bg = document.createElement("div"); bg.className = "sheet-bg"; document.body.appendChild(bg);
+  ph = { id, bg, add:null };
+  bg.addEventListener("click", phClick); bg.addEventListener("change", phChange);
+  bg.innerHTML = `<div class="sheet"><h3>Grupos · vaca ${esc(id)}</h3><div class="empty">Cargando…</div></div>`;
+  await phLoad();
+}
+async function phLoad(){
+  const p = ph; if (!p) return;
+  const [h, c, fl, fa] = await Promise.all([
+    sb.from("cow_pen_history").select("*").eq("cow_id", p.id).order("start_date", { ascending:false, nullsFirst:false }).order("id", { ascending:false }),
+    sb.from("cows").select("id,farm_id,herd,pen").eq("id", p.id).maybeSingle(),
+    sb.from("farm_lists").select("farm_id,kind,value,sort").in("kind", ["herd", "group"]).order("sort"),
+    sb.from("farms").select("id,name")]);
+  if (p!==ph) return;
+  if (h.error){ p.bg.querySelector(".sheet").innerHTML = `<h3>Grupos · vaca ${esc(p.id)}</h3><div class="err">No se pudo cargar: ${esc(h.error.message)}</div><div class="btns"><button class="btn ghost" data-phclose>Cerrar</button></div>`; return; }
+  if (!rgNames){ const { data } = await sb.rpc("app_user_names"); rgNames = Object.fromEntries((data || []).map(u=>[u.user_id, u.name])); }
+  const evIds = (h.data || []).map(r=>r.event_id).filter(Boolean);
+  const { data:evs } = evIds.length ? await sb.from("cow_events").select("id,sync_status,created_by").in("id", evIds) : { data:[] };
+  const name = Object.fromEntries((fa.data || []).map(f=>[f.id, f.name]));
+  const fids = [...new Set((fl.data || []).map(r=>r.farm_id))];
+  p.farms = fids.map(id=>({ id, name:name[id] || "Finca " + id, herd:(fl.data || []).find(r=>r.farm_id===id && r.kind==="herd")?.value || "",
+    groups:(fl.data || []).filter(r=>r.farm_id===id && r.kind==="group").map(r=>r.value) })).filter(f=>f.groups.length);
+  p.rows = h.data || []; p.cow = c.data; p.ev = Object.fromEntries((evs || []).map(e=>[e.id, e]));
+  phRender();
+}
+const phFarm = id => ph?.farms?.find(f=>f.id===+id);
+function phCanDel(r){
+  if (r.event_id){ const e = ph.ev[r.event_id]; if (r.source!=="traslado") return false;
+    return isMain() || (!!e && e.sync_status==="pending" && (isAdmin || e.created_by===me)); }
+  return isAdmin || (me && r.created_by===me);
+}
+function phRender(){
+  const p = ph, rows = p.rows, sheet = p.bg.querySelector(".sheet"), lastD = rows.find(r=>r.start_date)?.start_date || "";
+  const fname = r => esc(phFarm(r.farm_id)?.name || (r.farm_id===7 ? "La Isla" : r.farm_id===1 ? "El Recodo" : r.herd || "—"));
+  const a = p.add;
+  sheet.innerHTML = `<h3>Grupos · vaca ${esc(p.id)}</h3>
+    <div class="sub" style="margin-bottom:6px">Hoy: <b style="color:var(--ink)">${esc(p.cow?.pen || "—")}</b> · ${esc(phFarm(p.cow?.farm_id)?.name || "")}</div>
+    <div style="overflow-x:auto"><table style="font-size:13px;width:100%;white-space:nowrap">
+      <tr><th></th><th>Fecha</th><th>Finca</th><th>Grupo</th><th>Cómo</th><th>Registró</th></tr>
+      ${rows.map((r, i)=>`<tr style="${i===0 ? "font-weight:800" : ""}">
+        <td>${phCanDel(r) ? `<button class="del" data-phdel="${r.id}" title="Borrar">🗑</button>` : ""}</td>
+        <td>${r.start_date ? fmt(r.start_date) : `<span class="sub">antes</span>`}</td><td>${fname(r)}</td><td><b>${esc(r.pen || "—")}</b>${i===0 ? ` <span class="tag">actual</span>` : ""}</td>
+        <td class="sub">${esc(PH_SRC[r.source] || r.source)}${r.event_id && p.ev[r.event_id]?.sync_status==="pending" ? " ⏳" : ""}</td>
+        <td class="sub">${r.created_by ? esc(rgWho(r.created_by)) : "—"}</td></tr>`).join("") || `<tr><td colspan="6"><div class="empty">Sin historial</div></td></tr>`}
+    </table></div>
+    <div class="sub" style="margin-top:6px">⏳ = falta pasarlo a Interherd. Los partos y secados se corrigen desde el parto o el secado.</div>
+    ${a ? `<div class="card" style="margin:10px 0 0;padding:10px">
+        <b>Agregar grupo</b>
+        <label>Fecha</label><input type="date" id="phDate" value="${esc(a.date)}" max="${today()}">
+        <label>Finca</label><select id="phFarm">${p.farms.map(f=>`<option value="${f.id}" ${f.id===+a.farm ? "selected" : ""}>${esc(f.name)}</option>`).join("")}</select>
+        <label>Grupo</label><select id="phPen">${(phFarm(a.farm)?.groups || []).map(g=>`<option ${g===a.pen ? "selected" : ""}>${esc(g)}</option>`).join("")}</select>
+        <div style="margin-top:8px">${seg("phKind", [["move", "Traslado (la vaca pasa a este grupo)"], ["hist", "Solo al historial (fecha pasada)"]], a.kind)}</div>
+        ${a.kind==="move" && a.date < lastD ? `<div class="warn" style="margin-top:6px">⚠️ Esa fecha es anterior al último movimiento (${fmt(lastD)}). Si es algo que ya pasó, escoge "Solo al historial".</div>` : ""}
+        <div class="err" id="phErr"></div>
+        <div class="btns"><button class="btn ghost" data-phcancel>Cancelar</button><button class="btn" data-phsave>Guardar</button></div></div>`
+      : `<div class="btns"><button class="btn ghost" data-phclose>Cerrar</button>${canDo("traslados") || isAdmin ? `<button class="btn" data-phadd>＋ Agregar grupo</button>` : ""}</div>`}`;
+}
+function phRead(){ const a = ph?.add; if (!a) return;
+  a.date = $("phDate")?.value || a.date; a.farm = +($("phFarm")?.value || a.farm); a.pen = $("phPen")?.value || a.pen;
+  a.kind = document.querySelector('input[name="phKind"]:checked')?.value || a.kind; }
+function phChange(e){
+  if (!ph?.add) return;
+  const farmChanged = e.target.id==="phFarm";
+  phRead(); if (farmChanged) ph.add.pen = phFarm(ph.add.farm)?.groups[0] || "";
+  const lastD = ph.rows.find(r=>r.start_date)?.start_date || "";
+  if (e.target.id==="phDate") ph.add.kind = ph.add.date >= lastD ? "move" : "hist";
+  phRender();
+}
+async function phClick(e){
+  const t = e.target, p = ph; if (!p) return;
+  if (t===p.bg || t.closest("[data-phclose]")){ p.bg.remove(); ph = null; return; }
+  if (t.closest("[data-phadd]")){ const f = phFarm(p.cow?.farm_id) || p.farms[0];
+    p.add = { date:today(), farm:f?.id, pen:f?.groups.find(g=>g!==p.cow?.pen) || f?.groups[0] || "", kind:"move" }; return phRender(); }
+  if (t.closest("[data-phcancel]")){ p.add = null; return phRender(); }
+  const dl = t.closest("[data-phdel]");
+  if (dl){
+    const r = p.rows.find(x=>x.id===+dl.dataset.phdel); if (!r) return;
+    if (r.event_id){
+      if (!confirm(`¿Borrar el traslado del ${fmt(r.start_date)} a ${r.pen}?\nLa vaca vuelve a su grupo anterior.`)) return;
+      const { data, error } = await sb.from("cow_events").delete().eq("id", r.event_id).select("id");
+      if (error || !data?.length) return alert("No se pudo borrar" + (error ? ": " + error.message : ": ya pasó a Interherd o no lo registraste tú"));
+      toast("Traslado borrado"); loadPending();
+    } else {
+      if (!confirm(`¿Quitar del historial el grupo ${r.pen}${r.start_date ? " del " + fmt(r.start_date) : ""}?\n(No mueve la vaca)`)) return;
+      const { data, error } = await sb.from("cow_pen_history").delete().eq("id", r.id).select("id");
+      if (error || !data?.length) return alert("No se pudo borrar" + (error ? ": " + error.message : " (sin permiso)"));
+      toast("Quitado del historial");
+    }
+    await phLoad(); if (currentCow===p.id) loadCow(p.id); return;
+  }
+  if (t.closest("[data-phsave]")){
+    phRead(); const a = p.add, f = phFarm(a.farm), c = p.cow, err = m => { $("phErr").textContent = m; };
+    if (!a.date || a.date > today()) return err("Revisa la fecha.");
+    if (!a.pen) return err("Escoge el grupo.");
+    t.disabled = true;
+    let error;
+    if (a.kind==="move"){
+      if (c && c.pen===a.pen && c.farm_id===f.id){ t.disabled = false; return err(`La vaca ya está en ${a.pen}.`); }
+      ({ error } = await sb.from("cow_events").insert({ cow_id:p.id, event_date:a.date, event_type:"transfer", source:"app", sync_status:"pending",
+        category:`${c?.herd || ""}/${c?.pen || "—"} → ${f.herd}/${a.pen}`,
+        details:{ from_herd:c?.herd, from_pen:c?.pen, to_herd:f.herd, to_pen:a.pen, to_farm:f.id } }));
+    } else {
+      ({ error } = await sb.from("cow_pen_history").insert({ cow_id:p.id, start_date:a.date, farm_id:f.id, herd:f.herd, pen:a.pen, source:"manual" }));
+    }
+    t.disabled = false;
+    if (error) return err(/row-level|permission/i.test(error.message) ? "No tienes permiso para esto." : "No se pudo guardar: " + error.message);
+    toast(a.kind==="move" ? `Traslado a ${a.pen} guardado ✓` : "Agregado al historial ✓");
+    p.add = null; await phLoad(); if (a.kind==="move"){ loadPending(); if (currentCow===p.id) loadCow(p.id); }
+  }
+}
 document.addEventListener("click", async e=>{
+  const phb = e.target.closest("[data-penhist]"); if (phb) return phOpen(phb.dataset.penhist);
   if (e.target.closest("[data-plnew]")) return plOpen();
   const go = e.target.closest("[data-ckgo]");
   if (go) return cvCheckOpen();
@@ -7793,6 +7912,14 @@ function ivWire(){
 async function psSwDel(v){
   const [tbl, list] = v.split("|"), ids = list.split(",").map(Number);
   if (tbl==="supply_entries") return ivDelMove(ids[0]);
+  if (tbl==="semen_moves"){   // entrada, traslado o ajuste de semen (los servicios se borran desde el servicio)
+    const m = trData?.moves?.find(x=>x.id===ids[0]);
+    if (!confirm(`¿Borrar ${(TR_KIND[m?.kind] || "el movimiento").toLowerCase()} de ${m?.straws ?? ""} pajillas del toro ${m?.bull_code || ""} (${fmt(m?.move_date)})?
+El saldo de los termos se recalcula.`)) return;
+    const { data, error } = await sb.from("semen_moves").delete().in("id", ids).select("id");
+    if (error || !data?.length) return toast("No se pudo borrar" + (error ? ": " + error.message : " (sin permiso)"));
+    toast("Movimiento de semen borrado"); await trLoad(); renderToros(); return trNegBadge();
+  }
   if (tbl==="cow_plans"){
     if (!confirm("¿Quitar este evento programado?")) return;
     const { data, error } = await sb.from("cow_plans").delete().in("id", ids).select("id");
