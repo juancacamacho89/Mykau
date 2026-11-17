@@ -2787,7 +2787,9 @@ function rgTbl(key, icon, title, rows, cols, open){
         ${acts ? `<td style="white-space:nowrap">${r._r ? rgActs(r._r) : ""}</td>` : ""}</tr>`).join("")}
     </table></div></details>`;
 }
-function rgTables(rows, pend){
+function rgTables(rows0, pend){
+  // lo borrado no va en las tablas (en la lista sí sale, marcado "borrado")
+  const rows = rows0.filter(r=>r.status!=="borrado"), nDel = rows0.length - rows.length;
   if (!rows.length) return `<div class="card"><div class="empty">${pend ? "Nada pendiente de pasar a Interherd 👍" : "Sin registros en esas fechas"}</div></div>`;
   const by = {}; rows.forEach(r=>{ (by[r.title] ||= []).push(r); });
   const dsc = (a, b)=>String(b.date || "").localeCompare(String(a.date || "")) || byNum(String(a.cow || ""), String(b.cow || ""));
@@ -2838,7 +2840,7 @@ function rgTables(rows, pend){
     .forEach(t=>{ const xs = by[t].slice().sort(dsc).map(r=>({ ...r, _r:r }));
       out.push(rgTbl("o_" + t, xs[0].icon, t, xs, [fecha, ...(xs.some(r=>r.cow) ? [{ t:"Vaca", v:r=>rgCowB(r.cow) }] : []),
         { t:"Detalle", v:r=>esc(r.detail || ""), w:180 }, ...(xs.some(r=>r.status==="pendiente" || r.status==="en Interherd") ? [{ t:"", v:rgStI }] : []), who], false)); });
-  return out.join("");
+  return out.join("") + (nDel ? `<div class="sub" style="margin:4px 4px 12px">${nDel} registro${nDel===1 ? "" : "s"} borrado${nDel===1 ? "" : "s"} no se muestra${nDel===1 ? "" : "n"} (están en 📋 Lista)</div>` : "");
 }
 // lo que se carga aparte: fotos de las crías y el producto de cada secado
 let rgTok = 0;
