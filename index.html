@@ -27,6 +27,15 @@
 #drawer .dw-item i{margin-left:auto;font-style:normal;color:var(--muted);font-size:20px}
 @keyframes dwin{from{transform:translateX(-100%)}to{transform:none}}
 @keyframes dwfade{from{opacity:0}to{opacity:1}}
+/* generador de listas: menú desplegable de columnas con casillas */
+.gncsel{display:flex;justify-content:space-between;align-items:center;width:100%;margin-top:10px;padding:11px 14px;border-radius:12px;border:1px solid var(--line);background:var(--bg);color:var(--ink);font-weight:700;font-size:15px;cursor:pointer}
+.gncsel i{font-style:normal;color:var(--muted);transition:transform .15s}
+.gncsel.open i{transform:rotate(180deg)}
+.gncmenu{margin-top:6px;border:1px solid var(--line);border-radius:12px;background:var(--bg);max-height:340px;overflow:auto;padding:4px 0}
+.gncmenu label{display:flex;align-items:center;gap:10px;padding:9px 14px;margin:0;font-size:15px;font-weight:500;color:var(--ink);cursor:pointer}
+.gncmenu label:active{background:color-mix(in srgb,var(--accent) 12%,transparent)}
+.gncmenu input[type=checkbox]{width:20px;height:20px;flex:0 0 auto;margin:0;accent-color:var(--accent)}
+.gncmenu .gnchead{position:sticky;top:-4px;background:var(--bg);padding:8px 14px 4px;font-size:12px;font-weight:800;color:var(--muted);text-transform:uppercase;letter-spacing:.04em;display:flex;justify-content:space-between;align-items:center}
 :root{
   --bg:#f6f7f9; --card:#fff; --ink:#1b2430; --muted:#6b7684; --line:#e3e7ec;
   --accent:#0b7a6b; --s0:#2e9e5b; --s1:#8bbf3f; --s2:#e3b322; --s3:#ec8a2c; --s4:#d9472f; --s5:#9e1f1f;
@@ -5649,23 +5658,26 @@ function renderGen(){
   const farms = jget("mkFarms", []).length ? jget("mkFarms", []) : [{ id:1, herd:"RC" }, { id:7, herd:"ISLA" }];
   const chips = (opts, on, attr) => `<div class="chips sm ckpan" style="padding:0;margin-top:6px"><div class="chips sm">${opts.map(([v, t])=>`<button class="${on(v) ? "on" : ""}" ${attr}="${esc(v)}">${t}</button>`).join("")}</div></div>`;
   const cols = gnCols().map(gnColDef).filter(Boolean), rows = gnSorted(gnFilter(), cols);
-  const colChips = (list) => list.map(([k, t])=>`<button class="${cols.some(c=>c[0]===k) ? "on" : ""}" data-gncol="${esc(k)}">${esc(t)}</button>`).join("");
+  const colChecks = (list) => list.map(([k, t])=>`<label><input type="checkbox" data-gncolck="${esc(k)}" ${cols.some(c=>c[0]===k) ? "checked" : ""}>${esc(t)}</label>`).join("");
   $("gnBody").innerHTML = `<div class="card">
       ${chips(farms.map(f=>[String(f.id), esc(farmLabel(f))]), v=>+v===s.farm, "data-gnf")}
+      <div class="sub" style="margin-top:10px;font-weight:700">Grupos</div>
+      ${chips([["", "Todos los grupos"], ...d.pens.map(p=>[p, esc(p)])], v=>v==="" ? !s.pens.length : s.pens.includes(v), "data-gnp")}
+      <div class="sub" style="margin-top:10px;font-weight:700">Estados</div>
       ${chips([["todas","Vacas y novillas"],["vacas","Solo vacas"],["novillas","Solo novillas"]], v=>v===s.tipo, "data-gnt")}
       ${chips(GN_EST, v=>s.est.includes(v), "data-gne")}
       <div class="sub" style="margin-top:4px">Los estados se combinan: <b>Cargadas + Lactando</b> = preñadas en ordeño. Toca de nuevo para quitar.</div>
-      ${chips([["", "Todos los grupos"], ...d.pens.map(p=>[p, esc(p)])], v=>v==="" ? !s.pens.length : s.pens.includes(v), "data-gnp")}
       <input id="gnQ" placeholder="🔍 Números de vaca (varios separados por espacio)" value="${esc(s.q)}" inputmode="numeric" autocomplete="off" style="margin-top:8px">
     </div>
     <div class="card">
       <div style="display:flex;justify-content:space-between;align-items:center;gap:8px">
-        <b><span id="gnN">${rows.length}</span> animales · ${cols.length} columnas</b>
-        <button class="lnk" id="gnColsBtn">${s.showCols ? "Ocultar columnas" : "Escoger columnas"}</button></div>
-      ${s.showCols ? `<div class="chips sm" style="margin-top:8px">${colChips(GN_COLS.map(x=>[x[0], x[1]]))}</div>
-        ${d.snapKeys.length ? `<details style="margin-top:8px"><summary class="sub">Más datos tal como vienen del listado de Interherd (${d.snapKeys.length})</summary>
-          <div class="chips sm" style="margin-top:6px">${colChips(d.snapKeys.map(k=>["ih:" + k, k]))}</div></details>` : ""}
-        <div class="row" style="gap:8px;margin-top:8px"><button class="lnk" id="gnColsAll">Todas</button><button class="lnk" id="gnColsDef">Las de siempre</button></div>` : ""}
+        <b><span id="gnN">${rows.length}</span> animales</b></div>
+      <button class="gncsel${s.showCols ? " open" : ""}" id="gnColsBtn">▦ Columnas: <span id="gnNC" style="margin-right:auto;margin-left:6px">${cols.length} escogidas</span><i>▾</i></button>
+      ${s.showCols ? `<div class="gncmenu">
+        <div class="gnchead"><span>Columnas</span><span style="display:flex;gap:12px"><button class="lnk" id="gnColsAll">Todas</button><button class="lnk" id="gnColsDef">Las de siempre</button></span></div>
+        ${colChecks(GN_COLS.map(x=>[x[0], x[1]]))}
+        ${d.snapKeys.length ? `<div class="gnchead"><span>Del listado de Interherd (${d.snapKeys.length})</span></div>${colChecks(d.snapKeys.map(k=>["ih:" + k, k]))}` : ""}
+      </div>` : ""}
       <div class="row" style="gap:8px;margin-top:10px"><button class="btn" id="gnTxt">📄 Exportar a texto</button></div>
       <div class="sub" style="margin-top:4px">Archivo .txt separado por tabulaciones: se abre directo en Excel. Toca el título de una columna para ordenar.</div>
       <div class="gnwrap" id="gnTable">${gnTable(rows, cols)}</div>
@@ -5688,6 +5700,14 @@ async function gnExport(){
   const a = document.createElement("a"); a.href = URL.createObjectURL(file); a.download = name; document.body.appendChild(a); a.click();
   setTimeout(()=>{ URL.revokeObjectURL(a.href); a.remove(); }, 2000);
 }
+$("gnBody").addEventListener("change", e=>{
+  const k = e.target.dataset?.gncolck; if (k==null) return;
+  const cur = gnCols(), next = e.target.checked ? (cur.includes(k) ? cur : [...cur, k]) : cur.filter(x=>x!==k);
+  if (!next.length){ e.target.checked = true; return toast("Deja al menos una columna"); }
+  jset("gnCols", next);
+  const cols = next.map(gnColDef).filter(Boolean), rows = gnSorted(gnFilter(), cols);
+  $("gnTable").innerHTML = gnTable(rows, cols); $("gnNC").textContent = `${cols.length} escogidas`;
+});
 $("gnBody").addEventListener("click", async e=>{
   const t = e.target, q = a => t.closest(`[${a}]`)?.getAttribute(a), s = gnState;
   if (q("data-cow")){ e.preventDefault(); return openCow(q("data-cow")); }
@@ -5697,7 +5717,7 @@ $("gnBody").addEventListener("click", async e=>{
   if (q("data-gnp")!=null){ const v = q("data-gnp"); s.pens = v==="" ? [] : s.pens.includes(v) ? s.pens.filter(x=>x!==v) : [...s.pens, v]; return renderGen(); }
   if (q("data-gncol")!=null){ const k = q("data-gncol"), cur = gnCols(); jset("gnCols", cur.includes(k) ? cur.filter(x=>x!==k) : [...cur, k]); return renderGen(); }
   if (q("data-gns")!=null){ const k = q("data-gns"); s.sort = s.sort.k===k ? { k, dir:-s.sort.dir } : { k, dir:1 }; return renderGen(); }
-  if (t.id==="gnColsBtn"){ s.showCols = !s.showCols; return renderGen(); }
+  if (t.closest("#gnColsBtn")){ s.showCols = !s.showCols; return renderGen(); }
   if (t.id==="gnColsAll"){ jset("gnCols", GN_COLS.map(x=>x[0])); return renderGen(); }
   if (t.id==="gnColsDef"){ try{ localStorage.removeItem("gnCols"); }catch(x){} return renderGen(); }
   if (t.id==="gnTxt"){ t.disabled = true; await gnExport(); t.disabled = false; }
