@@ -13,6 +13,20 @@
 <script src="config.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/dist/umd/supabase.js"></script>
 <style>
+/* menú lateral ☰ */
+#drawer{position:fixed;inset:0;z-index:1700;background:rgba(0,0,0,.45);animation:dwfade .15s}
+#drawer nav{position:absolute;left:0;top:0;bottom:0;width:min(300px,82vw);background:var(--card);box-shadow:6px 0 24px rgba(0,0,0,.35);overflow:auto;animation:dwin .18s ease-out;display:flex;flex-direction:column}
+#drawer .dw-head{display:flex;gap:12px;align-items:center;padding:22px 18px 18px;background:linear-gradient(135deg,var(--accent),#1b7f6f);color:#fff}
+#drawer .dw-head img{width:44px;height:44px;border-radius:12px;background:#fff2}
+#drawer .dw-head b{font-size:19px;display:block}
+#drawer .dw-head span{font-size:13px;opacity:.9}
+#drawer .dw-list{padding:10px 8px}
+#drawer .dw-item{display:flex;align-items:center;gap:14px;padding:13px 12px;border-radius:12px;color:var(--ink);text-decoration:none;font-weight:700;font-size:16px}
+#drawer .dw-item:active,#drawer .dw-item:hover{background:color-mix(in srgb,var(--accent) 14%,transparent)}
+#drawer .dw-ic{width:38px;height:38px;border-radius:11px;display:grid;place-items:center;font-size:20px;flex:0 0 auto;background:color-mix(in srgb,var(--accent) 18%,transparent)}
+#drawer .dw-item i{margin-left:auto;font-style:normal;color:var(--muted);font-size:20px}
+@keyframes dwin{from{transform:translateX(-100%)}to{transform:none}}
+@keyframes dwfade{from{opacity:0}to{opacity:1}}
 :root{
   --bg:#f6f7f9; --card:#fff; --ink:#1b2430; --muted:#6b7684; --line:#e3e7ec;
   --accent:#0b7a6b; --s0:#2e9e5b; --s1:#8bbf3f; --s2:#e3b322; --s3:#ec8a2c; --s4:#d9472f; --s5:#9e1f1f;
@@ -586,11 +600,14 @@ details.lac td{padding:6px 8px}
       </header>
       <div id="cfBody"><div class="card"><div class="empty">Cargando…</div></div></div>
     </section>
-    <div id="drawer" class="hidden" style="position:fixed;inset:0;z-index:1700;background:rgba(0,0,0,.45)">
-      <nav style="position:absolute;left:0;top:0;bottom:0;width:min(290px,80vw);background:var(--card,#1c222b);padding:18px 14px;box-shadow:4px 0 18px rgba(0,0,0,.35);overflow:auto">
-        <b style="font-size:18px">Mykau</b><div class="sub" style="margin-bottom:12px">Menú</div>
-        <a class="btn ghost" href="#config" data-drawer-go data-only="main" style="display:block;text-align:left;margin-bottom:8px">⚙️ Configuración<div class="sub">Fincas, lotes, tanques, reproducción, chequeo y ración</div></a>
-        <a class="btn ghost" href="#usuarios" data-drawer-go style="display:block;text-align:left;margin-bottom:8px">👥 Usuarios y permisos<div class="sub">Perfil y fincas de cada persona, y qué puede hacer cada perfil</div></a>
+    <div id="drawer" class="hidden">
+      <nav>
+        <div class="dw-head"><img src="logo.png" alt=""><div><b>Mykau</b><span id="dwWho"></span></div></div>
+        <div class="dw-list">
+          <a class="dw-item" href="#config" data-drawer-go data-only="main"><span class="dw-ic">⚙️</span>Configuración<i>›</i></a>
+          <a class="dw-item" href="#config" data-drawer-go data-only="main" data-dw-newfarm><span class="dw-ic">🏡</span>Nueva finca<i>›</i></a>
+          <a class="dw-item" href="#usuarios" data-drawer-go><span class="dw-ic">👥</span>Usuarios y permisos<i>›</i></a>
+        </div>
       </nav>
     </div>
 
@@ -864,7 +881,8 @@ function route(){
 window.addEventListener("hashchange", route);
 // ☰ menú lateral (por ahora: Configuración, solo para el administrador principal)
 document.addEventListener("click", e=>{
-  if (e.target.closest("#menuBtn")){ $("drawer").classList.remove("hidden"); return; }
+  if (e.target.closest("#menuBtn")){ $("dwWho").textContent = [store.get("myName"), myProfile].filter(Boolean).join(" · "); $("drawer").classList.remove("hidden"); return; }
+  if (e.target.closest("[data-dw-newfarm]")){ cf.newFarm = true; if (location.hash==="#config") initConfig(); }
   if (e.target.id==="drawer" || e.target.closest("[data-drawer-go]")) $("drawer").classList.add("hidden");
 });
 
@@ -1018,7 +1036,14 @@ function cfRender(){
       <div class="chips sm ckpan" style="padding:0;margin-top:6px"><div class="chips sm">${clients.map(cl=>`<span class="sub" style="width:100%;margin-top:4px">${esc(cl)}</span>${cf.farms.filter(x=>(x.client || "Sin cliente")===cl)
         .map(x=>`<button class="${x.id===cf.farm ? "on" : ""}" data-cffarm="${x.id}">${esc(x.name)}</button>`).join("")}`).join("")}
         <button data-cfnew>＋ Nueva finca</button></div></div>
-      ${cf.newFarm ? `<div class="row" style="gap:6px;margin-top:8px"><input id="cfNewName" placeholder="Nombre de la finca" style="flex:1"><input id="cfNewClient" placeholder="Cliente" style="flex:1"><button class="btn" data-cfcreate style="width:auto">Crear</button></div>` : ""}
+      ${cf.newFarm ? `<div class="hscard hsform" style="margin-top:10px;border:2px solid var(--accent);border-radius:12px;padding:12px">
+        <b>🏡 Nueva finca</b>
+        <label>Nombre de la finca</label><input id="cfNewName" placeholder="Ej. San José">
+        <label>Cliente (dueño)</label><input id="cfNewClient" list="cfClients" placeholder="Ej. Hacienda San José">
+        <label>Código del hato (corto, como en Interherd)</label><input id="cfNewHerd" placeholder="Ej. SJ" style="text-transform:uppercase">
+        <label>Arrancar con la configuración de</label><select id="cfNewCopy"><option value="">Valores por defecto</option>${cf.farms.map(x=>`<option value="${x.id}">${esc(x.name)}</option>`).join("")}</select>
+        <div class="sub" style="margin-top:6px">Después le agregas los lotes, los tanques y lo demás aquí mismo.</div>
+        <div class="btns"><button class="btn ghost" data-cfnew>Cancelar</button><button class="btn" data-cfcreate>Crear finca</button></div></div>` : ""}
       <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:10px">
         <div><div class="sub">Nombre</div><input id="cfName" value="${esc(F.name || "")}"></div>
         <div><div class="sub">Cliente</div><input id="cfClient" value="${esc(F.client || "")}" list="cfClients"><datalist id="cfClients">${clients.map(c=>`<option value="${esc(c)}">`).join("")}</datalist></div></div>
@@ -1085,9 +1110,13 @@ $("cfBody").addEventListener("click", async e=>{
   if (q("data-cffarm")){ cf.farm = +q("data-cffarm"); cf.newFarm = false; await cfLoad(); return cfRender(); }
   if (t.closest("[data-cfnew]")){ cf.newFarm = !cf.newFarm; return cfRender(); }
   if (t.closest("[data-cfcreate]")){
-    const name = $("cfNewName").value.trim(), client = $("cfNewClient").value.trim() || null; if (!name) return toast("Escribe el nombre");
+    const name = $("cfNewName").value.trim(), client = $("cfNewClient").value.trim() || null, herd = $("cfNewHerd").value.trim().toUpperCase(), from = $("cfNewCopy").value;
+    if (!name) return toast("Escribe el nombre de la finca");
+    if (cf.farms.some(x=>x.name.toLowerCase()===name.toLowerCase())) return toast("Ya hay una finca con ese nombre");
     const { data, error } = await sb.from("farms").insert({ name, client, active:true }).select("id").single();
     if (error) return toast("No se pudo crear: " + error.message);
+    if (herd) await sb.from("farm_lists").insert({ farm_id:data.id, kind:"herd", value:herd, sort:0 });
+    if (from && cf.set[+from]) await sb.from("farm_settings").upsert({ farm_id:data.id, settings:cf.set[+from] }, { onConflict:"farm_id" });
     await sb.rpc("app_users_sync");   // el administrador principal queda con acceso a la finca nueva
     cf.farm = data.id; cf.newFarm = false; toast(`Finca ${name} creada ✓`); await cfLoad(); return cfRender(); }
   if (t.closest("[data-cfsavefarm]")){
