@@ -358,6 +358,7 @@ details.lac td{padding:6px 8px}
       </div>
       <div class="homeedit"><button class="link" id="homeEdit">Organizar íconos</button><button class="link hidden" id="homeReset">Orden original</button></div>
       <div id="homeJC"></div>
+      <div id="homeTx"></div>
       <div id="homeAbx"></div>
       <form class="homesearch" id="homeSearch" data-perm="vacas_ver"><span>🔍</span><input id="hq" type="search" placeholder="Buscar vaca" autocomplete="off" autocapitalize="characters"></form>
     </section>
@@ -716,7 +717,7 @@ const PERM_FALLBACK = { vacas_repro:"vacas_ver", calidad_ver:"reporte_editar",
   vacas_secado:"vacas_parto", vacas_salida:"vacas_parto", terneras_registrar:"reporte_editar", listas_ver:"vacas_repro", generador_ver:"listas_ver",
   toros_ver:"reporte_editar", toros_registrar:"reporte_editar", racion_ver:"reporte_editar", racion_registrar:"reporte_editar",
   ronda_registrar:"diaria_registrar", ronda_ver:"diaria_registrar", chequeo_tratamientos:"chequeo", chequeo_resultados:"chequeo_tratamientos", mastitis_registrar:"salud_tratar",
-  vacas_salud:"vacas_ver", vacas_peso:"vacas_ver", vacas_datos:"vacas_ver", inicio_antibiotico:"terneras_vigilar", salud_reportar:"salud_tratar" };   // funciones nuevas: mientras no estén en el perfil
+  vacas_salud:"vacas_ver", vacas_peso:"vacas_ver", vacas_datos:"vacas_ver", inicio_antibiotico:"terneras_vigilar", salud_reportar:"salud_tratar", salud_aplicar:"salud_reportar" };   // funciones nuevas: mientras no estén en el perfil
 // si el perfil no tiene la función, se usa la de la que depende (en cadena: generador → listas → reproducción…)
 const permOf = (k, n = 0) => perms[k] || (PERM_FALLBACK[k] && n < 5 ? permOf(PERM_FALLBACK[k], n + 1) : null);
 const INV_PROFILES = ["Administrador", "Admin Principal", "Gerente", "Maria"];
@@ -900,7 +901,7 @@ const UP_FUNCS = [
   ["Leche diaria", [["diaria_registrar","Registrar planilla del tanque"],["diaria_totales","Ver total producido y L/vaca"],["diaria_resumen","Ver resumen de 14 días"]]],
   ["Chequeo reproductivo", [["chequeo","Descargar lista y registrar chequeo"],["chequeo_tratamientos","Ver tratamientos del chequeo"],["chequeo_resultados","Ver resultados del chequeo"]]],
   ["Reportes", [["reporte_ver","Ver reporte reproductivo (repro, IA y toros)"],["reporte_editar","Escribir IEP y tasa de descarte"],["produccion_ver","Ver reporte de producción de leche"],["calidad_ver","Ver análisis de calidad de leche"]]],
-  ["Salud", [["salud_ver","Ver vacas en tratamiento y en retiro"],["salud_reportar","Reportar animal enfermo"],["salud_tratar","Formular tratamiento"]]],
+  ["Salud", [["salud_ver","Ver vacas en tratamiento y en retiro"],["salud_reportar","Reportar animal enfermo"],["salud_tratar","Formular tratamiento"],["salud_aplicar","Aplicar tratamientos programados (descuenta del inventario)"]]],
   ["Pastos", [["pastos_ver","Ver potreros y pastoreos"],["pastos_registrar","Registrar labores, pastoreo, aforo y lluvia"]]],
   ["Registros", [["registros_ver","Ver mis registros"],["registros_todos","Ver registros de todos los usuarios"]]],
   ["Otros", [["traslados","Registrar traslados"],["pesot_registrar","Registrar pesaje de terneras y novillas"],["listas_ver","Ver listas de trabajo"],["generador_ver","Usar generador de listas"]]],
@@ -1167,7 +1168,7 @@ function renderHome(){
   applyHomeOrder();
   document.querySelectorAll("[data-perm]").forEach(el=>el.classList.toggle("hidden", !el.dataset.perm.split(" ").some(canSee)));
   $("homeDate").textContent = new Date().toLocaleDateString("es-CO", { weekday:"long", day:"numeric", month:"long" });
-  homeAbx(); ivBadge(); homeJC();
+  homeAbx(); ivBadge(); homeJC(); homeTx();
 }
 // mastitis: vacas que en el chequeo o la revisión dejaron para "Revisar JC" (solo le sale a Juan, hasta marcarlas revisadas)
 async function mastJCHtml(){
@@ -1585,7 +1586,7 @@ let hsCat = null, hsFarm = null, hsForm = null, hsReady = false;
 const HS_SX = ["Tos","Fiebre","Bajó la leche","Decaída","No come","Caída"];
 let hsPart = store.get("hsPart") || "", hsRep = null;
 const hsParts = () => [...(canDo("salud_reportar") ? [["rep","🚨 Reportar enfermo"]] : []),
-                       ...(canSee("salud_ver") || canDo("salud_tratar") ? [["tx","🩺 Tratamientos"]] : [])];
+                       ...(canSee("salud_ver") || canDo("salud_tratar") || canDo("salud_aplicar") ? [["tx","🩺 Tratamientos"]] : [])];
 const hsMeds = () => (hsCat?.supplies||[]).filter(x=>!/material|reactivo|concentrado|sal mineral|semen|fertiliz|semilla|herbicida|forraje/i.test(x.category||""));
 const hsMedByName = v => { const t = String(v||"").trim().toLowerCase(); if (!t) return null;
   return hsMeds().find(x=>x.name.toLowerCase()===t) || hsMeds().find(x=>x.code.toLowerCase()===t) || null; };
@@ -1630,8 +1631,11 @@ async function loadHealth(){
   const t0 = today();
   let list = [];
   if (navigator.onLine){
-    let { data, error } = await sb.from("treatments_cow").select("id,cow_id,start_date,diagnosis,protocol,prescribed_by,notes,outcome,created_by,symptoms,animal,diagnosed_at,treatment_items(supply_code,dose,unit,route,every_hours,days,end_date,milk_until,meat_until)")
+    let { data, error } = await sb.from("treatments_cow").select("id,cow_id,start_date,diagnosis,protocol,prescribed_by,notes,outcome,created_by,symptoms,animal,diagnosed_at,to_apply,treatment_doses(id,supply_code,dose_no,qty,given_at,given_name,given_by),treatment_items(supply_code,dose,unit,route,every_hours,days,end_date,milk_until,meat_until)")
       .eq("farm_id", hsFarm).gte("start_date", addDays(t0, -120)).order("start_date", { ascending:false });
+    if (error && /to_apply|treatment_doses/.test(error.message))   // falta correr la parte de dosis de SQL/crear_salud_inventario.sql
+      ({ data, error } = await sb.from("treatments_cow").select("id,cow_id,start_date,diagnosis,protocol,prescribed_by,notes,outcome,created_by,symptoms,animal,diagnosed_at,treatment_items(supply_code,dose,unit,route,every_hours,days,end_date,milk_until,meat_until)")
+        .eq("farm_id", hsFarm).gte("start_date", addDays(t0, -120)).order("start_date", { ascending:false }));
     if (error && /symptoms|animal|diagnosed_at/.test(error.message))   // falta correr SQL/salud_reportes.sql
       ({ data, error } = await sb.from("treatments_cow").select("id,cow_id,start_date,diagnosis,protocol,prescribed_by,notes,outcome,created_by,treatment_items(supply_code,dose,unit,route,every_hours,days,end_date,milk_until,meat_until)")
         .eq("farm_id", hsFarm).gte("start_date", addDays(t0, -120)).order("start_date", { ascending:false }));
@@ -1661,7 +1665,8 @@ async function loadHealth(){
       <div class="sub" style="margin-top:2px">${meds(t) || "sin medicamento"}</div>
       ${extra||""}
       ${canDo("salud_diagnostico") && !t.pending && t.id && t.diagnosis!=="Sin diagnóstico" ? `<button class="lnk" data-hsedit="${t.id}" style="margin-top:4px">✏️ corregir</button>` : ""}</div>`;
-  $("hsBody").innerHTML = `${partSel}
+  const apl = hsApplyHtml(list, t0);
+  $("hsBody").innerHTML = `${partSel}${apl}
     ${canDo("salud_diagnostico") ? `<button class="btn" id="hsNew" style="margin-bottom:12px;font-size:18px;padding:14px">＋ Tratar vaca</button>` : ""}
     ${(()=>{ const nd = list.filter(t=>t.diagnosis==="Sin diagnóstico" && t.start_date >= addDays(t0, -30));
       return nd.length ? `<div class="card" style="border:2px solid var(--s2)"><b>🩺 Reportados sin diagnóstico (${nd.length})</b>
@@ -1676,6 +1681,90 @@ async function loadHealth(){
         `<div class="chips sm ckpan" style="padding:0"><div class="chips sm">${["Curada","Recayó","Descarte","Murió"].map(o=>`<button data-hsout="${o}" data-id="${t.id}">${o}</button>`).join("")}</div></div>`)).join("") || `<div class="empty">—</div>`}</div>
     ${canSee("inventario_ver") ? `<button class="btn ghost" id="hsInv" style="margin-top:4px">📦 Ver inventario de ${esc(farmLabel({ herd: hsFarm===7 ? "ISLA" : "RC" }))}</button><div id="hsInvBox"></div>` : ""}`;
 }
+// ── tratamientos programados: cada dosis la marca la finca como aplicada (ahí descuenta del inventario) ──
+// dosis del medicamento: cada X horas por N días → N × 24/X aplicaciones, cada una con la dosis formulada
+function hsDoses(t, it){
+  const ev = Math.max(1, +it.every_hours || 24), per = Math.max(1, Math.round(24 / ev)), n = Math.max(1, Math.round((+it.days || 1) * 24 / ev));
+  return Array.from({ length:n }, (_, i)=>{
+    const k = i + 1, due = addDays(t.start_date, Math.floor(i * ev / 24)), g = (t.treatment_doses || []).find(d=>d.supply_code===it.supply_code && d.dose_no===k);
+    const slot = per===1 ? "" : per===2 ? (i % 2 ? "tarde" : "mañana") : `${(i % per) + 1}ª`;
+    return { k, n, due, slot, qty:+it.dose || 0, g }; });
+}
+const TX_CACHE = {};
+function hsApplyHtml(list, t0, o = {}){
+  list.forEach(t=>{ if (t.id) TX_CACHE[t.id] = t; });
+  const xs = list.filter(t=>t.to_apply && t.id && !t.pending).map(t=>{
+    const its = t.treatment_items.map(it=>({ it, ds:hsDoses(t, it) }));
+    const all = its.flatMap(x=>x.ds), due = all.filter(d=>!d.g && d.due <= t0);
+    return { t, its, due, left:all.filter(d=>!d.g).length, late:due.some(d=>d.due < t0) }; })
+    .filter(x=>x.left && x.its.some(y=>y.ds.some(d=>!d.g && d.due >= addDays(t0, -14))))
+    .sort((a, b)=>(b.late - a.late) || (b.due.length - a.due.length) || byNum(a.t.cow_id, b.t.cow_id));
+  const b = $("badgeSalud"), nDue = xs.filter(x=>x.due.length).length;
+  if (b && nDue && !o.title){ b.textContent = nDue; b.classList.remove("hidden"); }
+  if (!xs.length) return o.empty || "";
+  const can = canDo("salud_aplicar"), sname = c => hsSupply(c)?.name || c, n1 = v => (+v).toLocaleString("es-CO", { maximumFractionDigits:1 });
+  return `<div class="card" style="border:2px solid var(--accent)"><b>${o.title || "💉 Por aplicar"} (${xs.length})</b>
+    <div class="sub">${can ? "Cuando termines el tratamiento toca <b>Tratamiento realizado</b>: ahí se descuenta del inventario." : "Tratamientos formulados que la finca marca como realizados."}</div>
+    ${xs.map(({ t, its, late })=>{ const end = its.map(x=>x.ds[x.ds.length - 1].due).sort().pop();
+      return `<div class="hscard" style="${late && end < t0 ? "border-left:4px solid var(--s4)" : "border-left:4px solid var(--s2)"}">
+      <div style="display:flex;justify-content:space-between;align-items:baseline;gap:8px">
+        <div>${t.animal==="ternera" ? `<span class="pill">ternera</span> ` : ""}<span class="id" style="font-size:22px;font-weight:800">${esc(t.cow_id)}</span> <b>${esc(t.diagnosis || "")}</b></div>
+        <div class="sub" style="text-align:right">${o.farms ? esc(farmLabel({ herd: t.farm_id===7 ? "ISLA" : "RC" })) + " · " : ""}${fmt(t.start_date)} → ${fmt(end)}${end < t0 ? ` · <b style="color:var(--s4)">sin marcar</b>` : ""}</div></div>
+      ${t.notes && t.protocol==="Mastitis" ? `<div class="sub">${esc(t.notes)}</div>` : ""}
+      ${its.map(({ it, ds })=>`<div style="margin-top:4px"><b>${esc(sname(it.supply_code))}</b> <span class="sub">${n1(it.dose ?? 0)} ${esc(it.unit || "")} ${esc(it.route || "")}${ds.length > 1 ? ` × ${ds.length} dosis = <b>${n1(ds.reduce((a, d)=>a + d.qty, 0))} ${esc(it.unit || "")}</b>` : ""}</span></div>`).join("")}
+      ${can ? `<button class="btn" data-hsapall="${t.id}" style="margin-top:8px;padding:10px">✓ Tratamiento realizado</button>` : ""}
+    </div>`; }).join("")}</div>`;
+}
+async function hsApply(rows){
+  if (!navigator.onLine) return toast("Necesitas señal para marcarlo");
+  const who = store.get("myName") || myProfile || null;
+  const { error } = await sb.from("treatment_doses").upsert(rows.map(r=>({ ...r, given_name:who })), { onConflict:"treatment_id,supply_code,dose_no", ignoreDuplicates:true });
+  if (error) return toast(/row-level|policy|permission/i.test(error.message) ? "No tienes permiso para aplicar tratamientos en esta finca" : "No se pudo guardar: " + error.message);
+  toast("Tratamiento realizado ✓ · descontado del inventario"); txRefresh();
+}
+// después de aplicar: se redibuja la pantalla donde esté (Salud, Mastitis o Inicio)
+function txRefresh(){
+  const h = location.hash.slice(1);
+  if (h.startsWith("salud")) loadHealth(); else if (h==="mastitis") loadMastWatch(); else homeTx();
+}
+// tratamientos programados (por aplicar) de las fincas que ve el usuario, de los últimos 30 días
+async function txToApply(protocol){
+  if (!navigator.onLine) return [];
+  let q = sb.from("treatments_cow").select("id,farm_id,cow_id,start_date,diagnosis,protocol,notes,animal,to_apply,treatment_doses(id,supply_code,dose_no,qty,given_at,given_name,given_by),treatment_items(supply_code,dose,unit,route,every_hours,days)")
+    .eq("to_apply", true).gte("start_date", addDays(today(), -30)).order("start_date");
+  if (protocol) q = q.eq("protocol", protocol);
+  const { data, error } = await q;
+  return error ? [] : data || [];
+}
+const txLeft = t => t.treatment_items.reduce((a, it)=>a + hsDoses(t, it).filter(d=>!d.g).length, 0);
+// aviso en el Inicio: a María y a los administradores de finca les salen las vacas por tratar hasta que marquen la dosis
+const TX_NOTIFY = ["Maria", "Admin finca", "Admin Principal", "Administrador"];
+async function homeTx(){
+  const box = $("homeTx"); if (!box) return;
+  if (!TX_NOTIFY.includes(myProfile) || !canSee("salud_ver") && !canDo("salud_aplicar")){ box.innerHTML = ""; return; }
+  const t0 = today(), xs = (await txToApply()).map(t=>{ TX_CACHE[t.id] = t;
+    const due = t.treatment_items.flatMap(it=>hsDoses(t, it).filter(d=>!d.g && d.due <= t0).map(d=>({ ...d, code:it.supply_code })));
+    return { t, due, late:due.some(d=>d.due < t0) }; }).filter(x=>x.due.length && x.due.some(d=>d.due >= addDays(t0, -14)));
+  if (!xs.length){ box.innerHTML = ""; return; }
+  box.innerHTML = `<a class="card" href="#salud" style="display:block;margin:14px 0 0;text-decoration:none;color:inherit;border-left:4px solid var(--s4)">
+    <b>💉 Vacas en tratamiento (${xs.length})</b><div class="sub">Toca para marcar el tratamiento realizado (descuenta del inventario)</div>
+    ${xs.map(({ t, due, late })=>`<div style="margin-top:6px"><b style="font-size:17px">${esc(t.cow_id)}</b> <span class="sub">${esc(t.diagnosis || "")} · ${esc(farmLabel({ herd: t.farm_id===7 ? "ISLA" : "RC" }))}</span>
+      <div class="sub">${[...new Set(t.treatment_items.map(i=>hsSupply(i.supply_code)?.name || i.supply_code))].map(esc).join(" + ")}</div></div>`).join("")}</a>`;
+}
+// clics de aplicar / aplicar todas / deshacer (sirven en Salud y en Mastitis)
+document.addEventListener("click", async e=>{
+  const t = e.target, ap = t.closest("[data-hsap]"), apAll = t.closest("[data-hsapall]"), un = t.closest("[data-hsunap]");
+  if (ap){ const [tid, code, k, qty, due] = ap.dataset.hsap.split("|"); ap.disabled = true;
+    return hsApply([{ treatment_id:+tid, supply_code:code, dose_no:+k, qty:+qty, due_date:due }]); }
+  if (apAll){ const tx = TX_CACHE[+apAll.dataset.hsapall]; if (!tx) return;
+    const rows = tx.treatment_items.flatMap(it=>hsDoses(tx, it).filter(d=>!d.g).map(d=>({ treatment_id:tx.id, supply_code:it.supply_code, dose_no:d.k, qty:d.qty, due_date:d.due })));
+    if (!rows.length || !confirm(`¿El tratamiento de la ${tx.cow_id} ya se realizó completo?\n\nSe descuenta del inventario.`)) return;
+    apAll.disabled = true; return hsApply(rows); }
+  if (un){ if (!confirm("¿Deshacer esta dosis? Vuelve al inventario y queda otra vez por aplicar.")) return;
+    const { data, error } = await sb.from("treatment_doses").delete().eq("id", +un.dataset.hsunap).select("id");
+    if (error || !data?.length) return toast("No se pudo deshacer" + (error ? ": " + error.message : " (sin permiso)"));
+    toast("Dosis deshecha"); txRefresh(); }
+});
 function renderHsReport(list, partSel){
   if (!hsRep) newHsRep();
   const r = hsRep, t0 = today(), opt = (v, t, sel) => `<option value="${esc(v)}" ${sel?"selected":""}>${esc(t)}</option>`;
@@ -1894,7 +1983,7 @@ $("hsBody").addEventListener("click", async e=>{
         if (ins.error){ $("hsSave").disabled = false; return err("Se guardó el diagnóstico, pero no los medicamentos: " + ins.error.message); } }
       hsForm = null; toast(`${f.cow_id}: ${f.diagnosis} ✓`); loadHealth(); window.scrollTo({top:0}); return;
     }
-    const ob = jget("hsOutbox", []); ob.push({ ...f, items }); jset("hsOutbox", ob);
+    const ob = jget("hsOutbox", []); ob.push({ ...f, items, ...(vet && items.length ? { to_apply:true } : {}) }); jset("hsOutbox", ob);
     hsForm = null; toast(`${f.cow_id}: tratamiento guardado ✓`); await flushHealth(); loadHealth(); window.scrollTo({top:0});
   }
 });
@@ -1908,7 +1997,7 @@ async function flushHealth(){
     const { items, ...t } = o;
     let { data, error } = await sb.from("treatments_cow").upsert({ client_id:t.client_id, farm_id:t.farm_id, cow_id:t.cow_id, start_date:t.start_date,
       diagnosis:t.diagnosis, protocol:t.protocol || null, prescribed_by:t.prescribed_by, notes:t.notes || null,
-      ...(t.symptoms ? { symptoms:t.symptoms, animal:t.animal || "vaca" } : {}) }, { onConflict:"client_id", ignoreDuplicates:true }).select("id");
+      ...(t.symptoms ? { symptoms:t.symptoms, animal:t.animal || "vaca" } : {}), ...(t.to_apply ? { to_apply:true } : {}) }, { onConflict:"client_id", ignoreDuplicates:true }).select("id");
     if (!error && !data?.length) ({ data, error } = await sb.from("treatments_cow").select("id").eq("client_id", t.client_id));
     if (error || !data?.length){ left.push(o); console.warn("salud", error?.message); continue; }
     const id = data[0].id;
@@ -6231,36 +6320,35 @@ let mt = null;
 // Al programar queda en Salud (descuenta del inventario y calcula el retiro) y el texto queda como tratamiento del chequeo.
 const MT_QN = { ai:"DELANTERO IZQUIERDO", ad:"DELANTERO DERECHO", pi:"TRASERO IZQUIERDO", pd:"TRASERO DERECHO" };
 const mtQTxt = qs => qs.length===1 ? `EL PEZON ${MT_QN[qs[0]]}` : `LOS PEZONES ${qs.map(q=>MT_QN[q]).join(", ").replace(/, ([^,]*)$/, " Y $1")}`;
+// Solo antibióticos (Juan, 18/11/2026). n = jeringas por cuarto (intramamarios) o número de dosis (inyectados); se puede cambiar por vaca.
 const MT_TX = [
-  { k:"apartar", t:"Apartar vaca", txt:()=>"APARTAR VACA" },
-  { k:"antiinf", t:"Antiinflamatorio", pick:"Antiinflamatorio / analgésico", every:24, days:1, route:"IM", txt:()=>"COLOCAR UN ANTIINFLAMATORIO" },
-  { k:"neo", t:"Neoclordelyn · 4 jeringas", code:"NEOCLOR", perQ:1, every:12, days:2, route:"Intramamaria", txt:q=>`4 JERINGAS DE NEOCLORDELYN POR ${mtQTxt(q)}` },
-  { k:"veterflu", t:"Veterflucina 25 mL × 4 dosis", code:"VETERFLU", perQ:25, every:12, days:2, route:"Intramamaria", txt:q=>`25 CM DE VETERFLUCINA POR ${mtQTxt(q)} POR 4 DOSIS` },
-  { k:"ril", t:"Rilexine NP · 4 jeringas", code:"RIL200", perQ:1, every:12, days:2, route:"Intramamaria", txt:q=>`4 JERINGAS DE RILEXINE NP POR ${mtQTxt(q)}` },
-  { k:"rutina", t:"Reforzar rutina de ordeño", txt:()=>"REFORZAR RUTINA DE ORDEÑO" },
-  { k:"unitral", t:"Unitral 25 mL × 2 dosis", code:"UNITRAL", dose:25, every:24, days:2, route:"IM", txt:()=>"25 CM DE UNITRAL POR 2 DOSIS" },
-  { k:"pentril", t:"Pentriland inyectado", code:"PENTRIL", dose:1, every:24, days:1, route:"IM", txt:()=>"COLOCAR UN PENTRILAND INYECTADO" },
-  { k:"pezonil", t:"Pezonil · 4 jeringas", code:"PEZONIL", perQ:1, every:12, days:2, route:"Intramamaria", txt:q=>`4 JERINGAS DE PEZONIL POR ${mtQTxt(q)}` },
-  { k:"amoxisol", t:"Amoxisol 25 mL × 2 dosis", code:"AMOXISOL", dose:25, every:24, days:2, route:"IM", txt:()=>"25 CM DE AMOXISOL POR 2 DOSIS" },
-  { k:"marbo", t:"Marbofloxacina 15 mL × 5 días", code:"MARBOQ", dose:15, every:24, days:5, route:"IM", txt:()=>"15 ML MARBOFLOXACINA X 5 DIAS INTRAMUSCULAR" },
-  { k:"cultivo", t:"Cultivo y antibiograma", txt:()=>"REALIZAR CULTIVO Y ANTIBIOGRAMA" },
-  { k:"terminar", t:"Terminar tratamiento anterior", txt:()=>"TERMINAR TRATAMIENTO ANTERIOR" },
-  { k:"revisar", t:"🩺 Revisar JC", txt:()=>"REVISAR JC" }];
+  { k:"neo", t:"Neoclordelyn", code:"NEOCLOR", im:true, n:4, txt:(q, n)=>`${n} JERINGAS DE NEOCLORDELYN POR ${mtQTxt(q)}` },
+  { k:"ril", t:"Rilexine NP", code:"RIL200", im:true, n:4, txt:(q, n)=>`${n} JERINGAS DE RILEXINE NP POR ${mtQTxt(q)}` },
+  { k:"pezonil", t:"Pezonil", code:"PEZONIL", im:true, n:4, txt:(q, n)=>`${n} JERINGAS DE PEZONIL POR ${mtQTxt(q)}` },
+  { k:"veterflu", t:"Veterflucina 25 mL", code:"VETERFLU", im:true, dose:25, n:4, txt:(q, n)=>`25 CM DE VETERFLUCINA POR ${mtQTxt(q)} POR ${n} DOSIS` },
+  { k:"unitral", t:"Unitral 25 mL", code:"UNITRAL", dose:25, n:2, txt:(q, n)=>`25 CM DE UNITRAL POR ${n} DOSIS` },
+  { k:"amoxisol", t:"Amoxisol 25 mL", code:"AMOXISOL", dose:25, n:2, txt:(q, n)=>`25 CM DE AMOXISOL POR ${n} DOSIS` },
+  { k:"marbo", t:"Marbofloxacina 15 mL", code:"MARBOQ", dose:15, n:5, txt:(q, n)=>`15 ML MARBOFLOXACINA X ${n} DIAS INTRAMUSCULAR` },
+  { k:"pentril", t:"Pentriland inyectado", code:"PENTRIL", dose:1, n:1, txt:(q, n)=>n===1 ? "COLOCAR UN PENTRILAND INYECTADO" : `PENTRILAND INYECTADO POR ${n} DOSIS` }];
+// número de jeringas/dosis de ese producto para esa vaca (por defecto el del catálogo)
+const mtTxN = (p, x) => Math.max(1, Math.round(+(p.n || {})[x.k] || x.n));
+// intramamario: cada 12 h (2 al día) → n jeringas en ceil(n/2) días; inyectado: 1 al día por n días
+const mtTxSched = (x, n) => x.im ? { days:Math.ceil(n / 2), every:24 * Math.ceil(n / 2) / n, route:"Intramamaria" } : { days:n, every:24, route:"IM" };
 // marcada para que Juan la revise: le sale el aviso en el Inicio
-const mtJC = r => !!(r.txp?.sel?.includes("revisar") || /REVISAR JC/i.test(`${r.tx || ""} ${r.obs || ""}`));
+const mtJC = r => !!(r.txp?.sel?.includes("revisar") || /REVISAR JC/i.test(`${r.tx || ""} ${r.obs || ""} ${r.txp?.note || ""}`));
 // cuartos a tratar: los clínicos (C); si no hay, los de grado 2 o 3
 const mtTxQ0 = r => { const c = MT_Q.filter(q=>r[q]==="4"); return c.length ? c : MT_Q.filter(q=>+r[q] >= 2); };
 // sugerido según lo que se le ha puesto antes a la vaca (últimos 60 días) y lo más usado en las fincas
 function mtTxSuggest(id, r){
   const clin = MT_Q.some(q=>r[q]==="4"), prev = (mt.txh?.[id] || []).filter(x=>x.d >= addDays(mt.date, -60)).map(x=>x.t).join(" ");
-  if (!clin) return ["rutina"];
-  if (/RILEXINE/.test(prev)) return ["apartar", "veterflu"];
-  if (/NEOCLOR|NEOCLIR/.test(prev)) return ["apartar", "antiinf", "ril"];
-  if (/VETERFLU/.test(prev)) return ["apartar", "cultivo"];
-  return ["apartar", "neo"];
+  if (!clin) return [];
+  if (/RILEXINE/.test(prev)) return ["veterflu"];
+  if (/NEOCLOR|NEOCLIR/.test(prev)) return ["ril"];
+  if (/VETERFLU/.test(prev)) return [];
+  return ["neo"];
 }
 // texto del tratamiento (igual que en el Excel de mastitis)
-const mtTxText = p => [...MT_TX.filter(x=>p.sel.includes(x.k)).map(x=>x.txt(p.q.length ? p.q : ["ai"])), p.note].filter(Boolean).join(" + ");
+const mtTxText = p => [...MT_TX.filter(x=>p.sel.includes(x.k)).map(x=>x.txt(p.q.length ? p.q : ["ai"], mtTxN(p, x))), p.note].filter(Boolean).join(" + ");
 async function mtTxHist(){
   const d = mtDraft(), ids = Object.keys(d.rows).filter(id=>!(id in (mt.txh ||= {})));
   if (!ids.length || !navigator.onLine) return;
@@ -6275,30 +6363,29 @@ async function mtTxHist(){
 function mtTxHtml(d){
   const rows = Object.entries(d.rows).sort((a, b)=>byNum(a[0], b[0]));
   if (!rows.length) return `<div class="empty">Primero anota las vacas enfermas en "Lista del lote" o "Buscar vaca".</div>`;
-  const anti = hsCatGet().supplies.filter(m=>m.active!==false && m.category==="Antiinflamatorio / analgésico");
   let changed = false;
   const cards = rows.map(([id, r])=>{
     if (!r.txp && mt.txh?.[id]){ r.txp = { sel:mtTxSuggest(id, r), q:mtTxQ0(r), note:"", auto:true }; changed = true; }
     const p = r.txp, h = (mt.txh?.[id] || []).slice(-2).reverse();
     if (!p) return `<div class="hscard"><b>${esc(id)}</b> ${udder(r)} <span class="sub">revisando historial…</span></div>`;
     if (p.done) return `<div class="hscard" style="border-left:4px solid var(--s0)"><b style="font-size:18px">${esc(id)}</b> ${udder(r)}
-      <div style="margin-top:4px"><b>💊 ${esc(r.tx || "")}</b></div><div class="sub">✓ Programado ${fmt(p.at || mt.date)} · está en Salud${p.items ? " (descuenta del inventario)" : ""}</div></div>`;
+      <div style="margin-top:4px"><b>💊 ${esc(r.tx || "")}</b></div><div class="sub">✓ Programado ${fmt(p.at || mt.date)} · está en Salud${p.items ? " · descuenta del inventario cuando la finca lo marca realizado" : ""}</div></div>`;
     return `<div class="hscard" data-mttxc="${esc(id)}">
       <div style="display:flex;justify-content:space-between;align-items:center;gap:6px"><div><b style="font-size:18px">${esc(id)}</b> ${udder(r)}</div>
         ${p.auto ? `<span class="tag">sugerido</span>` : ""}</div>
       ${h.length ? `<div class="sub" style="margin-top:2px">Antes: ${h.map(x=>`${fmt(x.d)} ${esc(x.t.slice(0, 90))}`).join(" · ")}</div>` : `<div class="sub">Sin tratamientos en los últimos 120 días</div>`}
       <div class="sub" style="margin-top:6px">Cuartos</div>
       <div class="chips sm ckpan" style="padding:0"><div class="chips sm">${MT_Q.map(q=>`<button class="${p.q.includes(q) ? "on" : ""}" data-mttxq="${esc(id)}|${q}">${q.toUpperCase()}${+r[q] ? " · " + r[q] : ""}</button>`).join("")}</div></div>
-      <div class="sub" style="margin-top:6px">Tratamiento (puedes escoger varios)</div>
+      <div class="sub" style="margin-top:6px">Antibiótico (puedes escoger varios)</div>
       <div class="chips sm ckpan" style="padding:0"><div class="chips sm">${MT_TX.map(x=>`<button class="${p.sel.includes(x.k) ? "on" : ""}" data-mttxk="${esc(id)}|${x.k}">${esc(x.t)}</button>`).join("")}</div></div>
-      ${p.sel.includes("antiinf") ? `<div class="row" style="gap:6px;margin-top:6px;align-items:center"><span class="sub" style="flex:none">Antiinflamatorio</span>
-        <select data-mttxai="${esc(id)}" style="flex:1;min-width:0;padding:8px"><option value="">— producto (opcional) —</option>${anti.map(m=>`<option value="${esc(m.code)}" ${p.ai?.code===m.code ? "selected" : ""}>${esc(m.name)}</option>`).join("")}</select>
-        <input data-mttxad="${esc(id)}" inputmode="decimal" placeholder="mL" value="${esc(p.ai?.dose ?? "")}" style="flex:0 0 64px;padding:8px"></div>` : ""}
-      <input data-mttxn="${esc(id)}" placeholder="Otra indicación (opcional)" value="${esc(p.note || "")}" style="margin-top:6px">
+      ${MT_TX.filter(x=>p.sel.includes(x.k)).map(x=>`<div class="row" style="gap:8px;margin-top:6px;align-items:center"><b style="flex:1;min-width:0">${esc(x.t)}</b>
+        <input data-mttxnn="${esc(id)}|${x.k}" type="number" inputmode="numeric" min="1" max="20" value="${mtTxN(p, x)}" style="flex:0 0 64px;padding:8px;text-align:center">
+        <span class="sub" style="flex:0 0 auto">${x.im ? (x.dose ? "dosis por cuarto" : "jeringas por cuarto") : "dosis"}</span></div>`).join("")}
+      <input data-mttxn="${esc(id)}" placeholder="Otra indicación (ej. apartar vaca, Revisar JC)" value="${esc(p.note || "")}" style="margin-top:6px">
       <div class="sub" style="margin-top:6px;color:var(--ink)">→ ${esc(mtTxText(p)) || "<i>sin tratamiento</i>"}</div></div>`; });
   if (changed) mtSave(d);
   const ready = rows.filter(([, r])=>r.txp && !r.txp.done && r.txp.sel.length).length;
-  return `<div class="sub" style="margin-bottom:6px">Para cada vaca enferma: escoge los cuartos y el tratamiento. Viene <b>sugerido</b> según lo que se le ha puesto antes y lo más usado en las fincas. Al programar queda en <b>Salud</b> (descuenta del inventario y calcula el retiro de leche).</div>
+  return `<div class="sub" style="margin-bottom:6px">Para cada vaca enferma: escoge los cuartos, el antibiótico y cuántas jeringas o dosis. Viene <b>sugerido</b> según lo que se le ha puesto antes y lo más usado en las fincas. Al programar queda en <b>Salud</b> y en Mastitis como <b>en tratamiento</b>: cuando la finca marca el tratamiento realizado se descuenta del inventario.</div>
     ${cards.join("")}
     ${ready ? `<button class="btn" id="mtTxGo" style="margin-top:10px">💊 Programar tratamientos (${ready} vaca${ready===1 ? "" : "s"})</button>` : ""}`;
 }
@@ -6314,13 +6401,13 @@ async function mtTxProgram(){
   let ok = 0;
   for (const [id, r] of todo){
     const p = r.txp, nq = Math.max(1, p.q.length), txt = mtTxText(p);
-    const items = MT_TX.filter(x=>p.sel.includes(x.k) && (x.code || (x.pick && p.ai?.code && +String(p.ai.dose || "").replace(",", ".") > 0))).map(x=>{
-      const code = x.code || p.ai.code, dose = x.perQ ? x.perQ * nq : x.dose ?? +String(p.ai.dose).replace(",", ".");
-      return sup(code) ? { supply_code:code, dose, unit:sup(code).unit, route:x.route, every_hours:x.every, days:x.days } : null; }).filter(Boolean);
+    const items = MT_TX.filter(x=>p.sel.includes(x.k) && sup(x.code)).map(x=>{
+      const n = mtTxN(p, x), sc = mtTxSched(x, n);
+      return { supply_code:x.code, dose:x.im ? (x.dose || 1) * nq : x.dose, unit:sup(x.code).unit, route:sc.route, every_hours:sc.every, days:sc.days }; });
     if (items.length){
       p.cid ||= crypto.randomUUID ? crypto.randomUUID() : String(Date.now()) + Math.random();
       let { data:t, error } = await sb.from("treatments_cow").upsert({ client_id:p.cid, farm_id:mt.farm, cow_id:id, start_date:mt.date, diagnosis:"Mastitis clínica",
-        protocol:"Mastitis", prescribed_by:who, notes:txt }, { onConflict:"client_id", ignoreDuplicates:true }).select("id");
+        protocol:"Mastitis", prescribed_by:who, notes:txt, to_apply:true }, { onConflict:"client_id", ignoreDuplicates:true }).select("id");
       if (!error && !t?.length) ({ data:t, error } = await sb.from("treatments_cow").select("id").eq("client_id", p.cid));
       if (error || !t?.length){ err(`${id}: no se pudo programar (${error?.message || "sin permiso"})`); continue; }
       const { data:has } = await sb.from("treatment_items").select("id").eq("treatment_id", t[0].id).limit(1);
@@ -6331,6 +6418,8 @@ async function mtTxProgram(){
     if (r.up) await sb.from("cow_mastitis").update({ treatment:txt, ...(mtJC(r) ? { review_jc:true } : {}) }).eq("natural_key", `app:${id}|${mt.date}|${mt.kind}`);
   }
   mtSave(d); toast(`Tratamiento programado ✓ (${ok} vaca${ok===1 ? "" : "s"})`); mtRender();
+  // en la revisión de vacas sueltas, al programar también queda guardado el examen de los cuartos (sin tener que tocar Guardar)
+  if (mt.kind==="R" && Object.values(mtDraft().rows).some(r=>!r.up)) await mtUpload();
 }
 // el chequeo es por lote; la revisión de vacas sueltas es de toda la finca
 const mtKey = () => `mt:${mt.farm}|${mt.kind==="R" ? "*" : mt.pen}|${mt.date}|${mt.kind}`;
@@ -6689,6 +6778,8 @@ $("mastBody").addEventListener("change", async e=>{
   if (t.name==="mtF"){ mt.farm = +t.value; mt.pen = ""; mt.cur = null; jset("mtLast", { farm:mt.farm }); return mtShow(); }
   if (t.dataset.mttxai){ const d = mtDraft(), p = d.rows[t.dataset.mttxai]?.txp; if (p){ (p.ai ||= {}).code = t.value; p.auto = false; mtSave(d); } return; }
   if (t.dataset.mttxad){ const d = mtDraft(), p = d.rows[t.dataset.mttxad]?.txp; if (p){ (p.ai ||= {}).dose = t.value; mtSave(d); } return; }
+  if (t.dataset.mttxnn){ const [id, k] = t.dataset.mttxnn.split("|"), d = mtDraft(), p = d.rows[id]?.txp;
+    if (p){ (p.n ||= {})[k] = Math.max(1, Math.min(20, Math.round(+t.value) || MT_TX.find(x=>x.k===k).n)); p.auto = false; mtSave(d); mtRender(); } return; }
   if (t.dataset.mttxn){ const d = mtDraft(), p = d.rows[t.dataset.mttxn]?.txp; if (p){ p.note = t.value.trim().toUpperCase(); p.auto = false; mtSave(d); mtRender(); } return; }
   if (t.id==="mtDate"){ mt.date = t.value || today(); mt.cur = null; mt.hist = {}; mt.lotLast = {}; mt.txh = {}; mt.tmp = {}; return mtRender(); }
 });
@@ -6730,13 +6821,16 @@ async function loadMastWatch(){
   const { data, error } = await sb.from("cow_mastitis").select("cow_id,check_date,kind,lot,ai,ad,pi,pd,observation").gte("check_date", since).order("check_date");
   const sick = x => ["ai","ad","pi","pd"].some(k=>/^[1-4]$/.test(x[k] || ""));
   const worst = x => Math.max(...["ai","ad","pi","pd"].map(k=>/^[1-4]$/.test(x[k] || "") ? +x[k] : 0));
-  const by = {}; (error ? [] : data || []).filter(sick).forEach(x=>{ (by[x.cow_id] ||= []).push(x); });
+  if (!hsCatGet().supplies.length && navigator.onLine) await hsCatalog();
+  const txs = (await txToApply("Mastitis")).filter(t=>txLeft(t)), inTx = new Set(txs.map(t=>t.cow_id));
+  const by = {}; (error ? [] : data || []).filter(sick).filter(x=>!inTx.has(x.cow_id)).forEach(x=>{ (by[x.cow_id] ||= []).push(x); });
   const watch = Object.values(by).map(xs=>({ ...xs[xs.length - 1], n:xs.length, w:Math.max(...xs.map(worst)) }))
     .sort((a, b)=>b.w - a.w || byNum(a.cow_id, b.cow_id));
   const lots = [...new Set(watch.map(x=>x.lot || "—"))].sort(byNum);
   $("mastBody").innerHTML = mastTopBtns()
+    + hsApplyHtml(txs, today(), { title:"💉 En tratamiento", farms:true })
     + `<div class="card"><b>Vacas a vigilar (${watch.length})</b>
-      <div class="sub">Las que salieron con mastitis (grado 1 a 4) en el último mes · desde ${fmt(since)} · se ve su último registro con mastitis</div>
+      <div class="sub">Las que salieron con mastitis (grado 1 a 4) en el último mes · desde ${fmt(since)} · se ve su último registro con mastitis${inTx.size ? " · las que están en tratamiento pasan aquí cuando se marca el tratamiento realizado" : ""}</div>
       ${mastLegend()}
       ${lots.map(l=>`<div class="ckpen">${esc(l)} <span class="sub">(${watch.filter(x=>(x.lot||"—")===l).length})</span></div>
         <div class="list">${watch.filter(x=>(x.lot||"—")===l).map(x=>`<a class="chip" href="#mastitis/${encodeURIComponent(x.cow_id)}" style="text-decoration:none;display:inline-flex;gap:6px;align-items:center">
