@@ -8050,13 +8050,14 @@ document.addEventListener("click", async e=>{
 // El Dashboard Financiero Pro: SUBIR_FINANZAS.bat sube los datos de Contabilidad\INFORME.xlsx y la plantilla
 // a finance_snapshot (Supabase solo deja leerla al Admin Principal). Nunca se guarda en el celular.
 let finTab = "dash";
-const finTabs = () => `<div class="sheet" style="padding:0;background:none;max-height:none;margin-bottom:10px">${seg("finT", [["dash","📊 Dashboard financiero"],["ll","💧 Litros libres"]], finTab)}</div>`;
+const finTabs = () => `<div class="sheet" style="padding:0;background:none;max-height:none;margin-bottom:10px">${seg("finT", [["dash","📊 Dashboard"],["ll","💧 Litros libres"],["bn","💵 Bonificaciones"]], finTab)}</div>`;
 $("finBody").addEventListener("change", e=>{ if (e.target.name==="finT"){ finTab = e.target.value; initFin(); } });
 async function initFin(){
   const box = $("finBody");
   if (!navigator.onLine){ box.innerHTML = `<div class="card"><div class="empty">Finanzas necesita señal.</div></div>`; return; }
   box.dataset.on = "1";
   if (finTab==="ll") return llShow();
+  if (finTab==="bn") return bnShow();
   box.innerHTML = finTabs() + `<div class="card"><div class="empty">Cargando…</div></div>`;
   const { data, error } = await sb.from("finance_snapshot").select("data,template,generated_at").eq("id", 1).maybeSingle();
   if (error || !data){ box.innerHTML = `<div class="card"><div class="empty">${error ? (/does not exist|schema cache/i.test(error.message) ? "Falta correr SQL/finanzas.sql en Supabase." : esc(error.message))
@@ -8218,6 +8219,80 @@ $("finBody").addEventListener("change", e=>{
   const r = ll.rows.find(x=>x.month===ll.open); const v = String(e.target.value).trim(); r[k] = llN(v.includes(",") ? v.replace(/\./g, "").replace(",", ".") : v) ?? null;
   if (r.copied) r.copied = r.copied.filter(x=>x!==k);
   llRender();
+});
+
+// ═══════════ BONIFICACIÓN POR PREÑEZ A LOS INSEMINADORES (Finanzas) ═══════════
+// Reemplaza "liquidacion servicios FINAL.xlsx". Se calcula solo en Supabase (vista pregnancy_bonus): cada preñez se
+// paga en su DPR al inseminador del servicio que preñó. Ya pagado: lo del Excel y todo DPR hasta el 15/04/2026.
+// Los pagos se anotan aquí (pregnancy_bonus_payments): "pagar hasta" deja pagado todo lo de ese inseminador hasta ese DPR.
+let bn = null;
+const bnTot = r => (+r.bonus || 0) + (+r.penalty_bull || 0) + (+r.penalty_early || 0);
+const bnMoney = v => (v < 0 ? "−$" : "$") + Math.abs(Math.round(v)).toLocaleString("es-CO");
+function bnWhy(r){
+  const t = [];
+  if (r.bull==null || r.bull==="98") t.push("toro desconocido (98)");
+  else if (r.bull==="80") t.push("toro 80 (monta)");
+  else if (r.heifer) t.push(`novilla · ${r.ns} servicio${r.ns===1 ? "" : "s"}`);
+  else t.push(`${r.del} DEL · ${r.ns} servicio${r.ns===1 ? "" : "s"}`);
+  if (+r.penalty_early) t.push(`1er servicio a los ${r.del_first} DEL`);
+  return t.join(" · ");
+}
+async function bnShow(){
+  const box = $("finBody");
+  box.innerHTML = finTabs() + `<div class="card"><div class="empty">Cargando…</div></div>`;
+  const [b, p] = await Promise.all([
+    psAll(()=>sb.from("pregnancy_bonus").select("*").gt("dpr_date", "2026-04-15").order("dpr_date")),
+    sb.from("pregnancy_bonus_payments").select("*").order("paid_on", { ascending:false })]);
+  if (b.error){ box.innerHTML = finTabs() + `<div class="card"><div class="empty">${/does not exist|schema cache/i.test(b.error.message) ? "Falta correr SQL/bonificacion_prenez.sql en Supabase." : esc(b.error.message)}</div></div>`; return; }
+  bn = { rows:b.data || [], pays:p.data || [], ins:bn?.ins || null, all:bn?.all || false };
+  bnRender();
+}
+function bnRender(){
+  const rows = bn.rows.filter(r=>bn.all || !r.paid), name = r => r.inseminator || "(sin inseminador)";
+  const ins = [...new Set(rows.map(name))].sort();
+  const sum = xs => xs.reduce((a, r)=>a + bnTot(r), 0);
+  const chks = [...new Set(rows.map(r=>r.dpr_date))].sort().reverse();
+  const cell = (d, i) => { const xs = rows.filter(r=>r.dpr_date===d && name(r)===i); return xs.length ? `${bnMoney(sum(xs))}<div class="sub">${xs.length}</div>` : ""; };
+  const sel = bn.ins, det = sel ? rows.filter(r=>name(r)===sel).sort((a, b)=>b.dpr_date.localeCompare(a.dpr_date) || byNum(a.cow_id, b.cow_id)) : [];
+  const lastPay = i => bn.pays.find(x=>x.inseminator===i);
+  $("finBody").innerHTML = finTabs() + `<div class="card"><b>💵 Bonificación por preñez</b>
+      <div class="sub">Se paga en el DPR al inseminador del servicio que preñó · se calcula solo con los chequeos · ya pagado todo hasta el DPR del 15/04/2026</div>
+      <div class="chips sm ckpan" style="padding:0;margin-top:8px"><div class="chips sm"><button class="${bn.all ? "" : "on"}" data-bnall="0">Pendientes por pagar</button><button class="${bn.all ? "on" : ""}" data-bnall="1">Todo desde el 16/04</button></div></div>
+      <div class="rpk" style="margin-top:8px"><div><b>${bnMoney(sum(rows))}</b><span>${bn.all ? "total" : "por pagar"}</span></div><div><b>${rows.length}</b><span>preñeces</span></div></div></div>
+    <div class="card"><b>Por inseminador</b><div class="sub">Toca uno para ver vaca por vaca</div>
+      <table class="ivt" style="font-size:14px;margin-top:6px"><tr><th>Inseminador</th><th style="text-align:right">Preñeces</th><th style="text-align:right">${bn.all ? "Total" : "Por pagar"}</th><th></th></tr>
+      ${ins.map(i=>{ const xs = rows.filter(r=>name(r)===i), lp = lastPay(i), pend = xs.filter(r=>!r.paid);
+        return `<tr data-bnins="${esc(i)}" style="cursor:pointer;${sel===i ? "background:color-mix(in srgb,var(--accent) 14%,transparent)" : ""}"><td><b>${esc(i)}</b>${lp ? `<div class="sub">último pago ${fmt(lp.paid_on)}: hasta DPR ${fmt(lp.paid_through)}</div>` : ""}</td>
+          <td style="text-align:right">${xs.length}</td><td style="text-align:right"><b>${bnMoney(sum(xs))}</b></td>
+          <td>${pend.length && i!=="(sin inseminador)" ? `<button class="btn" data-bnpay="${esc(i)}" style="width:auto;padding:6px 10px;font-size:13px">Pagar</button>` : ""}</td></tr>`; }).join("")
+        || `<tr><td colspan="4"><div class="empty">Nada pendiente 👍</div></td></tr>`}</table></div>
+    ${sel ? `<div class="card" style="border:2px solid var(--accent)"><div style="display:flex;justify-content:space-between;align-items:center"><b>${esc(sel)} · ${det.length} preñeces · ${bnMoney(sum(det))}</b><button class="lnk" data-bnins="${esc(sel)}">cerrar</button></div>
+      <div style="overflow-x:auto;margin-top:6px"><table class="ivt" style="font-size:13px;white-space:nowrap"><tr><th>DPR</th><th>Vaca</th><th>Servicio</th><th>Toro</th><th>Por qué</th><th style="text-align:right">Valor</th></tr>
+      ${det.map(r=>`<tr${r.paid ? ` style="opacity:.55"` : ""}><td>${fmt(r.dpr_date)}</td><td><button class="lnk" data-cow="${esc(r.cow_id)}">${esc(r.cow_id)}</button>${r.heifer ? ` <span class="pill">nov</span>` : ""}</td>
+        <td>${fmt(r.sv_date)}</td><td>${esc(r.bull || "—")}</td><td class="sub">${esc(bnWhy(r))}</td><td style="text-align:right;font-weight:700;${bnTot(r) < 0 ? "color:var(--s4)" : ""}">${bnMoney(bnTot(r))}${r.paid ? `<div class="sub">pagado</div>` : ""}</td></tr>`).join("")}</table></div></div>` : ""}
+    <div class="card"><b>Por chequeo (DPR)</b><div class="sub">Como la hoja "Liquidación General": valor y número de preñeces de cada inseminador en cada chequeo</div>
+      <div style="overflow-x:auto;margin-top:6px"><table class="ivt" style="font-size:12px;white-space:nowrap"><tr><th>DPR</th>${ins.map(i=>`<th style="text-align:right">${esc(i)}</th>`).join("")}<th style="text-align:right">Total</th></tr>
+      ${chks.map(d=>`<tr><td><b>${fmt(d)}</b></td>${ins.map(i=>`<td style="text-align:right">${cell(d, i)}</td>`).join("")}<td style="text-align:right"><b>${bnMoney(sum(rows.filter(r=>r.dpr_date===d)))}</b></td></tr>`).join("")}</table></div></div>
+    ${bn.pays.length ? `<div class="card"><b>Pagos registrados</b><table class="ivt" style="font-size:13px;margin-top:6px"><tr><th>Fecha</th><th>Inseminador</th><th>Hasta DPR</th><th style="text-align:right">Valor</th></tr>
+      ${bn.pays.slice(0, 20).map(x=>`<tr><td>${fmt(x.paid_on)}</td><td>${esc(x.inseminator)}</td><td>${fmt(x.paid_through)}</td><td style="text-align:right">${x.amount!=null ? bnMoney(+x.amount) : "—"}</td></tr>`).join("")}</table></div>` : ""}
+    <div style="height:20px"></div>`;
+}
+$("finBody").addEventListener("click", async e=>{
+  if (!bn || finTab!=="bn") return;
+  const t = e.target, a = t.closest("[data-bnall]"), i = t.closest("[data-bnins]"), pay = t.closest("[data-bnpay]");
+  if (a){ bn.all = a.dataset.bnall==="1"; return bnRender(); }
+  if (pay){
+    e.stopPropagation();
+    const who = pay.dataset.bnpay, pend = bn.rows.filter(r=>!r.paid && (r.inseminator || "(sin inseminador)")===who);
+    const last = pend.map(r=>r.dpr_date).sort().pop(), amt = pend.reduce((s, r)=>s + bnTot(r), 0);
+    if (!confirm(`¿Registrar el pago a ${who}?\n\n${pend.length} preñeces con DPR hasta el ${fmt(last)}\nValor: ${bnMoney(amt)}\n\nQuedan como pagadas.`)) return;
+    pay.disabled = true;
+    const { error } = await sb.from("pregnancy_bonus_payments").insert({ inseminator:who, paid_through:last, amount:amt, paid_on:today() });
+    if (error){ pay.disabled = false; return toast("No se pudo registrar: " + error.message); }
+    toast(`Pago a ${who} registrado ✓`); return bnShow();
+  }
+  const cw = t.closest("[data-cow]"); if (cw) return openCow(cw.dataset.cow);
+  if (i){ bn.ins = bn.ins===i.dataset.bnins ? null : i.dataset.bnins; return bnRender(); }
 });
 
 // ═══════════════════════ INVENTARIO ═══════════════════════════
