@@ -618,6 +618,7 @@ details.lac td{padding:6px 8px}
           <a class="dw-item" href="#config" data-drawer-go data-only="main"><span class="dw-ic">⚙️</span>Configuración<i>›</i></a>
           <a class="dw-item" href="#config" data-drawer-go data-only="main" data-dw-newfarm><span class="dw-ic">🏡</span>Nueva finca<i>›</i></a>
           <a class="dw-item" href="#usuarios" data-drawer-go><span class="dw-ic">👥</span>Usuarios y permisos<i>›</i></a>
+          <a class="dw-item" href="#finanzas" data-drawer-go data-only="main" data-dw-bn><span class="dw-ic">💵</span>Bonificaciones<i>›</i></a>
         </div>
       </nav>
     </div>
@@ -893,6 +894,7 @@ window.addEventListener("hashchange", route);
 // ☰ menú lateral (por ahora: Configuración, solo para el administrador principal)
 document.addEventListener("click", e=>{
   if (e.target.closest("#menuBtn")){ $("dwWho").textContent = [store.get("myName"), myProfile].filter(Boolean).join(" · "); $("drawer").classList.remove("hidden"); return; }
+  if (e.target.closest("[data-dw-bn]")){ finTab = "bn"; if (location.hash==="#finanzas") initFin(); }
   if (e.target.closest("[data-dw-newfarm]")){ cf.newFarm = true; if (location.hash==="#config") initConfig(); }
   if (e.target.id==="drawer" || e.target.closest("[data-drawer-go]")) $("drawer").classList.add("hidden");
 });
@@ -8240,11 +8242,13 @@ function bnWhy(r){
 async function bnShow(){
   const box = $("finBody");
   box.innerHTML = finTabs() + `<div class="card"><div class="empty">Cargando…</div></div>`;
-  const [b, p] = await Promise.all([
+  const [b, p, rl] = await Promise.all([
     psAll(()=>sb.from("pregnancy_bonus").select("*").gt("dpr_date", "2026-04-15").order("dpr_date")),
-    sb.from("pregnancy_bonus_payments").select("*").order("paid_on", { ascending:false })]);
+    sb.from("pregnancy_bonus_payments").select("*").order("paid_on", { ascending:false }),
+    sb.from("pregnancy_bonus_rules").select("rules,updated_at").eq("id", 1).maybeSingle()]);
   if (b.error){ box.innerHTML = finTabs() + `<div class="card"><div class="empty">${/does not exist|schema cache/i.test(b.error.message) ? "Falta correr SQL/bonificacion_prenez.sql en Supabase." : esc(b.error.message)}</div></div>`; return; }
-  bn = { rows:b.data || [], pays:p.data || [], ins:bn?.ins || null, all:bn?.all || false };
+  const rules = rl?.data?.rules || null;
+  bn = { rows:b.data || [], pays:p.data || [], ins:bn?.ins || null, all:bn?.all || false, rules, edit:bn?.edit ? JSON.parse(JSON.stringify(rules)) : null, at:rl?.data?.updated_at };
   bnRender();
 }
 function bnRender(){
@@ -8273,10 +8277,63 @@ function bnRender(){
     <div class="card"><b>Por chequeo (DPR)</b><div class="sub">Como la hoja "Liquidación General": valor y número de preñeces de cada inseminador en cada chequeo</div>
       <div style="overflow-x:auto;margin-top:6px"><table class="ivt" style="font-size:12px;white-space:nowrap"><tr><th>DPR</th>${ins.map(i=>`<th style="text-align:right">${esc(i)}</th>`).join("")}<th style="text-align:right">Total</th></tr>
       ${chks.map(d=>`<tr><td><b>${fmt(d)}</b></td>${ins.map(i=>`<td style="text-align:right">${cell(d, i)}</td>`).join("")}<td style="text-align:right"><b>${bnMoney(sum(rows.filter(r=>r.dpr_date===d)))}</b></td></tr>`).join("")}</table></div></div>
+    ${bnRulesHtml()}
     ${bn.pays.length ? `<div class="card"><b>Pagos registrados</b><table class="ivt" style="font-size:13px;margin-top:6px"><tr><th>Fecha</th><th>Inseminador</th><th>Hasta DPR</th><th style="text-align:right">Valor</th></tr>
       ${bn.pays.slice(0, 20).map(x=>`<tr><td>${fmt(x.paid_on)}</td><td>${esc(x.inseminator)}</td><td>${fmt(x.paid_through)}</td><td style="text-align:right">${x.amount!=null ? bnMoney(+x.amount) : "—"}</td></tr>`).join("")}</table></div>` : ""}
     <div style="height:20px"></div>`;
 }
+// reglas de pago editables (tabla pregnancy_bonus_rules): tramos de días en leche, novillas, castigos y pagado hasta
+function bnRulesHtml(){
+  const r = bn.edit || bn.rules; if (!r) return "";
+  const ed = !!bn.edit && myProfile==="Admin Principal", $m = v => bnMoney(+v || 0);
+  const inp = (path, v, w = 86) => ed ? `<input data-bnr="${path}" type="text" inputmode="numeric" value="${esc(String(v ?? ""))}" style="width:${w}px;padding:6px;text-align:right">` : `<b>${esc(String(v ?? ""))}</b>`;
+  const money = (path, v) => ed ? inp(path, v, 96) : `<b>${$m(v)}</b>`;
+  return `<details class="card" ${bn.edit ? "open" : ""}><summary style="cursor:pointer;list-style:none;display:flex;justify-content:space-between;align-items:center"><b>⚙️ Reglas de pago</b><span class="sub">${bn.edit ? "editando" : "toca para ver"}</span></summary>
+    <div class="sub" style="margin-top:6px">Se aplican a todo lo que no se ha pagado. Lo que ya se pagó no cambia.</div>
+    <div class="sub" style="margin-top:10px"><b>Vacas · días en leche al servicio que preñó</b></div>
+    <table class="ivt" style="font-size:13px;margin-top:4px"><tr><th>Desde</th><th>Hasta</th><th style="text-align:right">1 servicio</th><th style="text-align:right">2 o más</th>${ed ? "<th></th>" : ""}</tr>
+      ${(r.tramos || []).map((t, i)=>`<tr><td>${inp(`tramos.${i}.desde`, t.desde, 56)}</td><td>${inp(`tramos.${i}.hasta`, t.hasta, 56)}</td>
+        <td style="text-align:right">${money(`tramos.${i}.un_servicio`, t.un_servicio)}</td><td style="text-align:right">${money(`tramos.${i}.varios`, t.varios)}</td>${ed ? `<td><button class="del" data-bnrdel="${i}">✕</button></td>` : ""}</tr>`).join("")}
+      <tr><td colspan="${ed ? 5 : 4}" class="sub">Fuera de estos rangos: $0${ed ? ` · <button class="lnk" data-bnradd>＋ rango</button>` : ""}</td></tr></table>
+    <div class="sub" style="margin-top:10px"><b>Novillas · por número de servicios</b></div>
+    <div style="overflow-x:auto"><table class="ivt" style="font-size:13px;margin-top:4px"><tr>${(r.novillas || []).map((_, i, a)=>`<th style="text-align:right">${i + 1}${i===a.length - 1 ? "+" : ""} sv</th>`).join("")}</tr>
+      <tr>${(r.novillas || []).map((v, i)=>`<td style="text-align:right">${ed ? inp(`novillas.${i}`, v, 66) : `<b>${bnMoney(+v || 0)}</b>`}</td>`).join("")}</tr></table></div>
+    <div class="sub" style="margin-top:10px"><b>Castigos</b></div>
+    <div style="display:grid;grid-template-columns:1fr auto;gap:6px;align-items:center;margin-top:4px;font-size:14px">
+      <span>Primer servicio de la lactancia antes de ${ed ? inp("temprano_dias", r.temprano_dias, 50) : `<b>${r.temprano_dias}</b>`} días</span><span>${money("temprano_valor", r.temprano_valor)}</span>
+      <span>Toro desconocido o sin toro (${ed ? inp("toro_desconocido", (r.toro_desconocido || []).join(", "), 90) : `<b>${esc((r.toro_desconocido || []).join(", "))}</b>`})</span><span>${money("toro_desconocido_valor", r.toro_desconocido_valor)}</span>
+      <span>Toros que no ganan ni se castigan (${ed ? inp("toro_sin_pago", (r.toro_sin_pago || []).join(", "), 90) : `<b>${esc((r.toro_sin_pago || []).join(", "))}</b>`})</span><span></span>
+      <span>Todo pagado hasta el DPR del</span><span>${ed ? `<input data-bnr="pagado_hasta" type="date" value="${esc(r.pagado_hasta || "")}" style="padding:6px">` : `<b>${fmt(r.pagado_hasta)}</b>`}</span></div>
+    ${myProfile==="Admin Principal" ? (ed ? `<div class="err" id="bnErr"></div><div class="row" style="gap:8px;margin-top:10px"><button class="btn ghost" data-bnrcancel>Cancelar</button><button class="btn" data-bnrsave>💾 Guardar reglas</button></div>`
+      : `<button class="btn ghost" data-bnredit style="margin-top:10px">✏️ Cambiar valores y días</button>`) : ""}
+    ${bn.at ? `<div class="sub" style="margin-top:6px">Última modificación: ${fmt(String(bn.at).slice(0, 10))}</div>` : ""}</details>`;
+}
+function bnSetRule(path, v){
+  const ks = path.split("."), last = ks.pop(); let o = bn.edit; ks.forEach(k=>{ o = o[/^\d+$/.test(k) ? +k : k]; });
+  const key = /^\d+$/.test(last) ? +last : last;
+  if (last==="toro_desconocido" || last==="toro_sin_pago") o[key] = String(v).split(/[,;\s]+/).map(x=>x.trim()).filter(Boolean);
+  else if (last==="pagado_hasta") o[key] = v || null;
+  else { const n = +String(v).replace(/[.$\s]/g, "").replace(",", ".").replace("−", "-"); o[key] = isFinite(n) ? n : 0; }
+}
+$("finBody").addEventListener("change", e=>{ const k = e.target.dataset?.bnr; if (k && bn?.edit) bnSetRule(k, e.target.value); });
+$("finBody").addEventListener("click", async e=>{
+  if (!bn || finTab!=="bn") return;
+  const t0 = e.target;
+  if (t0.closest("[data-bnredit]")){ bn.edit = JSON.parse(JSON.stringify(bn.rules)); return bnRender(); }
+  if (t0.closest("[data-bnrcancel]")){ bn.edit = null; return bnRender(); }
+  if (t0.closest("[data-bnradd]")){ const l = bn.edit.tramos[bn.edit.tramos.length - 1]; bn.edit.tramos.push({ desde:(l?.hasta || 0) + 1, hasta:(l?.hasta || 0) + 50, un_servicio:0, varios:0 }); return bnRender(); }
+  const rd = t0.closest("[data-bnrdel]"); if (rd){ bn.edit.tramos.splice(+rd.dataset.bnrdel, 1); return bnRender(); }
+  if (t0.closest("[data-bnrsave]")){
+    const r = bn.edit, ts = [...r.tramos].sort((a, b)=>a.desde - b.desde);
+    if (ts.some(t=>!(t.hasta >= t.desde))) return ($("bnErr").textContent = "En cada rango el 'hasta' debe ser mayor o igual al 'desde'.");
+    if (ts.some((t, i)=>i && t.desde <= ts[i - 1].hasta)) return ($("bnErr").textContent = "Los rangos de días no se pueden cruzar.");
+    r.tramos = ts;
+    if (!confirm("¿Guardar las reglas nuevas?\n\nSe recalcula todo lo que está pendiente por pagar.")) return;
+    const { error } = await sb.from("pregnancy_bonus_rules").upsert({ id:1, rules:r, updated_at:new Date().toISOString() }, { onConflict:"id" });
+    if (error) return ($("bnErr").textContent = "No se pudo guardar: " + error.message);
+    bn.edit = null; toast("Reglas guardadas ✓"); return bnShow();
+  }
+});
 $("finBody").addEventListener("click", async e=>{
   if (!bn || finTab!=="bn") return;
   const t = e.target, a = t.closest("[data-bnall]"), i = t.closest("[data-bnins]"), pay = t.closest("[data-bnpay]");
