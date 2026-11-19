@@ -5425,7 +5425,7 @@ function cnOpen(farm, date){
     const cover = last.filter(x=>cnEnd(x) >= date);
     const tpl = last.length ? last.filter(x=>x.rec_date===last[last.length - 1].rec_date) : [];
     const items = mine.length ? mine.map(x=>({ code:x.supply_code, bags:x.bags, days:x.days || 1 }))
-      : cover.length ? [] : tpl.length ? tpl.map(x=>({ code:x.supply_code, bags:"", days:x.days || 1, hint:x.bags })) : [{ code:cnGuess(n), bags:"", days:1 }];
+      : tpl.length ? tpl.map(x=>({ code:x.supply_code, bags:"", days:x.days || 1, hint:x.bags })) : [{ code:cnGuess(n), bags:"", days:1 }];
     return { grp:n, label:lab(n), items, cover:cover.map(x=>({ code:x.supply_code, bags:+x.bags, days:x.days || 1, from:x.rec_date })) }; });
   cnCur = { key, farm, date, rows, saved:!!same.length, fromPrev:null, who:[...new Set(same.map(x=>x.given_name).filter(Boolean))] };
 }
@@ -5460,16 +5460,16 @@ function cnInner(farm, date, o){
       ${Object.keys(tot).length ? `<div class="sub" style="margin-top:8px">Sale hoy de la bodega:</div><div class="rpk" style="margin-top:4px">${Object.entries(tot).map(([k, v])=>`<div><b>${cnN1(v)}</b><span>${esc(nm(k))}</span></div>`).join("")}</div>` : ""}
       ${milk.length ? `<div class="sub" style="margin-top:8px"><b>Hatos de ordeño</b> (de la Leche diaria): ${milk.map(({ pen, r })=>`${esc(lab(pen))}: ${mtxt(r)}`).join(" · ")}</div>` : ""}</div>
     ${c.rows.map((r, i)=>`<div class="card" style="padding:12px 14px"><b style="font-size:17px">${esc(r.label)}</b>
-      ${(r.cover || []).map(x=>`<div class="sub" style="margin-top:4px;color:var(--s0)">✓ Cubierto: ${cnN1(x.bags)} ${esc(nm(x.code))} el ${fmt(x.from).slice(0, 5)} para ${x.days} día${x.days===1 ? "" : "s"} (${cnN1(x.bags / x.days)}/día) · hasta el ${fmt(addDays(x.from, x.days - 1)).slice(0, 5)}</div>`).join("")}
+      ${(r.cover || []).map(x=>`<div style="margin-top:6px;padding:8px 10px;border-radius:10px;background:color-mix(in srgb,var(--s2) 22%,transparent);border-left:4px solid var(--s2);font-size:14px">⚠️ <b>Todavía queda concentrado:</b> el ${fmt(x.from).slice(0, 5)} sacaron ${cnN1(x.bags)} ${esc(nm(x.code))} para ${x.days} día${x.days===1 ? "" : "s"} (${cnN1(x.bags / x.days)}/día), alcanza hasta el ${fmt(addDays(x.from, x.days - 1)).slice(0, 5)}. Si sacaron más, anótalo abajo.</div>`).join("")}
       ${r.items.map((f, j)=>{ const b = cnNum(f.bags), dd = Math.max(1, Math.round(+f.days || 1));
         return `<div class="row" style="gap:6px;margin-top:6px;align-items:center">
         <select data-cnf="${i}|${j}|code" style="flex:1;min-width:0" ${reg ? "" : "disabled"}><option value="">— alimento —</option>${ops.map(m=>`<option value="${esc(m.code)}" ${m.code===f.code ? "selected" : ""}>${esc(m.name)}</option>`).join("")}</select>
         ${reg && (r.items.length > 1 || (r.cover || []).length) ? `<button class="del" data-cnrm="${i}|${j}">✕</button>` : ""}</div>
         <div class="row" style="gap:6px;margin-top:6px;align-items:center">
-          <input data-cnf="${i}|${j}|bags" type="text" inputmode="decimal" placeholder="${f.hint ? "antes " + cnN1(+f.hint) : "bultos"}" value="${f.bags ?? ""}" style="flex:0 0 78px;min-width:0;text-align:center;font-size:18px;font-weight:700" ${reg ? "" : "disabled"}>
+          <input data-cnf="${i}|${j}|bags" type="text" inputmode="decimal" placeholder="bultos" value="${f.bags ?? ""}" style="flex:0 0 78px;min-width:0;text-align:center;font-size:18px;font-weight:700" ${reg ? "" : "disabled"}>
           <span class="sub">bultos para</span>
           <input data-cnf="${i}|${j}|days" type="number" inputmode="numeric" min="1" max="30" value="${dd}" style="flex:0 0 58px;min-width:0;text-align:center;font-size:17px" ${reg ? "" : "disabled"}>
-          <span class="sub">día${dd===1 ? "" : "s"}${b && dd > 1 ? ` = <b style="color:var(--ink)">${cnN1(b / dd)}/día</b>` : ""}</span></div>`; }).join("")}
+          <span class="sub">día${dd===1 ? "" : "s"}${b && dd > 1 ? ` = <b style="color:var(--ink)">${cnN1(b / dd)}/día</b>` : ""}${!b && f.hint ? ` · la vez pasada ${cnN1(+f.hint)}` : ""}</span></div>`; }).join("")}
       ${reg ? `<button class="lnk" data-cnadd="${i}" style="margin-top:4px">＋ ${r.items.length ? "otro alimento" : "anotar otra salida"}</button>` : ""}</div>`).join("")}
     ${reg && o.save ? `<div class="err" data-cnerr></div><button class="btn" data-cnsave style="margin-bottom:12px;font-size:18px;padding:14px">💾 Guardar consumos</button>` : `<div class="err" data-cnerr></div>`}
     ${o.days && grps.length ? `<div class="card"><b>Últimos 7 días (bultos por día)</b><div class="sub">Lo que se sacó para varios días se reparte entre esos días.</div><div style="overflow-x:auto;margin-top:6px"><table class="ivt" style="font-size:12px;white-space:nowrap">
@@ -5491,6 +5491,10 @@ function cnQueue(box){
   if (c.rows.some(r=>r.items.some(f=>cnNum(f.bags) && !f.code))) return err("Concentrado: escoge el alimento de cada lote que tiene bultos.");
   if (c.rows.some(r=>r.items.some(f=>String(f.bags ?? "").trim() && !cnNum(f.bags)))) return err("Concentrado: revisa los bultos (deben ser números, ej. 2 o 1,5).");
   if (c.rows.some(r=>r.items.some(f=>cnNum(f.bags) && !(Math.round(+f.days || 1) >= 1)))) return err("Concentrado: revisa para cuántos días.");
+  const still = c.rows.filter(r=>r.cover?.length && r.items.some(f=>cnNum(f.bags)) && !c.saved);
+  if (still.length && !confirm(`Todavía quedaba concentrado en: ${still.map(r=>`${r.label} (hasta el ${fmt(r.cover.map(x=>addDays(x.from, x.days - 1)).sort().pop()).slice(0, 5)})`).join(", ")}.
+
+¿Guardar igual la nueva salida?`)) return false;
   const ob = jget("cnOutbox", []); if (!ob.includes(c.key)){ ob.push(c.key); jset("cnOutbox", ob); }
   cnSaveLocal(); return true;
 }
