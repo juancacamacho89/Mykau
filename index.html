@@ -322,7 +322,7 @@ details.lac td{padding:6px 8px}
         <button class="link logout">Salir</button>
       </header>
       <div class="apps">
-        <a class="appicon hidden" href="#ronda" data-perm="ronda_registrar ronda_ver"><span class="ic" style="--g1:#9be38f;--g2:#2e8b57">📝</span><b>Reporte ganadería</b><i class="badge hidden" id="badgeRonda"></i></a>
+        <a class="appicon hidden" href="#ronda" data-perm="ronda_registrar ronda_ver consumo_concentrado"><span class="ic" style="--g1:#9be38f;--g2:#2e8b57">📝</span><b>Reporte ganadería</b><i class="badge hidden" id="badgeRonda"></i></a>
         <a class="appicon hidden" href="#rapido" data-perm="vacas_servicio vacas_celo vacas_secado salud_tratar traslados vacas_salida"><span class="ic" style="--g1:#ffe066;--g2:#f08c00">⚡</span><b>Ingreso rápido</b></a>
         <a class="appicon hidden" href="#listas" data-perm="listas_ver"><span class="ic" style="--g1:#8fd3fe;--g2:#3b6fd8">📋</span><b>Listas de trabajo</b></a>
         <a class="appicon hidden" href="#generador" data-perm="generador_ver"><span class="ic" style="--g1:#b9f3cf;--g2:#1f9e6b">🧾</span><b>Generador de listas</b></a>
@@ -444,6 +444,7 @@ details.lac td{padding:6px 8px}
         <div id="dmPen" class="sheet" style="padding:0;background:none;max-height:none;margin-top:8px"></div>
         <div id="dmForm" style="margin-top:6px"></div>
       </div>
+      <div id="dmLots"></div>
       <div id="dmSummary"></div>
     </section>
 
@@ -725,7 +726,7 @@ const PERM_FALLBACK = { vacas_repro:"vacas_ver", calidad_ver:"reporte_editar",
   pastos_ver:"reporte_editar", pastos_registrar:"reporte_editar", produccion_ver:"reporte_editar", registros_todos:"reporte_editar", pesot_registrar:"vacas_parto",
   vacas_secado:"vacas_parto", vacas_salida:"vacas_parto", terneras_registrar:"reporte_editar", listas_ver:"vacas_repro", generador_ver:"listas_ver",
   toros_ver:"reporte_editar", toros_registrar:"reporte_editar", racion_ver:"reporte_editar", racion_registrar:"reporte_editar",
-  ronda_registrar:"diaria_registrar", ronda_ver:"diaria_registrar", chequeo_tratamientos:"chequeo", chequeo_resultados:"chequeo_tratamientos", mastitis_registrar:"salud_tratar",
+  ronda_registrar:"diaria_registrar", ronda_ver:"diaria_registrar", consumo_concentrado:"ronda_registrar", chequeo_tratamientos:"chequeo", chequeo_resultados:"chequeo_tratamientos", mastitis_registrar:"salud_tratar",
   vacas_salud:"vacas_ver", vacas_peso:"vacas_ver", vacas_datos:"vacas_ver", inicio_antibiotico:"terneras_vigilar", salud_reportar:"salud_tratar", salud_aplicar:"salud_reportar" };   // funciones nuevas: mientras no estén en el perfil
 // si el perfil no tiene la función, se usa la de la que depende (en cadena: generador → listas → reproducción…)
 const permOf = (k, n = 0) => perms[k] || (PERM_FALLBACK[k] && n < 5 ? permOf(PERM_FALLBACK[k], n + 1) : null);
@@ -856,7 +857,7 @@ function setTab(tab){
 // pantallas y el permiso que las abre (si no lo tiene, vuelve al inicio)
 const TAB_PERM = { terneras:"terneras_historial terneras_vigilar terneras_registrar", traslados:"traslados", leche:"pesaje_registrar",
   diaria:"diaria_registrar diaria_totales diaria_resumen", reporte:"reporte_ver produccion_ver pastos_ver calidad_ver", registros:"registros_ver", chequeo:"chequeo chequeo_tratamientos chequeo_resultados",
-  mastitis:"mastitis_historial mastitis_vigilar mastitis_registrar", salud:"salud_ver salud_tratar salud_reportar", pastos:"pastos_ver pastos_registrar", pesot:"pesot_registrar", listas:"listas_ver", generador:"generador_ver", inventario:"inventario_ver insumos_mov_alimento insumos_mov_medicamento", finanzas:"finanzas_ver", toros:"toros_ver toros_registrar", racion:"racion_ver racion_registrar", ronda:"ronda_registrar ronda_ver", rapido:"vacas_servicio vacas_celo vacas_secado salud_tratar traslados vacas_salida", vaca:"vacas_ver" };
+  mastitis:"mastitis_historial mastitis_vigilar mastitis_registrar", salud:"salud_ver salud_tratar salud_reportar", pastos:"pastos_ver pastos_registrar", pesot:"pesot_registrar", listas:"listas_ver", generador:"generador_ver", inventario:"inventario_ver insumos_mov_alimento insumos_mov_medicamento", finanzas:"finanzas_ver", toros:"toros_ver toros_registrar", racion:"racion_ver racion_registrar", ronda:"ronda_registrar ronda_ver consumo_concentrado", rapido:"vacas_servicio vacas_celo vacas_secado salud_tratar traslados vacas_salida", vaca:"vacas_ver" };
 function route(){
   const h = decodeURIComponent(location.hash.slice(1));
   const tk = Object.keys(TAB_PERM).find(k=>h.startsWith(k));
@@ -917,7 +918,7 @@ const UP_FUNCS = [
   ["Insumos", [["inventario_ver","Ver inventario de insumos"],["insumos_mov_alimento","Registrar movimientos de alimento"],["insumos_mov_medicamento","Registrar movimientos de medicamentos"]]],
   ["Toros y semen", [["toros_ver","Ver toros y semen"],["toros_registrar","Registrar semen, traslados y toros"]]],
   ["Suplementación", [["racion_ver","Ver suplementación (ración de concentrado)"],["racion_registrar","Guardar ración de concentrado"]]],
-  ["Reporte de ganadería", [["ronda_ver","Ver reporte diario de ganadería"],["ronda_registrar","Registrar reporte diario de ganadería"]]]];
+  ["Reporte de ganadería", [["ronda_ver","Ver reporte diario de ganadería"],["ronda_registrar","Registrar reporte diario de ganadería"],["consumo_concentrado","Registrar consumos de concentrado por lote"]]]];
 let up = { tab:"users", users:[], profiles:[], farms:[], prof:null, edit:null };
 async function initUsers(){
   if (!usMgr()){ $("upBody").innerHTML = `<div class="card"><div class="empty">Sin permiso.</div></div>`; return; }
@@ -5272,24 +5273,27 @@ const rnTanks = farm => (fcfg(farm).tanks?.length ? fcfg(farm).tanks : RN_TANKS[
 async function initRonda(){
   if (!rnState.farm){ const fs = await prodFarms(); rnState.farm = jget("rnLast", {}).farm || (fs.find(f=>f.id===7) || fs[0])?.id || 7; }
   rnState.date = rnState.date || today();
-  updRondaNet(); flushRonda();
+  updRondaNet(); flushRonda(); flushConsumo();
   if (navigator.onLine) await hsCatalog();   // alimentos para anotar los bultos por lote
-  await rnLoad(); rnOpen(); renderRonda();
+  await rnLoad(); await cnLoad(rnState.farm); rnOpen(); renderRonda();
 }
 function updRondaNet(){ const q = jget("rnOutbox", []).length; const b = $("badgeRonda"); if (b){ b.textContent = q || ""; b.classList.toggle("hidden", !q); } }
 async function rnLoad(){
   const farm = rnState.farm, key = `rnData:${farm}`;
   if (navigator.onLine){
     const since = addDays(today(), -45);
-    const [l, p, r, dm, tt] = await Promise.all([
+    const [l, p, r, dm, tt, lf, cg] = await Promise.all([
       sb.from("field_lots").select("name,label,sort,active").eq("farm_id", farm).order("sort"),
       sb.from("paddocks").select("id,predio,number,active,merged_into").eq("farm_id", farm),
       sb.from("lot_report").select("*").eq("farm_id", farm).gte("report_date", since).order("report_date"),
       sb.from("daily_milk").select("pen,rec_date,paddock_am_id,paddock_pm_id,cows").eq("farm_id", farm).gte("rec_date", addDays(today(), -7)),
       sb.from("tank_temp").select("report_date,tank,temp_c,read_time").eq("farm_id", farm).gte("report_date", addDays(today(), -120)),
+      sb.from("lot_feed").select("id,rec_date,grp,supply_code,bags,days,given_name").eq("farm_id", farm).gte("rec_date", since).order("rec_date"),
+      sb.from("farm_lists").select("value").eq("farm_id", farm).eq("kind", "calving_group"),
     ]);
     if (l.error){ rnData = { err:"Falta correr SQL/crear_reporte_ganaderia.sql en Supabase." }; return; }
-    rnData = { farm, at:Date.now(), lots:l.data || [], pads:(p.data || []).filter(x=>x.active && !x.merged_into), rep:r.data || [], dm:dm.data || [], temps:tt.error ? [] : tt.data || [] };
+    rnData = { farm, at:Date.now(), lots:l.data || [], pads:(p.data || []).filter(x=>x.active && !x.merged_into), rep:r.data || [], dm:dm.data || [], temps:tt.error ? [] : tt.data || [],
+      lf:lf.error ? null : lf.data || [], milkLots:(cg.data || []).map(x=>x.value) };
     jset(key, rnData);
   } else rnData = jget(key, null);
 }
@@ -5334,10 +5338,13 @@ function renderRonda(){
   if (!d){ $("rnBody").innerHTML = `<div class="card"><div class="empty">Abre el reporte una vez con señal.</div></div>`; return; }
   if (d.err){ $("rnBody").innerHTML = `<div class="card"><div class="empty">${esc(d.err)}</div></div>`; return; }
   const farms = jget("mkFarms", []).length ? jget("mkFarms", []) : [{ id:1, herd:"RC" }, { id:7, herd:"ISLA" }];
-  const reg = canDo("ronda_registrar");
+  const reg = canDo("ronda_registrar"), rep0 = canSee("ronda_registrar") || canSee("ronda_ver");
+  const tabs = [...(rep0 ? [["hoy","Reporte del día"],["hist","Últimos 15 días"]] : []), ...(canSee("consumo_concentrado") ? [["cons","🌾 Consumos concentrado"]] : []), ...(rnMain() ? [["tabla","📊 Tablas 14 días"]] : [])];
+  if (!tabs.some(t=>t[0]===s.tab)) s.tab = tabs[0]?.[0] || "hoy";
   let h = `<div class="card sheet hsform" style="max-height:none">
       ${farms.length > 1 ? seg("rnF", farms.map(f=>[String(f.id), farmLabel(f)]), String(s.farm)) : ""}
-      <div style="margin-top:8px">${seg("rnT", [["hoy","Reporte del día"],["hist","Últimos 15 días"], ...(rnMain() ? [["tabla","📊 Tablas 14 días"]] : [])], s.tab)}</div></div>`;
+      ${tabs.length > 1 ? `<div style="margin-top:8px">${seg("rnT", tabs, s.tab)}</div>` : ""}</div>`;
+  if (s.tab==="cons"){ $("rnBody").innerHTML = h + cnHtml(); return; }
   if (s.tab==="hist"){ $("rnBody").innerHTML = h + rnHistHtml(); return; }
   if (s.tab==="tabla" && rnMain()){ $("rnBody").innerHTML = h + rnTablesHtml(); return; }
   const c = rnCur, padOpts = cur => `<option value="">— potrero —</option>` + [...new Set(d.pads.map(p=>p.predio))].sort().map(pr=>`<optgroup label="${esc(pr)}">${
@@ -5365,14 +5372,174 @@ function renderRonda(){
         <div><label>2º potrero (si usa dos)</label><select data-rnk="paddock2_id" style="min-width:0">${padOpts(r.paddock2_id)}</select></div></div>
       <label>Agua</label>${seg("rnW" + i, RN_WATER.map(x=>[x, x.replace(/ de agua$/, "")]), r.water)}
       <label>Corriente</label>${seg("rnC" + i, RN_FENCE.map(x=>[x, x.replace(/ de corriente$/, "")]), r.fence)}
-      ${rnFeedHtml(r, i)}
       <label>Nota</label><input data-rnk="notes" value="${esc(r.notes || "")}" placeholder="opcional">
     </div>`).join("")}</div>
+    ${canDo("consumo_concentrado") ? `<details class="ckmore" style="margin:0 0 10px"${cnCur?.farm===c.farm && cnCur?.date===c.date && cnCur?.dirty ? " open" : ""}><summary class="card" style="cursor:pointer;margin:0"><b>🌾 Concentrado de los lotes</b> <span class="sub">(próximas, horros, novillas, terneras…) · toca para abrir</span></summary>
+      ${cnBoxHtml(c.farm, c.date, { title:"🌾 Concentrado de los lotes" })}<div class="sub" style="margin:-4px 4px 8px">Se guarda con el reporte. Es lo mismo de la pestaña Consumos concentrado.</div></details>` : ""}
     ${reg ? `<div class="card"><div class="row" style="gap:8px"><input id="rnNew" placeholder="Agregar lote (nombre)" autocapitalize="characters"><button class="btn ghost" id="rnAdd" style="width:auto">＋</button></div></div>
     <div class="err" id="rnErr"></div>
     <div class="row" style="gap:8px;margin-bottom:24px"><button class="btn ghost" id="rnShare">📤 Compartir</button><button class="btn" id="rnSave">Guardar reporte</button></div>` : ""}`;
   $("rnBody").innerHTML = h;
 }
+// ── CONSUMOS DE CONCENTRADO POR LOTE ──
+// Un solo registro (lot_feed) que se llena desde 3 sitios: Reporte ganadería → Consumos concentrado,
+// el Reporte del día y la Leche diaria. Lo que se anota en uno aparece en los otros.
+// Los hatos de ordeño salen de la Leche diaria (concentrado, KAU y silo): aquí se ven, pero se cambian en la planilla.
+// Sale lleno con lo del último día anotado (solo se cambia lo que cambió). Sin señal queda en el celular.
+let cnData = {}, cnCur = null;
+const cnKey = (farm, date) => `cn:${farm}|${date}`;
+const cnOpts = () => hsCatGet().supplies.filter(m=>/^(Concentrado|Forraje conservado|Sal mineralizada)$/.test(m.category || "") && !m.feed_source && m.active!==false);
+async function cnLoad(farm, force){
+  const c = cnData[farm];
+  if (c && !force && Date.now() - c.at < 60000) return c;
+  if (navigator.onLine){
+    if (!hsCatGet().supplies.length) await hsCatalog();
+    const since = addDays(today(), -45);
+    const [l, lf, cg, dm] = await Promise.all([
+      sb.from("field_lots").select("name,label,sort,active").eq("farm_id", farm).order("sort"),
+      sb.from("lot_feed").select("id,rec_date,grp,supply_code,bags,days,given_name").eq("farm_id", farm).gte("rec_date", since).order("rec_date"),
+      sb.from("farm_lists").select("value").eq("farm_id", farm).eq("kind", "calving_group"),
+      sb.from("daily_milk").select("pen,rec_date,concentrate_bags,kau_bags,silage_bags").eq("farm_id", farm).gte("rec_date", addDays(today(), -10)),
+    ]);
+    cnData[farm] = { farm, at:Date.now(), err: lf.error ? "Falta correr la parte de consumos de SQL/crear_reporte_ganaderia.sql" : null,
+      lots:l.data || [], lf:lf.data || [], milkLots:(cg.data || []).map(x=>x.value), dm:dm.data || [] };
+    jset(`cnData:${farm}`, cnData[farm]);
+  } else cnData[farm] ||= jget(`cnData:${farm}`, null);
+  return cnData[farm];
+}
+// alimento sugerido por el nombre del lote, si nunca se ha anotado
+function cnGuess(name){
+  const n = name.toUpperCase(), has = c => cnOpts().some(m=>m.code===c) ? c : "";
+  return /PROX/.test(n) ? has("CONCPROX") : /NOVILL/.test(n) ? has("CONCNOV") : /TERNER|MILKBAR|RANCHO/.test(n) ? has("CONCTERN") : "";
+}
+function cnOpen(farm, date){
+  const d = cnData[farm], key = cnKey(farm, date), saved = jget(key, null);
+  if (saved){ cnCur = { key, ...saved }; return; }
+  if (!d){ cnCur = null; return; }
+  const lf = d.lf || [], same = lf.filter(x=>x.rec_date===date), lastDate = lf.map(x=>x.rec_date).filter(x=>x < date).sort().pop();
+  const prev = lf.filter(x=>x.rec_date===lastDate), milk = new Set(d.milkLots || []);
+  const names = [...new Set([...d.lots.filter(l=>l.active && !milk.has(l.name)).map(l=>l.name), ...same.map(x=>x.grp), ...prev.map(x=>x.grp)])].filter(n=>!milk.has(n));
+  const lab = n => d.lots.find(l=>l.name===n)?.label || n, srt = n => d.lots.find(l=>l.name===n)?.sort ?? 999;
+  const rows = names.sort((a, b)=>srt(a) - srt(b)).map(n=>{
+    const mine = same.filter(x=>x.grp===n), last = lf.filter(x=>x.grp===n && x.rec_date < date).sort((a, b)=>a.rec_date.localeCompare(b.rec_date));
+    const cover = last.filter(x=>cnEnd(x) >= date);
+    const tpl = last.length ? last.filter(x=>x.rec_date===last[last.length - 1].rec_date) : [];
+    const items = mine.length ? mine.map(x=>({ code:x.supply_code, bags:x.bags, days:x.days || 1 }))
+      : cover.length ? [] : tpl.length ? tpl.map(x=>({ code:x.supply_code, bags:"", days:x.days || 1, hint:x.bags })) : [{ code:cnGuess(n), bags:"", days:1 }];
+    return { grp:n, label:lab(n), items, cover:cover.map(x=>({ code:x.supply_code, bags:+x.bags, days:x.days || 1, from:x.rec_date })) }; });
+  cnCur = { key, farm, date, rows, saved:!!same.length, fromPrev:null, who:[...new Set(same.map(x=>x.given_name).filter(Boolean))] };
+}
+// bultos de un lote en un día: cada salida se reparte entre los días para los que alcanza (6 bultos / 3 días = 2 diarios)
+const cnEnd = x => addDays(x.rec_date, Math.max(1, +x.days || 1) - 1);
+const cnDaily = (lf, date, grp, ok = () => true) => (lf || []).filter(x=>x.grp===grp && ok(x.supply_code) && x.rec_date <= date && cnEnd(x) >= date)
+  .reduce((a, x)=>a + (+x.bags || 0) / Math.max(1, +x.days || 1), 0);
+const cnEnsure = (farm, date) => { if (!cnCur || cnCur.farm!==farm || cnCur.date!==date) cnOpen(farm, date); return cnCur; };
+const cnSaveLocal = () => { if (!cnCur) return; cnCur.dirty = true; const { key, ...r } = cnCur; jset(key, r); };
+const cnNum = v => { const n = +String(v ?? "").replace(",", "."); return isFinite(n) && n > 0 ? n : 0; };
+const cnN1 = v => (Math.round(v * 10) / 10).toLocaleString("es-CO");
+// o = { date:true (muestra la fecha), save:true (botón guardar), days:true (tabla 7 días), title }
+function cnBoxHtml(farm, date, o = {}){
+  const d = cnData[farm];
+  return `<div class="cnbox" data-farm="${farm}" data-date="${date}" data-o="${esc(JSON.stringify(o))}">${cnInner(farm, date, o)}</div>`;
+}
+function cnInner(farm, date, o){
+  const d = cnData[farm];
+  if (!d) return `<div class="card"><div class="empty">Abre una vez con señal para cargar los lotes.</div></div>`;
+  if (d.err) return `<div class="card"><div class="empty">${esc(d.err)}</div></div>`;
+  const c = cnEnsure(farm, date), reg = canDo("consumo_concentrado"), ops = cnOpts(), nm = code => ops.find(m=>m.code===code)?.name || rnFeedName(code);
+  const tot = {}; c.rows.forEach(r=>r.items.forEach(f=>{ if (f.code && cnNum(f.bags)) tot[f.code] = (tot[f.code] || 0) + cnNum(f.bags); }));
+  // hatos de ordeño: lo de la Leche diaria de ese día
+  const milk = (d.milkLots || []).map(pen=>({ pen, r:(d.dm || []).find(x=>x.pen===pen && x.rec_date===date) }));
+  const mtxt = r => !r ? "sin planilla" : [["concentrate_bags","concentrado"],["kau_bags","KAU"],["silage_bags","silo"]].filter(([k])=>r[k]!=null && r[k]!=="").map(([k, t])=>`${cnN1(+r[k])} ${t}`).join(" · ") || "sin alimento anotado";
+  const status = c.saved ? `✓ Guardado${c.who.length ? " por " + esc(c.who.join(", ")) : ""} (puedes corregirlo)` : "Anota los bultos que salen hoy para cada lote y para cuántos días alcanzan";
+  const days = Array.from({ length:7 }, (_, i)=>addDays(today(), -i)), lf = d.lf || [];
+  const grps = [...new Set(lf.filter(x=>x.rec_date <= days[0] && cnEnd(x) >= days[6]).map(x=>x.grp))], lab = n => d.lots.find(l=>l.name===n)?.label || n;
+  return `<div class="card">
+      ${o.date ? `<div class="row" style="align-items:center;gap:8px"><b style="flex:1">🌾 Concentrado del</b><input type="date" data-cndate value="${date}" max="${today()}" style="width:auto"></div>` : `<b>${o.title || "🌾 Concentrado de los lotes"}</b>`}
+      <div class="sub" style="margin-top:6px">${status}${c.dirty && !c.saved ? " · ✏️ sin guardar" : ""}</div>
+      ${Object.keys(tot).length ? `<div class="sub" style="margin-top:8px">Sale hoy de la bodega:</div><div class="rpk" style="margin-top:4px">${Object.entries(tot).map(([k, v])=>`<div><b>${cnN1(v)}</b><span>${esc(nm(k))}</span></div>`).join("")}</div>` : ""}
+      ${milk.length ? `<div class="sub" style="margin-top:8px"><b>Hatos de ordeño</b> (de la Leche diaria): ${milk.map(({ pen, r })=>`${esc(lab(pen))}: ${mtxt(r)}`).join(" · ")}</div>` : ""}</div>
+    ${c.rows.map((r, i)=>`<div class="card" style="padding:12px 14px"><b style="font-size:17px">${esc(r.label)}</b>
+      ${(r.cover || []).map(x=>`<div class="sub" style="margin-top:4px;color:var(--s0)">✓ Cubierto: ${cnN1(x.bags)} ${esc(nm(x.code))} el ${fmt(x.from).slice(0, 5)} para ${x.days} día${x.days===1 ? "" : "s"} (${cnN1(x.bags / x.days)}/día) · hasta el ${fmt(addDays(x.from, x.days - 1)).slice(0, 5)}</div>`).join("")}
+      ${r.items.map((f, j)=>{ const b = cnNum(f.bags), dd = Math.max(1, Math.round(+f.days || 1));
+        return `<div class="row" style="gap:6px;margin-top:6px;align-items:center">
+        <select data-cnf="${i}|${j}|code" style="flex:1;min-width:0" ${reg ? "" : "disabled"}><option value="">— alimento —</option>${ops.map(m=>`<option value="${esc(m.code)}" ${m.code===f.code ? "selected" : ""}>${esc(m.name)}</option>`).join("")}</select>
+        ${reg && (r.items.length > 1 || (r.cover || []).length) ? `<button class="del" data-cnrm="${i}|${j}">✕</button>` : ""}</div>
+        <div class="row" style="gap:6px;margin-top:6px;align-items:center">
+          <input data-cnf="${i}|${j}|bags" type="text" inputmode="decimal" placeholder="${f.hint ? "antes " + cnN1(+f.hint) : "bultos"}" value="${f.bags ?? ""}" style="flex:0 0 78px;min-width:0;text-align:center;font-size:18px;font-weight:700" ${reg ? "" : "disabled"}>
+          <span class="sub">bultos para</span>
+          <input data-cnf="${i}|${j}|days" type="number" inputmode="numeric" min="1" max="30" value="${dd}" style="flex:0 0 58px;min-width:0;text-align:center;font-size:17px" ${reg ? "" : "disabled"}>
+          <span class="sub">día${dd===1 ? "" : "s"}${b && dd > 1 ? ` = <b style="color:var(--ink)">${cnN1(b / dd)}/día</b>` : ""}</span></div>`; }).join("")}
+      ${reg ? `<button class="lnk" data-cnadd="${i}" style="margin-top:4px">＋ ${r.items.length ? "otro alimento" : "anotar otra salida"}</button>` : ""}</div>`).join("")}
+    ${reg && o.save ? `<div class="err" data-cnerr></div><button class="btn" data-cnsave style="margin-bottom:12px;font-size:18px;padding:14px">💾 Guardar consumos</button>` : `<div class="err" data-cnerr></div>`}
+    ${o.days && grps.length ? `<div class="card"><b>Últimos 7 días (bultos por día)</b><div class="sub">Lo que se sacó para varios días se reparte entre esos días.</div><div style="overflow-x:auto;margin-top:6px"><table class="ivt" style="font-size:12px;white-space:nowrap">
+      <tr><th>Lote</th>${days.map(x=>`<th style="text-align:right">${fmt(x).slice(0, 5)}</th>`).join("")}</tr>
+      ${grps.map(g=>`<tr><td>${esc(lab(g))}</td>${days.map(x=>{ const v = cnDaily(lf, x, g); return `<td style="text-align:right">${v ? cnN1(v) : ""}</td>`; }).join("")}</tr>`).join("")}
+    </table></div></div>` : ""}`;
+}
+// redibuja solo la caja de consumos que está a la vista (no el resto de la pantalla)
+function cnRender(){
+  document.querySelectorAll("section:not(.hidden) .cnbox").forEach(box=>{
+    const farm = +box.dataset.farm, date = box.dataset.date, o = JSON.parse(box.dataset.o || "{}");
+    box.innerHTML = cnInner(farm, date, o); });
+}
+const cnBoxOf = el => el.closest(".cnbox");
+// valida y deja en cola lo anotado; devuelve false si hay un error
+function cnQueue(box){
+  const c = cnCur; if (!c) return true;
+  const err = m => { const e = box?.querySelector("[data-cnerr]"); if (e) e.textContent = m; return false; };
+  if (c.rows.some(r=>r.items.some(f=>cnNum(f.bags) && !f.code))) return err("Concentrado: escoge el alimento de cada lote que tiene bultos.");
+  if (c.rows.some(r=>r.items.some(f=>String(f.bags ?? "").trim() && !cnNum(f.bags)))) return err("Concentrado: revisa los bultos (deben ser números, ej. 2 o 1,5).");
+  if (c.rows.some(r=>r.items.some(f=>cnNum(f.bags) && !(Math.round(+f.days || 1) >= 1)))) return err("Concentrado: revisa para cuántos días.");
+  const ob = jget("cnOutbox", []); if (!ob.includes(c.key)){ ob.push(c.key); jset("cnOutbox", ob); }
+  cnSaveLocal(); return true;
+}
+// sube los consumos guardados en el celular: deja en la base exactamente lo anotado para ese día
+let cnFlushing = false;
+async function flushConsumo(loud){
+  if (cnFlushing || !navigator.onLine) return;
+  cnFlushing = true;
+  const ob = jget("cnOutbox", []), left = [], done = new Set(); let sent = 0;
+  for (const key of ob){
+    const c = jget(key, null); if (!c) continue;
+    const who = store.get("myName") || myProfile || null, want = {};
+    c.rows.forEach(r=>r.items.forEach(f=>{ const b = cnNum(f.bags), k = `${r.grp}|${f.code}`; if (f.code && b) want[k] = { farm_id:c.farm, rec_date:c.date, grp:r.grp, supply_code:f.code, bags:(want[k]?.bags || 0) + b,
+      days:Math.max(want[k]?.days || 1, Math.max(1, Math.min(60, Math.round(+f.days || 1)))), given_name:who, updated_at:new Date().toISOString() }; }));
+    const { data:had, error:e0 } = await sb.from("lot_feed").select("id,grp,supply_code").eq("farm_id", c.farm).eq("rec_date", c.date);
+    let error = e0;
+    if (!error && Object.keys(want).length) ({ error } = await sb.from("lot_feed").upsert(Object.values(want), { onConflict:"farm_id,rec_date,grp,supply_code" }));
+    const gone = (had || []).filter(x=>!want[`${x.grp}|${x.supply_code}`]).map(x=>x.id);
+    if (!error && gone.length) ({ error } = await sb.from("lot_feed").delete().in("id", gone));
+    if (error){ left.push(key); console.warn("consumos", error.message); if (loud) toast(/row-level|policy|permission/i.test(error.message) ? "No tienes permiso para registrar consumos en esta finca" : "Concentrado: no se pudo subir, queda en el celular"); continue; }
+    try{ localStorage.removeItem(key); }catch(e){} sent++; done.add(c.farm);
+  }
+  jset("cnOutbox", left); cnFlushing = false;
+  if (sent){ if (loud) toast("Concentrado de los lotes guardado ✓");
+    for (const f of done) await cnLoad(f, true);
+    if (cnCur && done.has(cnCur.farm)){ const k = cnCur.key; cnCur = null; if (!jget(k, null)) cnRender(); } }
+}
+window.addEventListener("online", ()=>flushConsumo());
+document.addEventListener("click", async e=>{
+  const t = e.target, box = cnBoxOf(t); if (!box || !cnCur) return;
+  const a = t.closest("[data-cnadd]"), rm = t.closest("[data-cnrm]");
+  if (a){ const r = cnCur.rows[+a.dataset.cnadd]; r.items.push({ code:r.items[0]?.code || r.cover?.[0]?.code || cnGuess(r.grp), bags:"", days:1 }); cnSaveLocal(); return cnRender(); }
+  if (rm){ const [i, j] = rm.dataset.cnrm.split("|"); cnCur.rows[+i].items.splice(+j, 1); cnSaveLocal(); return cnRender(); }
+  if (t.closest("[data-cnsave]")){
+    if (!cnQueue(box)) return;
+    if (!navigator.onLine){ toast("Sin señal: quedó en el celular y se sube solo"); return cnRender(); }
+    t.disabled = true; await flushConsumo(true); cnRender();
+  }
+});
+document.addEventListener("input", e=>{
+  const t = e.target; if (!t.dataset?.cnf || !cnBoxOf(t) || !cnCur) return;
+  const [i, j, k] = t.dataset.cnf.split("|"); cnCur.rows[+i].items[+j][k] = t.value; cnSaveLocal();
+});
+document.addEventListener("change", e=>{
+  const t = e.target, box = cnBoxOf(t); if (!box) return;
+  if (t.dataset.cnf && cnCur){ const [i, j, k] = t.dataset.cnf.split("|"); cnCur.rows[+i].items[+j][k] = t.value; cnSaveLocal(); return cnRender(); }
+  if (t.hasAttribute("data-cndate")){ rnState.cdate = t.value || today(); box.dataset.date = rnState.cdate; cnCur = null; return cnRender(); }
+});
+function cnHtml(){ return cnBoxHtml(rnState.farm, rnState.cdate || today(), { date:true, save:true, days:true }) + `<div style="height:20px"></div>`; }
 function rnTankMsg(c){
   const ts = rnTanks(c.farm), hot = ts.filter(t=>rnHot(c, t)), nm = ts.map(t=>[t, rnNormal(t, c.ttime, c.date)]);
   if (hot.length) return `<b style="color:var(--s4)">⚠️ ${hot.map(t=>`${t} en ${c.tanks[t]} °C (lo normal a esta hora es ~${nm.find(x=>x[0]===t)[1].avg.toFixed(1)} °C)`).join(", ")}: revisar si el tanque está enfriando</b>`;
@@ -5400,7 +5567,8 @@ function rnTablesHtml(){
   const grps = [...new Set(rep.map(r=>r.grp))].sort((a, b)=>srt(a) - srt(b) || a.localeCompare(b));
   const get = (day, g) => rep.find(r=>r.report_date===day && r.grp===g);
   const isConc = c => /concentrado/i.test(hsCatGet().supplies.find(m=>m.code===c)?.category || "");
-  const conc = r => (r?.feed || []).filter(f=>isConc(f.code)).reduce((a, f)=>a + (+f.bags || 0), 0);
+  const conc = r => r ? cnDaily(d.lf, r.report_date, r.grp, isConc)
+    + (r.feed || []).filter(f=>isConc(f.code)).reduce((a, f)=>a + (+f.bags || 0), 0) : 0;
   const pad = r => r ? [r.paddock_id, r.paddock2_id].filter(Boolean).map(rnPadName).join(" + ") : "";
   const n1 = v => v ? (Math.round(v * 10) / 10).toLocaleString("es-CO") : "";
   const sticky = "position:sticky;left:0;background:var(--card);z-index:1";
@@ -5455,7 +5623,7 @@ async function flushRonda(){
 window.addEventListener("online", ()=>flushRonda());
 $("rnBody").addEventListener("change", async e=>{
   const t = e.target, s = rnState;
-  if (t.name==="rnF"){ s.farm = +t.value; jset("rnLast", { farm:s.farm }); await rnLoad(); rnOpen(); return renderRonda(); }
+  if (t.name==="rnF"){ s.farm = +t.value; jset("rnLast", { farm:s.farm }); await rnLoad(); await cnLoad(s.farm); rnOpen(); return renderRonda(); }
   if (t.name==="rnT"){ s.tab = t.value; if (t.value==="hist" && navigator.onLine) await rnLoad(); return renderRonda(); }
   if (t.id==="rnDate"){ s.date = t.value || today(); rnOpen(); return renderRonda(); }
   if (t.dataset.rnfeed){ const [i, j, k] = t.dataset.rnfeed.split("|"); rnCur.rows[+i].feed[+j][k] = t.value; return rnSaveLocal(); }
@@ -5503,9 +5671,12 @@ $("rnBody").addEventListener("click", async e=>{
     if (noT.length && !confirm(`Falta la temperatura de: ${noT.join(", ")}.\n¿Guardar así?`)) return;
     const noPad = rnCur.rows.filter(r=>!r.paddock_id);
     if (noPad.length && !confirm(`Sin potrero: ${noPad.map(r=>r.label).join(", ")}.\n¿Guardar así?`)) return;
-    err(""); rnSaveLocal();
+    err("");
+    // el concentrado de los lotes (si se anotó algo) se guarda junto con el reporte
+    if (cnCur && cnCur.farm===rnCur.farm && cnCur.date===rnCur.date && cnCur.dirty && !cnQueue(document.querySelector("section:not(.hidden) .cnbox"))) return err("Revisa el concentrado de los lotes.");
+    rnSaveLocal();
     const ob = jget("rnOutbox", []); if (!ob.includes(rnCur.key)){ ob.push(rnCur.key); jset("rnOutbox", ob); }
-    t.disabled = true; await flushRonda(); t.disabled = false;
+    t.disabled = true; await flushRonda(); await flushConsumo(); t.disabled = false;
     if (jget("rnOutbox", []).includes(rnCur.key)) return toast("Sin señal: el reporte queda en el celular y se sube solo");
     await rnLoad(); rnOpen(); renderRonda();
   }
@@ -9000,7 +9171,7 @@ window.addEventListener("online", ()=>{ updDailyNet(); flushDaily(); });
 window.addEventListener("offline", ()=>updDailyNet());
 
 async function initDaily(){
-  updDailyNet();
+  updDailyNet(); flushConsumo();
   if (!dmReady){
     const fs = await prodFarms();
     if (!fs.length){ $("dmForm").innerHTML = `<div class="empty">No hay lotes configurados (o no hay señal la primera vez).</div>`; return; }
@@ -9017,8 +9188,17 @@ async function initDaily(){
 }
 
 // abre la planilla del lote y día: primero lo guardado en el celular, si no lo que haya en Supabase
+// concentrado de los otros lotes (próximas, horros, novillas…): el mismo de Reporte ganadería → Consumos concentrado
+async function dmLots(farm, date){
+  const box = $("dmLots"); if (!box) return;
+  if (!canDo("consumo_concentrado") || !farm || !date){ box.innerHTML = ""; return; }
+  await cnLoad(farm);
+  box.innerHTML = `<details class="ckmore"${cnCur?.farm===farm && cnCur?.date===date && cnCur?.dirty ? " open" : ""}><summary class="card" style="cursor:pointer;margin:0 0 10px"><b>🌾 Concentrado de los otros lotes</b> <span class="sub">(próximas, horros, novillas, terneras…) · toca para abrir</span></summary>
+    ${cnBoxHtml(farm, date, { title:"🌾 Concentrado de los otros lotes", save:true })}</details>`;
+}
 async function openDaily(){
   const farm = +$("dmFarm").value, pen = document.querySelector('input[name="dmPenR"]:checked')?.value, date = $("dmDate").value;
+  dmLots(farm, date);
   if (!pen || !date){ $("dmForm").innerHTML = `<div class="sub">Escoge el lote.</div>`; return; }
   jset("dmLast", { farm, pen });
   await dmPads(farm);
