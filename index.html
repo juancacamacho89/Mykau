@@ -8049,10 +8049,15 @@ document.addEventListener("click", async e=>{
 // ═══════════════════════ FINANZAS (privado: solo Admin Principal) ═══════════════
 // El Dashboard Financiero Pro: SUBIR_FINANZAS.bat sube los datos de Contabilidad\INFORME.xlsx y la plantilla
 // a finance_snapshot (Supabase solo deja leerla al Admin Principal). Nunca se guarda en el celular.
+let finTab = "dash";
+const finTabs = () => `<div class="sheet" style="padding:0;background:none;max-height:none;margin-bottom:10px">${seg("finT", [["dash","📊 Dashboard financiero"],["ll","💧 Litros libres"]], finTab)}</div>`;
+$("finBody").addEventListener("change", e=>{ if (e.target.name==="finT"){ finTab = e.target.value; initFin(); } });
 async function initFin(){
   const box = $("finBody");
   if (!navigator.onLine){ box.innerHTML = `<div class="card"><div class="empty">Finanzas necesita señal.</div></div>`; return; }
-  box.innerHTML = `<div class="card"><div class="empty">Cargando…</div></div>`;
+  box.dataset.on = "1";
+  if (finTab==="ll") return llShow();
+  box.innerHTML = finTabs() + `<div class="card"><div class="empty">Cargando…</div></div>`;
   const { data, error } = await sb.from("finance_snapshot").select("data,template,generated_at").eq("id", 1).maybeSingle();
   if (error || !data){ box.innerHTML = `<div class="card"><div class="empty">${error ? (/does not exist|schema cache/i.test(error.message) ? "Falta correr SQL/finanzas.sql en Supabase." : esc(error.message))
     : "Aún no hay datos: corre EJECUTABLES\SUBIR_FINANZAS.bat."}</div></div>`; return; }
@@ -8064,10 +8069,156 @@ async function initFin(){
     "{lbl:'Nos cuesta un litro', val:pesos(c.costL)+' /L', d:deltaHtml(c.costL,P('costL'),false), note:'Costo de producción ÷ litros vendidos', path:[]},\n    "
     + "{lbl:'Nos queda por litro', val:pesos(c.price-c.costL)+' /L', d:deltaHtml(c.price-c.costL, p ? p.price-p.costL : null, true), note:'Precio − costo · solo leche, sin otros ingresos', path:[]},\n    "
     + anchor);
-  box.dataset.on = "1";
-  box.innerHTML = `<iframe id="finFrame" title="Dashboard financiero" style="width:100%;border:0;border-radius:14px;background:#fff;height:calc(100vh - 110px);height:calc(100dvh - 110px)"></iframe>`;
+  box.innerHTML = finTabs() + `<iframe id="finFrame" title="Dashboard financiero" style="width:100%;border:0;border-radius:14px;background:#fff;height:calc(100vh - 160px);height:calc(100dvh - 160px)"></iframe>`;
   $("finFrame").srcdoc = html;
 }
+
+// ═══════════ LITROS LIBRES DE CONCENTRADO (Finanzas, solo Admin Principal) ═══════════
+// Igual a la pestaña LITROS LIBRES del Programa de Seguimiento: ingresos (litros × precio) menos concentrados,
+// Kau, maíz, lactotropina y abonos/fumigos/semillas → litros que quedan libres. Ene-2023 a sep-2026 vienen del
+// Excel; desde oct-2026 las cantidades salen de Mykau y Juan pone los precios del mes (tabla free_milk_month).
+const LL_FROM = "2026-10-01", LL_BAG = 40;   // meses que calcula Mykau · kg por bulto
+const LL_ITEMS = [["conc","Concentrado hato"],["prox","Concentrado próximas"],["nov","Concentrado novillas"],["tern","Concentrado terneras"],
+  ["kau_mp","Kau multipropósito (hatos)"],["kau_sh","Kau sostenimiento (lotes)"],["maiz","Maíz / harina"]];
+const LL_CODE = { CONCPROX:"prox", CONCNOV:"nov", CONCTERN:"tern", KAUSOST:"kau_sh", KAUMULTI:"kau_mp" };
+let ll = null;
+const llN = v => v==null || v==="" || !isFinite(+v) ? null : +v;
+const llMonths = (a, b) => { const out = []; let d = a; while (d <= b){ out.push(d); const x = new Date(d + "T12:00"); x.setMonth(x.getMonth() + 1, 1); d = x.toISOString().slice(0, 7) + "-01"; } return out; };
+const llDays = m => new Date(+m.slice(0, 4), +m.slice(5, 7), 0).getDate();
+function llCalc(r){
+  const g = k => +r[k] || 0, cost = LL_ITEMS.reduce((a, [k])=>a + g(k + "_kg") * g(k + "_price"), 0) + g("lacto_cows") * g("lacto_price") + g("fert_cost");
+  const inc = g("liters") * g("milk_price"), freeL = g("milk_price") ? g("liters") - cost / g("milk_price") : null;
+  return { cost, inc, pct: inc ? cost / inc : null, freeL, perCow: freeL!=null && g("days") && g("cows") ? freeL / g("days") / g("cows") : null,
+           freePesos: freeL!=null ? freeL * g("milk_price") : null, concKgCowDay: g("days") && g("cows") ? g("conc_kg") / g("days") / g("cows") : null };
+}
+// cantidades del mes desde Mykau: Leche diaria (litros, vacas, bultos de concentrado y Kau del hato), consumos por lote y lactotropina
+async function llMykau(m){
+  const end = llMonths(m, m)[0].slice(0, 8) + String(llDays(m)).padStart(2, "0");
+  const [dm, lf, lc] = await Promise.all([
+    psAll(()=>sb.from("daily_milk").select("rec_date,total_l,cows,concentrate_bags,kau_bags").gte("rec_date", m).lte("rec_date", end)),
+    sb.from("lot_feed").select("supply_code,bags").gte("rec_date", m).lte("rec_date", end),
+    sb.from("lacto_cows").select("cow_id,list_date").lte("list_date", end).order("list_date", { ascending:false }).limit(2000)]);
+  const rows = dm.data || [], days = new Set(rows.map(x=>x.rec_date)), q = {};
+  const cowsDay = {}; rows.forEach(x=>{ cowsDay[x.rec_date] = (cowsDay[x.rec_date] || 0) + (+x.cows || 0); });
+  q.days = m.slice(0, 7)===today().slice(0, 7) ? days.size : llDays(m);
+  q.liters = Math.round(rows.reduce((a, x)=>a + (+x.total_l || 0), 0));
+  q.cows = days.size ? Math.round(Object.values(cowsDay).reduce((a, b)=>a + b, 0) / days.size * 10) / 10 : null;
+  q.conc_kg = rows.reduce((a, x)=>a + (+x.concentrate_bags || 0), 0) * LL_BAG;
+  q.kau_mp_kg = rows.reduce((a, x)=>a + (+x.kau_bags || 0), 0) * LL_BAG;
+  (lf.data || []).forEach(x=>{ const k = LL_CODE[x.supply_code]; if (k) q[k + "_kg"] = (q[k + "_kg"] || 0) + (+x.bags || 0) * LL_BAG; });
+  const lists = lc.data || [], lastList = lists[0]?.list_date;
+  q.lacto_cows = lastList ? lists.filter(x=>x.list_date===lastList).length : null;
+  q.partial = q.days < llDays(m);
+  return q;
+}
+async function llShow(){
+  const box = $("finBody");
+  box.innerHTML = finTabs() + `<div class="card"><div class="empty">Cargando…</div></div>`;
+  const { data, error } = await sb.from("free_milk_month").select("*").order("month");
+  if (error){ box.innerHTML = finTabs() + `<div class="card"><div class="empty">${/does not exist|schema cache/i.test(error.message) ? "Falta correr SQL/litros_libres.sql en Supabase." : esc(error.message)}</div></div>`; return; }
+  const saved = Object.fromEntries((data || []).map(r=>[r.month, r]));
+  const months = [...new Set([...Object.keys(saved), ...llMonths(LL_FROM, today().slice(0, 8) + "01")])].sort();
+  // meses de Mykau: cantidades al día; precios los guardados o los del mes anterior
+  const mk = months.filter(m=>m >= LL_FROM && saved[m]?.source!=="excel");
+  const calc = await Promise.all(mk.map(llMykau));
+  let prev = null; const rows = [];
+  months.forEach(m=>{
+    let r = saved[m] ? { ...saved[m] } : null;
+    const i = mk.indexOf(m);
+    if (i >= 0){
+      const q = calc[i]; r ||= { month:m, source:"mykau", unsaved:true };
+      ["days","liters","cows","conc_kg","kau_mp_kg","prox_kg","nov_kg","tern_kg","kau_sh_kg","lacto_cows"].forEach(k=>{ r["my_" + k] = q[k] ?? null; if (r[k]==null || r.unsaved || r.auto?.includes?.(k)) r[k] = q[k] ?? r[k] ?? null; });
+      r.partial = q.partial;
+      // lo que Mykau todavía no lleva (consumos por lote desde 18/11/2026, maíz, lactotropina): si no hay dato,
+      // se estima con lo del mes anterior por día (borde punteado) para no inflar los litros libres
+      if (prev && r.unsaved) ["prox_kg","nov_kg","tern_kg","kau_sh_kg","maiz_kg","lacto_cows"].forEach(k=>{
+        if (!(+r[k] > 0) && +prev[k] > 0){ r[k] = k==="lacto_cows" ? prev[k] : Math.round(prev[k] / (prev.days || 30) * (r.days || 30)); (r.copied ||= []).push(k); } });
+      if (prev) ["milk_price","conc_price","prox_price","nov_price","tern_price","kau_mp_price","kau_sh_price","maiz_price","lacto_price","fert_cost"].forEach(k=>{ if (r[k]==null){ r[k] = prev[k]; (r.copied ||= []).push(k); } });
+    }
+    rows.push(r); prev = r;
+  });
+  ll = { rows, open: ll?.open || null };
+  llRender();
+}
+function llSvg(pts, opt){
+  const W = 340, H = opt.h || 150, L = 34, R = 10, T = 14, B = 22, n = pts.length; if (!n) return "";
+  const vs = pts.map(p=>p.v), lo = Math.min(...vs), hi = Math.max(...vs), pad = (hi - lo) * 0.12 || 1, y0 = lo - pad, y1 = hi + pad;
+  const X = i => n===1 ? (L + W - R) / 2 : L + i * (W - L - R) / (n - 1), Y = v => T + (y1 - v) / (y1 - y0) * (H - T - B);
+  const step = Math.max(1, Math.ceil(n / 7)), mm = m => `${["E","F","M","A","M","J","J","A","S","O","N","D"][+m.slice(5, 7) - 1]}${m.slice(2, 4)}`;
+  const grid = [y0 + pad, (y0 + y1) / 2, y1 - pad].map(v=>`<line x1="${L}" x2="${W - R}" y1="${Y(v)}" y2="${Y(v)}" stroke="var(--line)"/><text x="${L - 4}" y="${Y(v) + 3}" font-size="9" text-anchor="end" fill="var(--muted)">${opt.fmt(v)}</text>`).join("");
+  const xl = pts.map((p, i)=>i % step===0 || i===n - 1 ? `<text x="${X(i)}" y="${H - 6}" font-size="9" text-anchor="middle" fill="var(--muted)">${mm(p.m)}</text>` : "").join("");
+  const dots = pts.map((p, i)=>`<circle cx="${X(i)}" cy="${Y(p.v)}" r="${p.mk ? 3.2 : 2.2}" fill="${p.mk ? "var(--accent)" : opt.color}"><title>${p.m.slice(0, 7)}: ${opt.fmt(p.v)}${p.partial ? " (mes en curso)" : ""}</title></circle>`).join("");
+  const last = pts[n - 1];
+  return `<svg viewBox="0 0 ${W} ${H}" style="width:100%;height:auto;display:block">${grid}
+    <polyline points="${pts.map((p, i)=>`${X(i)},${Y(p.v)}`).join(" ")}" fill="none" stroke="${opt.color}" stroke-width="2"/>${dots}
+    <text x="${X(n - 1)}" y="${Y(last.v) - 7}" font-size="10" font-weight="700" text-anchor="end" fill="var(--ink)">${opt.fmt(last.v)}</text>${xl}</svg>`;
+}
+function llRender(){
+  const rows = ll.rows.filter(r=>r.milk_price && r.liters), $f = v => v==null ? "—" : "$" + Math.round(v).toLocaleString("es-CO"),
+        n1 = v => v==null ? "—" : (Math.round(v * 10) / 10).toLocaleString("es-CO"), pc = v => v==null ? "—" : Math.round(v * 100) + "%";
+  const pts = rows.map(r=>({ m:r.month, r, c:llCalc(r), mk:r.source==="mykau", partial:r.partial }));
+  const full = pts.filter(p=>!p.partial), last = full[full.length - 1], prevY = last && pts.find(p=>p.m===String(+last.m.slice(0, 4) - 1) + last.m.slice(4));
+  const per = pts.filter(p=>p.c.perCow!=null).map(p=>({ ...p, v:p.c.perCow })), pct = pts.filter(p=>p.c.pct!=null).map(p=>({ ...p, v:p.c.pct * 100 }));
+  const kpi = last ? `<div class="rpk" style="margin-top:8px">
+      <div><b>${n1(last.c.perCow)}</b><span>L libres / vaca / día${prevY ? ` · hace un año ${n1(prevY.c.perCow)}` : ""}</span></div>
+      <div><b>${pc(last.c.pct)}</b><span>costos sobre ingresos</span></div>
+      <div><b>${n1(last.c.freeL / 1000)} mil</b><span>litros libres en el mes</span></div>
+      <div><b>${$f(last.c.freePesos / 1e6).replace("$", "$ ")} M</b><span>pesos libres en el mes</span></div></div>` : "";
+  const tbl = pts.slice(-13).reverse().map(p=>`<tr data-llm="${p.m}" style="cursor:pointer"><td><b>${p.m.slice(0, 7)}</b>${p.mk ? ` <span class="tag">${p.r.unsaved ? "sin precios" : "Mykau"}</span>` : ""}${p.partial ? ` <span class="sub">en curso</span>` : ""}</td>
+      <td style="text-align:right">${Math.round(p.r.liters).toLocaleString("es-CO")}</td><td style="text-align:right">${n1(p.r.cows)}</td>
+      <td style="text-align:right">${pc(p.c.pct)}</td><td style="text-align:right"><b>${n1(p.c.perCow)}</b></td></tr>`).join("");
+  const openM = ll.open, or = openM && ll.rows.find(r=>r.month===openM);
+  $("finBody").innerHTML = finTabs() + `<div class="card"><b>💧 Litros libres de concentrado</b>
+      <div class="sub">Litros que quedan después de pagar concentrados, Kau, maíz, lactotropina y abonos/fumigos/semillas${last ? ` · último mes completo: ${last.m.slice(0, 7)}` : ""}</div>${kpi}</div>
+    <div class="card"><b>Litros libres por vaca al día</b><div class="sub">Por mes · ene-2023 a sep-2026 del Programa de Seguimiento; los puntos verdes los calcula Mykau</div>${llSvg(per, { color:"var(--s0)", fmt:v=>n1(v) })}</div>
+    <div class="card"><b>% costos sobre ingresos</b><div class="sub">Costo de alimento, lactotropina y abonos ÷ ingresos de leche</div>${llSvg(pct, { color:"var(--s3)", fmt:v=>Math.round(v) + "%" })}</div>
+    ${or ? llFormHtml(or) : ""}
+    <div class="card"><b>Mes a mes</b><div class="sub">Toca un mes para ver el detalle${ll.rows.some(r=>r.unsaved) ? " o poner los precios de los meses nuevos" : ""}</div>
+      <div style="overflow-x:auto;margin-top:6px"><table class="ivt" style="font-size:13px;white-space:nowrap"><tr><th>Mes</th><th style="text-align:right">Litros</th><th style="text-align:right">Vacas</th><th style="text-align:right">% costo</th><th style="text-align:right">L libres/vaca/día</th></tr>${tbl}</table></div>
+      ${ll.rows.filter(r=>r.unsaved && !r.milk_price).length ? `<div class="sub" style="margin-top:6px">Meses sin precios todavía: ${ll.rows.filter(r=>r.unsaved && !r.milk_price).map(r=>r.month.slice(0, 7)).join(", ")}</div>` : ""}</div>
+    <div style="height:20px"></div>`;
+}
+function llFormHtml(r){
+  const c = llCalc(r), $f = v => v==null ? "—" : "$" + Math.round(v).toLocaleString("es-CO"), n1 = v => v==null ? "" : String(Math.round(v * 100) / 100);
+  const ed = r.source==="mykau", inp = (k, ph) => `<input data-llk="${k}" type="text" inputmode="decimal" value="${n1(r[k])}" placeholder="${ph || ""}" ${ed ? "" : "disabled"} style="min-width:0;padding:7px;text-align:right${r.copied?.includes(k) ? ";border-style:dashed" : ""}">`;
+  const myq = k => r["my_" + k]!=null && +r["my_" + k]!==+r[k] ? `<div class="sub">Mykau: ${Math.round(r["my_" + k]).toLocaleString("es-CO")}</div>` : "";
+  return `<div class="card" style="border:2px solid var(--accent)"><div style="display:flex;justify-content:space-between;align-items:center"><b>${r.month.slice(0, 7)} ${ed ? "· calculado con Mykau" : "· del Programa de Seguimiento"}</b><button class="lnk" data-llclose>cerrar</button></div>
+    ${r.partial ? `<div class="sub">Mes en curso (${r.days} días con Leche diaria)</div>` : ""}
+    ${ed && r.copied?.length ? `<div class="sub">Lo que tiene borde punteado se tomó del mes anterior (precios, o consumos que Mykau todavía no lleva): revísalo y guarda.</div>` : ""}
+    <div class="hsform" style="display:grid;grid-template-columns:1.4fr 1fr 1fr;gap:6px;align-items:end;margin-top:8px">
+      <div class="sub"><b>Leche</b></div><div class="sub">Litros / vacas</div><div class="sub">$ por litro</div>
+      <div>Litros del mes · vacas en ordeño</div><div>${inp("liters")}${myq("liters")}<div style="margin-top:4px">${inp("cows")}</div></div><div>${inp("milk_price")}</div>
+      <div class="sub" style="margin-top:6px"><b>Costos</b></div><div class="sub">Kg del mes</div><div class="sub">$ por kg</div>
+      ${LL_ITEMS.map(([k, t])=>`<div>${t}</div><div>${inp(k + "_kg")}${myq(k + "_kg")}</div><div>${inp(k + "_price")}</div>`).join("")}
+      <div>Lactotropina</div><div>${inp("lacto_cows", "vacas")}${myq("lacto_cows")}</div><div>${inp("lacto_price", "$ por vaca")}</div>
+      <div>Abonos, fumigos y semillas</div><div></div><div>${inp("fert_cost", "$ del mes")}</div>
+    </div>
+    <div class="rpk" style="margin-top:10px"><div><b>${$f(c.inc)}</b><span>ingresos</span></div><div><b>${$f(c.cost)}</b><span>costos (${c.pct!=null ? Math.round(c.pct * 100) + "%" : "—"})</span></div>
+      <div><b>${c.freeL!=null ? Math.round(c.freeL).toLocaleString("es-CO") : "—"}</b><span>litros libres del mes</span></div><div><b>${c.perCow!=null ? (Math.round(c.perCow * 100) / 100).toLocaleString("es-CO") : "—"}</b><span>L libres / vaca / día</span></div></div>
+    ${ed ? `<div class="err" id="llErr"></div><button class="btn" data-llsave style="margin-top:8px">💾 Guardar ${r.month.slice(0, 7)}</button>` : ""}</div>`;
+}
+$("finBody").addEventListener("click", async e=>{
+  if (!ll || finTab!=="ll") return;
+  const t = e.target, m = t.closest("[data-llm]");
+  if (m){ ll.open = ll.open===m.dataset.llm ? null : m.dataset.llm; llRender(); if (ll.open) window.scrollTo({ top:0 }); return; }
+  if (t.closest("[data-llclose]")){ ll.open = null; return llRender(); }
+  if (t.closest("[data-llsave]")){
+    const r = ll.rows.find(x=>x.month===ll.open); if (!r) return;
+    if (!llN(r.milk_price)) return ($("llErr").textContent = "Escribe el precio del litro de leche.");
+    const keys = ["days","cows","liters","milk_price","fert_cost","lacto_cows","lacto_price", ...LL_ITEMS.flatMap(([k])=>[k + "_kg", k + "_price"])];
+    const row = { month:r.month, source:"mykau", updated_at:new Date().toISOString(), ...Object.fromEntries(keys.map(k=>[k, llN(r[k])])) };
+    t.disabled = true;
+    const { error } = await sb.from("free_milk_month").upsert(row, { onConflict:"month" });
+    if (error){ t.disabled = false; return ($("llErr").textContent = "No se pudo guardar: " + error.message); }
+    toast(`Litros libres ${r.month.slice(0, 7)} guardado ✓`); ll.open = null; llShow();
+  }
+});
+$("finBody").addEventListener("change", e=>{
+  const k = e.target.dataset?.llk; if (!k || !ll?.open) return;
+  const r = ll.rows.find(x=>x.month===ll.open); const v = String(e.target.value).trim(); r[k] = llN(v.includes(",") ? v.replace(/\./g, "").replace(",", ".") : v) ?? null;
+  if (r.copied) r.copied = r.copied.filter(x=>x!==k);
+  llRender();
+});
 
 // ═══════════════════════ INVENTARIO ═══════════════════════════
 // La app es la principal: catálogo, presentaciones, pedidos (varias líneas), conteos/salidas y alertas por finca.
