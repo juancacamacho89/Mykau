@@ -5750,14 +5750,25 @@ const GN_COLS = [
   ["upeso","Último peso (kg)", r=>r.w?.weight_kg, false], ["fpeso","Fecha último peso", r=>r.w?.event_date, false, "d"],
 ];
 async function initGen(){
-  if (!gnState.farm){ const fs = await prodFarms(); gnState.farm = jget("gnLast", {}).farm || fs[0]?.id || 1; }
+  if (gnState.farm==null){ const fs = await prodFarms(), last = jget("gnLast", {}).farm; gnState.farm = last ?? fs[0]?.id ?? 1; }
   if (!gnData || gnData.farm !== gnState.farm) await gnLoad();
+  gnPresetsLoad();
   renderGen();
 }
+// finca 0 = las dos fincas juntas (un listado de ambas)
 async function gnLoad(){
-  const farm = gnState.farm;
+  const sel = gnState.farm;
   if (!navigator.onLine){ $("gnBody").innerHTML = `<div class="card"><div class="empty">El generador necesita señal.</div></div>`; gnData = null; return; }
   $("gnBody").innerHTML = `<div class="card"><div class="empty">Descargando vacas, eventos y leche…</div></div>`;
+  const farms = sel===0 ? (jget("mkFarms", []).length ? jget("mkFarms", []) : [{ id:1 }, { id:7 }]).map(f=>f.id) : [sel];
+  const parts = await Promise.all(farms.map(gnLoadFarm));
+  const bad = parts.find(x=>x.error);
+  if (bad){ $("gnBody").innerHTML = `<div class="card"><div class="empty">No se pudo cargar: ${esc(bad.error.message)}</div></div>`; gnData = null; return; }
+  const rows = parts.flatMap(x=>x.rows);
+  const snapKeys = [...new Set(rows.flatMap(r=>Object.keys(r.snap)))].sort();
+  gnData = { farm:sel, rows, snapKeys, pens:[...new Set(rows.map(r=>r.c.pen).filter(Boolean))].sort(byNumTxt) };
+}
+async function gnLoadFarm(farm){
   const since = addDays(today(), -700);
   const [c, e, m, k] = await Promise.all([
     psAll(()=>sb.from("cows").select("*").eq("farm_id", farm).eq("active", true).order("id")),
@@ -5767,7 +5778,7 @@ async function gnLoad(){
       .gte("test_date", addDays(today(), -420)).not("total_kg", "is", null).order("test_date")),
     psAll(()=>sb.from("cow_concentrate").select("cow_id,rec_date,kg_day,source,cows!inner(farm_id)").eq("cows.farm_id", farm).gte("rec_date", addDays(today(), -365)).order("rec_date")),
   ]);
-  if (c.error || e.error){ $("gnBody").innerHTML = `<div class="card"><div class="empty">No se pudo cargar: ${esc((c.error || e.error).message)}</div></div>`; gnData = null; return; }
+  if (c.error || e.error) return { error:c.error || e.error, rows:[] };
   const by = (rows, f) => { const o = {}; (rows || []).forEach(x=>(o[x.cow_id] ||= []).push(f ? f(x) : x)); return o; };
   const ev = by(e.data), milk = by(m.data, x=>[x.test_date, +(x.adjusted_kg ?? x.total_kg)]), conc = {};
   // ración vigente: la última de Mykau (app o n8n); la de Interherd solo si no hay ninguna (igual que Suplementación)
@@ -5797,9 +5808,53 @@ async function gnLoad(){
       dg, w, lm: lmA ? { d:lmA[0], v:Math.round(lmA[1]*10)/10 } : null, p305, conc: conc[cw.id] ?? null,
       snap: cw.snapshot || {} };
   });
-  const snapKeys = [...new Set(rows.flatMap(r=>Object.keys(r.snap)))].sort();
-  gnData = { farm, rows, snapKeys, pens:[...new Set(rows.map(r=>r.c.pen).filter(Boolean))].sort(byNumTxt) };
+  return { rows };
 }
+// ── listados guardados (tabla list_presets): un toque deja las columnas y los filtros como se guardaron ──
+let gnPresets = null;
+async function gnPresetsLoad(){
+  if (!navigator.onLine) return;
+  const { data, error } = await sb.from("list_presets").select("id,name,settings,created_by").order("name");
+  gnPresets = error ? [] : data || []; if (location.hash==="#generador" && gnData) renderGen();
+}
+const gnPresetSettings = () => ({ cols:gnCols(), farm:gnState.farm, tipo:gnState.tipo, est:gnState.est, pens:gnState.pens, q:gnState.q, sort:gnState.sort });
+const gnPresetCur = () => (gnPresets || []).find(p=>p.id===gnState.preset && JSON.stringify(p.settings)===JSON.stringify(gnPresetSettings()));
+function gnPresetsHtml(){
+  if (!gnPresets) return "";
+  const cur = gnPresetCur(), mine = p => p.created_by===me || isMain();
+  return `<div style="margin-bottom:10px"><div class="sub" style="font-weight:700">📑 Listados guardados</div>
+    <div class="chips sm ckpan" style="padding:0;margin-top:6px"><div class="chips sm">
+      ${gnPresets.map(p=>`<button class="${cur?.id===p.id ? "on" : ""}" data-gnpre="${p.id}">${esc(p.name)}${gnState.presetEdit && mine(p) ? ` <span data-gnpredel="${p.id}" style="color:var(--s4);font-weight:800;padding-left:4px">✕</span>` : ""}</button>`).join("")}
+      <button data-gnpresave>＋ Guardar este listado</button>
+      ${gnPresets.some(mine) ? `<button data-gnpreedit>${gnState.presetEdit ? "Listo" : "✏️"}</button>` : ""}</div></div></div>`;
+}
+async function gnPresetApply(p){
+  const st = p.settings || {}, farmChange = st.farm!=null && st.farm!==gnState.farm;
+  Object.assign(gnState, { tipo:st.tipo || "todas", est:st.est || [], pens:st.pens || [], q:st.q || "", sort:st.sort || { k:"id", dir:1 }, preset:p.id });
+  if (st.cols?.length) jset("gnCols", st.cols);
+  if (farmChange){ gnState.farm = st.farm; jset("gnLast", { farm:st.farm }); await gnLoad(); gnState.pens = st.pens || []; }
+  renderGen(); toast(`Listado "${p.name}"`);
+}
+$("gnBody").addEventListener("click", async e=>{
+  const t = e.target, del = t.closest("[data-gnpredel]"), pre = t.closest("[data-gnpre]");
+  if (del){ e.stopPropagation(); const p = gnPresets.find(x=>x.id===+del.dataset.gnpredel);
+    if (!p || !confirm(`¿Borrar el listado "${p.name}"?`)) return;
+    const { error } = await sb.from("list_presets").delete().eq("id", p.id); if (error) return toast("No se pudo borrar: " + error.message);
+    gnPresets = gnPresets.filter(x=>x.id!==p.id); return renderGen(); }
+  if (pre){ const p = gnPresets.find(x=>x.id===+pre.dataset.gnpre); if (p) return gnPresetApply(p); }
+  if (t.closest("[data-gnpreedit]")){ gnState.presetEdit = !gnState.presetEdit; return renderGen(); }
+  if (t.closest("[data-gnpresave]")){
+    const cur = (gnPresets || []).find(x=>x.id===gnState.preset);
+    const name = (prompt("Nombre del listado (ej. Revisión vacas lacto)", cur?.name || "") || "").trim(); if (!name) return;
+    const same = (gnPresets || []).find(x=>x.name.toLowerCase()===name.toLowerCase());
+    if (same && !confirm(`Ya existe "${same.name}". ¿Reemplazarlo con las columnas y filtros de ahora?`)) return;
+    const { data, error } = same ? await sb.from("list_presets").update({ settings:gnPresetSettings() }).eq("id", same.id).select("id,name,settings,created_by")
+      : await sb.from("list_presets").insert({ name, settings:gnPresetSettings() }).select("id,name,settings,created_by");
+    if (error || !data?.length) return toast("No se pudo guardar" + (error ? ": " + error.message : " (sin permiso)"));
+    gnPresets = [...gnPresets.filter(x=>x.id!==data[0].id), data[0]].sort((a, b)=>a.name.localeCompare(b.name, "es"));
+    gnState.preset = data[0].id; toast(`Listado "${name}" guardado ✓`); return renderGen();
+  }
+});
 // columnas escogidas (se recuerdan en el celular)
 const gnCols = () => { const saved = jget("gnCols", null); return saved || GN_COLS.filter(x=>x[3]).map(x=>x[0]); };
 const gnColDef = k => { const d = GN_COLS.find(x=>x[0]===k); if (d) return d;
@@ -5837,7 +5892,9 @@ function renderGen(){
   const cols = gnCols().map(gnColDef).filter(Boolean), rows = gnSorted(gnFilter(), cols);
   const colChecks = (list) => list.map(([k, t])=>`<label><input type="checkbox" data-gncolck="${esc(k)}" ${cols.some(c=>c[0]===k) ? "checked" : ""}>${esc(t)}</label>`).join("");
   $("gnBody").innerHTML = `<div class="card">
-      ${chips(farms.map(f=>[String(f.id), esc(farmLabel(f))]), v=>+v===s.farm, "data-gnf")}
+      ${gnPresetsHtml()}
+      ${chips(farms.map(f=>[String(f.id), esc(farmLabel(f))]), v=>s.farm===0 || +v===s.farm, "data-gnf")}
+      ${farms.length > 1 ? `<div class="sub" style="margin-top:4px">Toca las dos fincas para un listado de ambas.</div>` : ""}
       <div class="sub" style="margin-top:10px;font-weight:700">Grupos</div>
       ${chips([["", "Todos los grupos"], ...d.pens.map(p=>[p, esc(p)])], v=>v==="" ? !s.pens.length : s.pens.includes(v), "data-gnp")}
       <div class="sub" style="margin-top:10px;font-weight:700">Estados</div>
@@ -5884,7 +5941,7 @@ async function gnExport(){
   ws["!freeze"] = { xSplit:0, ySplit:1 };
   const wb = X.utils.book_new(); X.utils.book_append_sheet(wb, ws, "Lista");
   const farm = (jget("mkFarms", []).find(f=>f.id===gnState.farm)?.herd || gnState.farm).toString().toLowerCase();
-  const name = `lista_${farm}_${today()}.xlsx`;
+  const name = `${gnPresetCur() ? gnPresetCur().name.replace(/[^\wáéíóúñÁÉÍÓÚÑ -]+/g, "").trim() + "_" : "lista_"}${gnState.farm===0 ? "ambas" : farm}_${today()}.xlsx`;
   const file = new File([X.write(wb, { bookType:"xlsx", type:"array", cellDates:true })], name, { type:"application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" });
   if (navigator.canShare?.({ files:[file] })){ try{ await navigator.share({ files:[file], title:name }); return; }catch(e){ if (e.name==="AbortError") return; } }
   const a = document.createElement("a"); a.href = URL.createObjectURL(file); a.download = name; document.body.appendChild(a); a.click();
@@ -5901,7 +5958,12 @@ $("gnBody").addEventListener("change", e=>{
 $("gnBody").addEventListener("click", async e=>{
   const t = e.target, q = a => t.closest(`[${a}]`)?.getAttribute(a), s = gnState;
   if (q("data-cow")){ e.preventDefault(); return openCow(q("data-cow")); }
-  if (q("data-gnf")!=null){ s.farm = +q("data-gnf"); s.pens = []; jset("gnLast", { farm:s.farm }); await gnLoad(); return renderGen(); }
+  if (q("data-gnf")!=null){   // se puede escoger una finca o las dos (0 = ambas)
+    const all = (jget("mkFarms", []).length ? jget("mkFarms", []) : [{ id:1 }, { id:7 }]).map(f=>f.id), id = +q("data-gnf");
+    let sel = s.farm===0 ? all : [s.farm]; sel = sel.includes(id) ? sel.filter(x=>x!==id) : [...sel, id];
+    if (!sel.length) return;
+    const nf = sel.length >= all.length && all.length > 1 ? 0 : sel[0]; if (nf===s.farm) return;
+    s.farm = nf; s.pens = []; jset("gnLast", { farm:s.farm }); await gnLoad(); return renderGen(); }
   if (q("data-gnt")!=null){ s.tipo = q("data-gnt"); return renderGen(); }
   if (q("data-gne")!=null){ const v = q("data-gne"); s.est = s.est.includes(v) ? s.est.filter(x=>x!==v) : [...s.est, v]; return renderGen(); }
   if (q("data-gnp")!=null){ const v = q("data-gnp"); s.pens = v==="" ? [] : s.pens.includes(v) ? s.pens.filter(x=>x!==v) : [...s.pens, v]; return renderGen(); }
