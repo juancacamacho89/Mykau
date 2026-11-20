@@ -5855,8 +5855,8 @@ function renderGen(){
         ${colChecks(GN_COLS.map(x=>[x[0], x[1]]))}
         ${d.snapKeys.length ? `<div class="gnchead"><span>Del listado de Interherd (${d.snapKeys.length})</span></div>${colChecks(d.snapKeys.map(k=>["ih:" + k, k]))}` : ""}
       </div>` : ""}
-      <div class="row" style="gap:8px;margin-top:10px"><button class="btn" id="gnTxt">📄 Exportar a texto</button></div>
-      <div class="sub" style="margin-top:4px">Archivo .txt separado por tabulaciones: se abre directo en Excel. Toca el título de una columna para ordenar.</div>
+      <div class="row" style="gap:8px;margin-top:10px"><button class="btn" id="gnTxt">📊 Descargar Excel</button></div>
+      <div class="sub" style="margin-top:4px">Archivo de Excel (.xlsx) con cada dato en su columna. Toca el título de una columna para ordenar.</div>
       <div class="gnwrap" id="gnTable">${gnTable(rows, cols)}</div>
     </div>`;
 }
@@ -5866,13 +5866,26 @@ function gnTable(rows, cols){
     ${rows.slice(0, max).map(r=>`<tr>${cols.map((c, i)=>i===0 ? `<td><button class="lnk" data-cow="${esc(r.c.id)}">${esc(gnFmt(c, c[2](r)))}</button></td>` : `<td>${esc(gnFmt(c, c[2](r)))}</td>`).join("")}</tr>`).join("")}</table>
     ${rows.length > max ? `<div class="sub" style="padding:6px">Se muestran ${max} de ${rows.length}; el archivo lleva todos.</div>` : ""}`;
 }
+// Excel (.xlsx) de verdad: cada dato en su celda, los números como número y las fechas como fecha
 async function gnExport(){
   const cols = gnCols().map(gnColDef).filter(Boolean), rows = gnSorted(gnFilter(), cols);
   if (!rows.length) return toast("No hay animales con esos filtros");
-  const cell = v => String(v ?? "").replace(/[\t\r\n]+/g, " ");
-  const txt = "\ufeff" + [cols.map(c=>cell(c[1])).join("\t"), ...rows.map(r=>cols.map(c=>cell(gnFmt(c, c[2](r)))).join("\t"))].join("\r\n");
+  let X; try{ X = await mtLoadXlsx(); }catch(e){ return toast("Se necesita señal la primera vez para armar el Excel"); }
+  const cell = (c, v) => {
+    if (v==null || v==="") return null;
+    if (c[4]==="d"){ const d = new Date(String(v).slice(0, 10) + "T12:00"); return isNaN(d) ? String(v) : d; }
+    const n = typeof v==="number" ? v : /^-?\d+([.,]\d+)?$/.test(String(v).trim()) && !/^0\d/.test(String(v).trim()) ? +String(v).trim().replace(",", ".") : null;
+    return n!=null && isFinite(n) ? n : String(v);
+  };
+  const data = [cols.map(c=>c[1]), ...rows.map(r=>cols.map(c=>cell(c, c[2](r))))];
+  const ws = X.utils.aoa_to_sheet(data, { cellDates:true, dateNF:"dd/mm/yyyy" });
+  ws["!cols"] = cols.map((c, i)=>({ wch:Math.min(40, Math.max(6, String(c[1]).length + 2, ...data.slice(1, 200).map(r=>r[i] instanceof Date ? 10 : String(r[i] ?? "").length + 1))) }));
+  ws["!autofilter"] = { ref:X.utils.encode_range({ s:{ r:0, c:0 }, e:{ r:data.length - 1, c:cols.length - 1 } }) };
+  ws["!freeze"] = { xSplit:0, ySplit:1 };
+  const wb = X.utils.book_new(); X.utils.book_append_sheet(wb, ws, "Lista");
   const farm = (jget("mkFarms", []).find(f=>f.id===gnState.farm)?.herd || gnState.farm).toString().toLowerCase();
-  const name = `lista_${farm}_${today()}.txt`, file = new File([txt], name, { type:"text/plain" });
+  const name = `lista_${farm}_${today()}.xlsx`;
+  const file = new File([X.write(wb, { bookType:"xlsx", type:"array", cellDates:true })], name, { type:"application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" });
   if (navigator.canShare?.({ files:[file] })){ try{ await navigator.share({ files:[file], title:name }); return; }catch(e){ if (e.name==="AbortError") return; } }
   const a = document.createElement("a"); a.href = URL.createObjectURL(file); a.download = name; document.body.appendChild(a); a.click();
   setTimeout(()=>{ URL.revokeObjectURL(a.href); a.remove(); }, 2000);
