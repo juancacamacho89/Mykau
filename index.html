@@ -368,6 +368,7 @@ details.lac td{padding:6px 8px}
       <div class="homeedit"><button class="link" id="homeEdit">Organizar íconos</button><button class="link hidden" id="homeReset">Orden original</button></div>
       <div id="homeJC"></div>
       <div id="homeTx"></div>
+      <div id="homePush"></div>
       <div id="homeAbx"></div>
       <form class="homesearch" id="homeSearch" data-perm="vacas_ver"><span>🔍</span><input id="hq" type="search" placeholder="Buscar vaca" autocomplete="off" autocapitalize="characters"></form>
     </section>
@@ -1180,8 +1181,60 @@ function renderHome(){
   applyHomeOrder();
   document.querySelectorAll("[data-perm]").forEach(el=>el.classList.toggle("hidden", !el.dataset.perm.split(" ").some(canSee)));
   $("homeDate").textContent = new Date().toLocaleDateString("es-CO", { weekday:"long", day:"numeric", month:"long" });
-  homeAbx(); ivBadge(); homeJC(); homeTx();
+  homeAbx(); ivBadge(); homeJC(); homeTx(); homePush();
 }
+// ═══════════ NOTIFICACIONES PUSH (avisos al celular aunque Mykau esté cerrada) ═══════════
+// La base deja el aviso en push_queue y la Edge Function send-push lo manda a los celulares de los perfiles de la regla
+// (push_rules). Aquí solo se pide el permiso y se guarda el celular en push_subscriptions. Sirve para cualquier aviso nuevo.
+const PUSH_KEY = "BD_x-k-Bg-ZZh4DEP-UagTGetNAnFQ5y9VddVT5RVc7CNY1t9fSCYOIG46Qhsc9ulVTGQvqrKqeclK9RJywNuJA";
+let pushRules = null, pushSynced = false;
+const pushIOS = () => /iphone|ipad|ipod/i.test(navigator.userAgent);
+const pushStandalone = () => matchMedia("(display-mode: standalone)").matches || navigator.standalone===true;
+const pushCan = () => "serviceWorker" in navigator && "PushManager" in window && "Notification" in window;
+const pushKeyBytes = k => { const b = atob((k + "=".repeat((4 - k.length % 4) % 4)).replace(/-/g, "+").replace(/_/g, "/")); return Uint8Array.from([...b].map(c=>c.charCodeAt(0))); };
+async function pushSave(sub){
+  const j = sub.toJSON();
+  const { error } = await sb.from("push_subscriptions").upsert({ user_id:me, endpoint:j.endpoint, p256dh:j.keys.p256dh, auth:j.keys.auth, ua:navigator.userAgent.slice(0, 200), active:true }, { onConflict:"endpoint" });
+  if (error) console.warn("push", error.message);
+  return !error;
+}
+// pide el permiso y deja este celular inscrito
+async function pushEnable(){
+  if (!pushCan()) return toast(pushIOS() && !pushStandalone() ? "En iPhone primero agrega Mykau a la pantalla de inicio" : "Este navegador no permite notificaciones");
+  const perm = await Notification.requestPermission();
+  if (perm!=="granted") { toast("Sin permiso no se pueden mandar avisos. Actívalo en los ajustes del navegador."); return homePush(); }
+  try{
+    const reg = await navigator.serviceWorker.ready;
+    const sub = await reg.pushManager.getSubscription() || await reg.pushManager.subscribe({ userVisibleOnly:true, applicationServerKey:pushKeyBytes(PUSH_KEY) });
+    if (await pushSave(sub)){ reg.showNotification("Mykau", { body:"Notificaciones activas ✓ Te avisamos aquí.", icon:"icon-192.png", tag:"mykau-ok" }); toast("Notificaciones activas ✓"); }
+    else toast("No se pudo guardar el celular, intenta de nuevo con señal");
+  }catch(e){ toast("No se pudieron activar: " + (e.message || e)); }
+  homePush();
+}
+// cada vez que abre la app con permiso ya dado: renueva el registro del celular (cambia a veces)
+async function pushSync(){
+  if (pushSynced || !pushCan() || Notification.permission!=="granted" || !navigator.onLine || !me) return;
+  pushSynced = true;
+  try{ const reg = await navigator.serviceWorker.ready, sub = await reg.pushManager.getSubscription(); if (sub) await pushSave(sub); }catch(e){}
+}
+// tarjeta en el Inicio: solo a los perfiles que reciben algún aviso, mientras no hayan activado
+async function homePush(){
+  const box = $("homePush"); if (!box) return;
+  pushSync();
+  if (!pushRules && navigator.onLine){ const { data } = await sb.from("push_rules").select("kind,title,profiles,enabled"); pushRules = data || []; }
+  const mine = (pushRules || []).filter(r=>r.enabled && (r.profiles || []).includes(myProfile));
+  if (!mine.length || (pushCan() && Notification.permission==="granted") || jget("pushLater", "")===today()){ box.innerHTML = ""; return; }
+  const denied = pushCan() && Notification.permission==="denied", iosTab = pushIOS() && !pushStandalone();
+  box.innerHTML = `<div class="card" style="margin:14px 0 0;border-left:4px solid var(--accent)"><b>🔔 Activa las notificaciones</b>
+    <div class="sub" style="margin-top:4px">Te avisamos al celular aunque Mykau esté cerrada: ${mine.map(r=>esc(r.title.toLowerCase())).join(", ")}.</div>
+    ${iosTab ? `<div class="sub" style="margin-top:6px">En iPhone: toca <b>Compartir ⬆️ → Agregar a inicio</b>, abre Mykau desde ese ícono y vuelve aquí.</div>`
+      : denied ? `<div class="sub" style="margin-top:6px;color:var(--s4)">Las bloqueaste en este celular. Actívalas en los ajustes del navegador (Notificaciones → Permitir) y vuelve a abrir Mykau.</div>`
+      : `<div class="row" style="gap:8px;margin-top:8px"><button class="btn" data-pushon style="width:auto">🔔 Activar</button><button class="btn ghost" data-pushlater style="width:auto">Después</button></div>`}</div>`;
+}
+document.addEventListener("click", e=>{
+  if (e.target.closest("[data-pushon]")) return pushEnable();
+  if (e.target.closest("[data-pushlater]")){ jset("pushLater", today()); $("homePush").innerHTML = ""; }
+});
 // mastitis: vacas que en el chequeo o la revisión dejaron para "Revisar JC" (solo le sale a Juan, hasta marcarlas revisadas)
 async function mastJCHtml(){
   if (myProfile!=="Admin Principal" || !navigator.onLine) return "";
@@ -3006,6 +3059,8 @@ function rgActs(r){
     return b(`data-rgps="v|${r.tbl}|${r.id}|${r.farm}"`, "ver", "--accent")
       + (can ? b(`data-rgps="e|${r.tbl}|${r.id}|${r.farm}"`, "editar", "--accent") : "") + `<div data-rgpsbox></div>`; }
   if (r.kind==="racion") return isMain() || canDo("racion_registrar") ? b(`data-rgedx="racion|${r.date}|${r.farm}"`, "editar", "--accent") : "";
+  if (r.kind==="mastitis") return b(`data-rgedx="mxchk|${r.id}"`, mxOwn(r.who) ? "ver / corregir" : "ver", "--accent");
+  if (r.kind==="salud" && r.mastitis && mxOwn(r.who)) return b(`data-rgedx="mxtx|${r.id}"`, "corregir", "--accent");
   if (!r.id || !(isAdmin || (me && r.who===me))) return "";
   if (r.kind==="vacas") return r.status!=="pendiente" && !(isMain() && r.status==="en Interherd") ? "" :
     RG_EDIT_TYPES.includes(r.etype) ? b(`data-rged="${r.id}|${esc(r.cow)}"`, "editar", "--accent") : b(`data-cow="${esc(r.cow)}"`, "editar", "--accent");
@@ -3046,6 +3101,8 @@ async function rgDoDel(val){
 async function rgEdOpen(val){
   const parts = val.split("|"), [tbl] = parts;
   if (tbl==="ronda"){ const [, d, f] = parts; rnState = { ...(rnState || {}), farm:+f, date:d, tab:"hoy" }; location.hash = "ronda"; window.scrollTo({ top:0 }); return; }
+  if (tbl==="mxchk") return mxSheet(parts[1].split(",").map(Number));
+  if (tbl==="mxtx") return mxEdit(+parts[1]);
   if (tbl==="racion"){ const [, d, f] = parts; rcState.farm = +f; rcState.mode = "vig"; rcState.asOf = d; rcState.edit = {}; location.hash = "racion"; window.scrollTo({ top:0 }); return; }
   if (!navigator.onLine) return toast("Necesitas señal para editar");
   const ids = parts[1].split(",").map(Number);
@@ -3213,11 +3270,22 @@ async function loadRegistros(){
     (data||[]).forEach(d=>add({ kind:"diaria", icon:"🥛", when:d.entered_at, date:d.rec_date, farm:d.farm_id, who:d.entered_by, id:d.id, pen:d.pen,
       title:"Leche diaria", detail:`${d.pen} · ${Math.round(d.total_l||0).toLocaleString("es-CO")} L${d.cows ? " · " + d.cows + " vacas" : ""}`, status:"app", dm:d }));
   })());
+  if (want("mastitis")) jobs.push((async()=>{
+    const { data } = await sb.from("cow_mastitis").select("id,cow_id,check_date,kind,lot,farm_id,treatment,created_by,created_at").eq("source", "app")
+      .gte("created_at", qFrom).lt("created_at", t1).limit(3000);
+    const g = {};
+    (data || []).forEach(x=>{ const k = [x.check_date, x.kind, x.lot || "", x.farm_id, x.created_by].join("|");
+      const o = g[k] ||= { date:x.check_date, kind:x.kind, lot:x.lot, farm:x.farm_id, who:x.created_by, when:x.created_at, ids:[], tx:0 };
+      o.ids.push(x.id); if (x.treatment) o.tx++; if (x.created_at > o.when) o.when = x.created_at; });
+    Object.values(g).forEach(o=>add({ kind:"mastitis", icon:"🩺", when:o.when, date:o.date, farm:o.farm, who:o.who, id:o.ids.join(","),
+      title:o.kind==="R" ? "Revisión de mastitis" : "Chequeo de mastitis",
+      detail:`${o.lot ? "Lote " + o.lot + " · " : ""}${o.ids.length} vaca${o.ids.length===1 ? "" : "s"}${o.tx ? ` · ${o.tx} con tratamiento` : ""}`, status:"app" }));
+  })());
   if (want("salud")) jobs.push((async()=>{
     const { data } = await sb.from("treatments_cow").select("id,farm_id,cow_id,start_date,diagnosis,protocol,prescribed_by,created_by,created_at,treatment_items(supply_code,dose,unit)")
       .gte("created_at", qFrom).lt("created_at", t1).limit(2000);
     (data||[]).filter(t=>t.protocol!=="Ovsynch").forEach(t=>add({ kind:"salud", icon:"🩺", when:t.created_at, date:t.start_date, farm:t.farm_id, who:t.created_by, cow:t.cow_id, id:t.id,
-      title:"Tratamiento", detail:(t.diagnosis ? t.diagnosis + " · " : "") + (t.treatment_items||[]).map(i=>`${i.supply_code} ${i.dose??""} ${i.unit||""}`).join(", ") + (t.prescribed_by ? " · formuló " + t.prescribed_by : ""), status:"app" }));
+      title:t.protocol==="Mastitis" ? "Tratamiento de mastitis" : "Tratamiento", mastitis:t.protocol==="Mastitis", detail:(t.diagnosis ? t.diagnosis + " · " : "") + (t.treatment_items||[]).map(i=>`${i.supply_code} ${i.dose??""} ${i.unit||""}`).join(", ") + (t.prescribed_by ? " · formuló " + t.prescribed_by : ""), status:"app" }));
   })());
   if (want("pastos")) jobs.push((async()=>{
     const [w, g, r] = await Promise.all([
@@ -6961,6 +7029,92 @@ async function flushMastitis(loud){
   if (mt && location.hash==="#mastitis/chequeo"){ mt.hist = {}; mt.chart = null; mtRender(); }
 }
 window.addEventListener("online", ()=>flushMastitis());
+// ── Registros → chequeo/revisión de mastitis: ver vaca por vaca y corregir el tratamiento ──
+// cada persona corrige solo lo que ella registró (Juan, 21/11/2026); el Admin Principal, todo
+const mxOwn = who => isMain() || (!!me && who===me);
+// productos del tratamiento a partir de lo escogido (lo mismo que al programar)
+function mtTxItems(p){
+  const sup = c => hsCatGet().supplies.find(m=>m.code===c), nq = Math.max(1, p.q.length);
+  return MT_TX.filter(x=>p.sel.includes(x.k) && sup(x.code)).map(x=>{ const n = mtTxN(p, x), sc = mtTxSched(x, n);
+    return { supply_code:x.code, dose:x.im ? (x.dose || 1) * nq : x.dose, unit:sup(x.code).unit, route:sc.route, every_hours:sc.every, days:sc.days }; });
+}
+function mxSheetBg(html){ const bg = document.createElement("div"); bg.className = "sheet-bg"; bg.innerHTML = html; document.body.appendChild(bg);
+  bg.addEventListener("click", e=>{ if (e.target===bg || e.target.closest("[data-close]")) bg.remove(); }); return bg; }
+async function mxSheet(ids){
+  if (!navigator.onLine) return toast("Necesitas señal");
+  const { data, error } = await sb.from("cow_mastitis").select("id,cow_id,check_date,kind,lot,farm_id,ai,ad,pi,pd,observation,treatment").in("id", ids);
+  if (error || !data?.length) return toast(error ? "No se pudo abrir: " + error.message : "Ya no existe");
+  const d0 = data[0], cows = data.map(x=>x.cow_id);
+  const { data:tx } = await sb.from("treatments_cow").select("id,cow_id,start_date,notes,created_by,treatment_doses(id)").eq("protocol", "Mastitis").eq("start_date", d0.check_date).in("cow_id", cows);
+  const txOf = c => (tx || []).filter(t=>t.cow_id===c).pop();
+  const rows = data.sort((a, b)=>byNum(a.cow_id, b.cow_id));
+  mxSheetBg(`<div class="sheet" style="max-width:560px"><h3>${d0.kind==="R" ? "Revisión" : "Chequeo"} de mastitis · ${fmt(d0.check_date)}${d0.lot ? " · " + esc(d0.lot) : ""}</h3>
+    ${mastLegend()}
+    <table class="ivt" style="font-size:13px;margin-top:6px">${rows.map(x=>{ const t = txOf(x.cow_id);
+      return `<tr><td><b>${esc(x.cow_id)}</b></td><td>${udder(x)}</td><td class="sub" style="white-space:normal">${esc(x.treatment || x.observation || "")}
+        ${t ? `<div>${t.treatment_doses?.length ? "✓ realizado" : "⏳ por aplicar"}</div>` : ""}</td>
+        <td>${t && mxOwn(t.created_by) ? `<button class="lnk" data-mxed="${t.id}">corregir</button>` : ""}</td></tr>`; }).join("")}</table>
+    <div class="btns"><button type="button" class="btn ghost" data-close>Cerrar</button></div></div>`)
+    .addEventListener("click", e=>{ const b = e.target.closest("[data-mxed]"); if (b){ e.currentTarget.remove(); mxEdit(+b.dataset.mxed); } });
+}
+async function mxEdit(tid){
+  if (!navigator.onLine) return toast("Necesitas señal para corregir");
+  if (!hsCatGet().supplies.length) await hsCatalog();
+  const { data:t, error } = await sb.from("treatments_cow").select("id,farm_id,cow_id,start_date,notes,protocol,created_by,treatment_items(supply_code,dose,every_hours,days),treatment_doses(id)").eq("id", tid).maybeSingle();
+  if (error || !t) return toast(error ? "No se pudo abrir: " + error.message : "Ya no existe");
+  if (!mxOwn(t.created_by)) return toast("Solo quien registró el tratamiento lo puede corregir");
+  // lo que tiene hoy: antibióticos, número de jeringas/dosis, cuartos (del texto) y la otra indicación
+  const notes = String(t.notes || "").toUpperCase(), p = { sel:[], q:[], n:{}, note:"" };
+  MT_Q.forEach(q=>{ if (notes.includes(MT_QN[q])) p.q.push(q); });
+  (t.treatment_items || []).forEach(i=>{ const x = MT_TX.find(m=>m.code===i.supply_code); if (!x) return; p.sel.push(x.k);
+    p.n[x.k] = x.im ? Math.round((+i.days || 1) * 24 / (+i.every_hours || 12)) : +i.days || x.n;
+    if (x.im && !p.q.length){ const nq = Math.max(1, Math.round((+i.dose || 1) / (x.dose || 1))); p.q = MT_Q.slice(0, nq); } });
+  if (!p.q.length) p.q = ["ad"];
+  const known = MT_TX.filter(x=>p.sel.includes(x.k)).map(x=>x.txt(p.q, mtTxN(p, x)));
+  p.note = notes.split(" + ").filter(seg=>seg && !known.includes(seg)).join(" + ");
+  const realized = !!t.treatment_doses?.length;
+  const bg = mxSheetBg(`<div class="sheet" style="max-width:560px"><h3>Corregir tratamiento · vaca ${esc(t.cow_id)} · ${fmt(t.start_date)}</h3><div id="mxBody"></div></div>`);
+  const draw = () => { $("mxBody").innerHTML = `
+      ${realized ? `<div class="sub" style="color:var(--s4);margin-bottom:6px">Este tratamiento ya se marcó realizado.${isMain() ? " Al corregirlo se descuenta del inventario lo nuevo en vez de lo anterior." : " Para corregirlo pídele al Admin Principal."}</div>` : ""}
+      <div class="sub">Cuartos</div>
+      <div class="chips sm ckpan" style="padding:0"><div class="chips sm">${MT_Q.map(q=>`<button class="${p.q.includes(q) ? "on" : ""}" data-mxq="${q}">${q.toUpperCase()}</button>`).join("")}</div></div>
+      <div class="sub" style="margin-top:6px">Antibiótico</div>
+      <div class="chips sm ckpan" style="padding:0"><div class="chips sm">${MT_TX.map(x=>`<button class="${p.sel.includes(x.k) ? "on" : ""}" data-mxk="${x.k}">${esc(x.t)}</button>`).join("")}</div></div>
+      ${MT_TX.filter(x=>p.sel.includes(x.k)).map(x=>`<div class="row" style="gap:8px;margin-top:6px;align-items:center"><b style="flex:1;min-width:0">${esc(x.t)}</b>
+        <input data-mxn="${x.k}" type="number" inputmode="numeric" min="1" max="20" value="${mtTxN(p, x)}" style="flex:0 0 64px;padding:8px;text-align:center">
+        <span class="sub">${x.im ? (x.dose ? "dosis por cuarto" : "jeringas por cuarto") : "dosis"}</span></div>`).join("")}
+      <input data-mxnote placeholder="Otra indicación (ej. apartar vaca)" value="${esc(p.note)}" style="margin-top:8px">
+      <div class="sub" style="margin-top:6px;color:var(--ink)">→ ${esc(mtTxText(p)) || "<i>sin tratamiento</i>"}</div>
+      <div class="err" id="mxErr"></div>
+      <div class="btns"><button type="button" class="btn ghost" data-close>Cancelar</button>${realized && !isMain() ? "" : `<button type="button" class="btn" data-mxsave>Guardar</button>`}</div>`; };
+  draw();
+  bg.addEventListener("change", e=>{ const t0 = e.target;
+    if (t0.dataset.mxn){ p.n[t0.dataset.mxn] = Math.max(1, Math.min(20, Math.round(+t0.value) || 1)); draw(); }
+    if (t0.hasAttribute("data-mxnote")){ p.note = t0.value.trim().toUpperCase(); draw(); } });
+  bg.addEventListener("click", async e=>{
+    const k = e.target.closest("[data-mxk]"), q = e.target.closest("[data-mxq]");
+    if (k){ const v = k.dataset.mxk; p.sel = p.sel.includes(v) ? p.sel.filter(x=>x!==v) : [...p.sel, v]; return draw(); }
+    if (q){ const v = q.dataset.mxq; p.q = p.q.includes(v) ? p.q.filter(x=>x!==v) : MT_Q.filter(x=>x===v || p.q.includes(x)); return draw(); }
+    if (!e.target.closest("[data-mxsave]")) return;
+    const err = m => ($("mxErr").textContent = m), items = mtTxItems(p), txt = mtTxText(p);
+    if (!p.sel.length) return err("Escoge al menos un antibiótico (o borra el tratamiento en Registros).");
+    if (!p.q.length) return err("Escoge el cuarto.");
+    e.target.disabled = true;
+    let r = await sb.from("treatments_cow").update({ notes:txt }).eq("id", t.id).select("id");
+    if (!r.error && !r.data?.length) r = { error:{ message:"sin permiso para corregirlo" } };
+    if (!r.error) r = await sb.from("treatment_items").delete().eq("treatment_id", t.id);
+    if (!r.error) r = await sb.from("treatment_items").insert(items.map(i=>({ ...i, treatment_id:t.id })));
+    if (!r.error && realized){   // ya estaba realizado: se rehacen las dosis con lo nuevo
+      await sb.from("treatment_doses").delete().eq("treatment_id", t.id);
+      const tt = { start_date:t.start_date, treatment_doses:[] };
+      r = await sb.from("treatment_doses").insert(items.flatMap(it=>hsDoses(tt, it).map(d=>({ treatment_id:t.id, supply_code:it.supply_code, dose_no:d.k, qty:d.qty, due_date:d.due, given_name:store.get("myName") || myProfile || null }))));
+    }
+    if (r.error){ e.target.disabled = false; return err("No se pudo guardar: " + r.error.message); }
+    await sb.from("cow_mastitis").update({ treatment:txt }).eq("cow_id", t.cow_id).eq("check_date", t.start_date).eq("source", "app");
+    bg.remove(); toast(`Tratamiento de la ${t.cow_id} corregido ✓`);
+    if (location.hash==="#registros") initRegistros();
+  });
+}
 // lote de la vaca: en el chequeo, el del chequeo; en la revisión, el grupo actual de la vaca
 const mtLotOf = id => { const p = mt.kind==="R" ? mtCows().find(c=>c.id===id)?.pen || "" : mt.pen; return MT_LOT[p] || p || null; };
 let mtXlsx = null;   // librería de Excel: se descarga la primera vez
