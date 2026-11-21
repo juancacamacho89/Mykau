@@ -5804,7 +5804,18 @@ function lsView(all){
 // cada 14 días (lacto_applications: descuenta Lactotropina del inventario). El motor sugiere quién entra, quién sale
 // por secado y qué vacas hay que revisar (< 18 L, vacías bajando leche, abortos); Juan decide con Sigue / Sale.
 const LC = { del:120, l1:23, lm:25, dryDays:45, dryAuto:30, minL:18, drop:20, dropVacia:15, abortDays:60, every:14, quiet:14, noEntraDays:30 };
-let lcState = { farm:null, tab:"rev" }, lcData = null;
+let lcState = { farm:null, tab:"rev" }, lcData = null, lcPend = {};   // lcPend: decisiones marcadas sin guardar { vaca: "sigue" | "sale" | … }
+const lcBtnSty = (on, color) => on ? `background:var(${color && color!=="ghost" ? color : "--accent"});color:#fff;border-color:transparent` : "";
+// barra de abajo: cuántas decisiones marcadas y Guardar
+function lcBar(){
+  let bar = $("lcBar"); const n = Object.keys(lcPend).length;
+  if (!n || location.hash!=="#lacto"){ bar?.remove(); return; }
+  if (!bar){ bar = document.createElement("div"); bar.id = "lcBar"; document.body.appendChild(bar);
+    bar.style.cssText = "position:fixed;left:0;right:0;bottom:0;z-index:1500;padding:10px 12px calc(10px + env(safe-area-inset-bottom));background:var(--card);box-shadow:0 -4px 18px rgba(0,0,0,.35);display:flex;gap:8px;align-items:center"; }
+  const cnt = k => Object.values(lcPend).filter(x=>x===k).length, parts = [["entra","entran"],["no_entra","no entran"],["sigue","siguen"],["sale","salen"]].filter(([k])=>cnt(k)).map(([k, t])=>`${cnt(k)} ${t}`);
+  bar.innerHTML = `<div style="flex:1;min-width:0"><b>${n} decisi${n===1 ? "ón" : "ones"}</b><div class="sub">${parts.join(" · ")}</div></div>
+    <button class="btn ghost" data-lcpendclear style="width:auto;padding:10px 12px">Descartar</button><button class="btn" data-lcpendsave style="width:auto;padding:10px 14px">💾 Guardar</button>`;
+}
 const lcCanDecide = () => isMain();
 async function initLacto(){
   if (lcState.farm==null){ const fs = await prodFarms(); lcState.farm = jget("lcLast", {}).farm ?? fs[0]?.id ?? 1; }
@@ -5897,7 +5908,7 @@ function lcMilkHtml(r){
 }
 function lcRow(r, acts){
   const sudden = r.drop!=null && r.drop >= LC.drop;
-  return `<tr><td><button class="lnk" data-cow="${esc(r.id)}"><b>${esc(r.id)}</b></button><div class="sub">${esc(r.pen || "")}</div></td>
+  return `<tr${lcPend[r.id] ? ` style="background:color-mix(in srgb,var(--accent) 10%,transparent)"` : ""}><td><button class="lnk" data-cow="${esc(r.id)}"><b>${esc(r.id)}</b></button><div class="sub">${esc(r.pen || "")}</div></td>
     <td class="sub" style="white-space:normal">${r.gone ? "ya no está activa en la finca" : [
       r.del!=null ? `${r.del} DEL` : "", r.parity ? `${r.parity}º parto` : ""].filter(Boolean).join(" · ")}
       ${r.gone ? "" : r.preg ? `<div><b style="color:var(--s0)">Cargada</b>${r.gest!=null ? ` · ${r.gest} días` : ""}${r.sv?.bull ? ` · toro ${esc(r.sv.bull)}` : ""}</div>
@@ -5924,7 +5935,7 @@ function lcRender(){
       <div><b style="${next && next <= today() ? "color:var(--s4)" : ""}">${next ? fmt(next).slice(0, 5) : "—"}</b><span>próxima (cada ${LC.every} días)</span></div></div></div>`;
   if (lcState.tab==="rev"){
     const L = lcEngine(), dec = lcCanDecide();
-    const b = (kind, id, txt, color) => dec ? `<button class="btn ${color==="ghost" ? "ghost" : ""}" data-lcdo="${kind}|${esc(id)}" style="width:auto;padding:6px 10px;font-size:13px;margin:2px;${color && color!=="ghost" ? `background:var(${color})` : ""}">${txt}</button>` : "";
+    const b = (kind, id, txt, color) => dec ? `<button class="btn ghost" data-lcdo="${kind}|${esc(id)}" data-c="${color || ""}" style="width:auto;padding:6px 10px;font-size:13px;margin:2px;${lcBtnSty(lcPend[id]===kind, color)}">${lcPend[id]===kind ? "✓ " : ""}${txt}</button>` : "";
     const sigueSale = r => b("sigue", r.id, "Sigue", "ghost") + b("sale", r.id, "Sale", "--s4");
     const box = (key, title, sub, xs, acts, bulk) => xs.length ? `<div class="card"><div style="display:flex;justify-content:space-between;align-items:center;gap:8px"><b>${title} (${xs.length})</b>${dec && bulk ? `<button class="lnk" data-lcbulk="${key}">${bulk}</button>` : ""}</div>
       <div class="sub">${sub}</div><div style="overflow-x:auto;margin-top:6px"><table class="ivt" style="font-size:13px">${xs.map(r=>lcRow(r, acts(r))).join("")}</table></div></div>` : "";
@@ -5960,11 +5971,12 @@ function lcRender(){
       ${d.decs.map(x=>`<tr><td>${fmt(x.decided_on)}</td><td><button class="lnk" data-cow="${esc(x.cow_id)}">${esc(x.cow_id)}</button></td><td><b>${esc(x.decision.replace("_", " "))}</b></td><td class="sub" style="white-space:normal">${esc(x.reason || "")}</td><td style="text-align:right">${lcN1(x.milk)}</td></tr>`).join("")
       || `<tr><td colspan="5"><div class="empty">Todavía no hay decisiones</div></td></tr>`}</table></div>`;
   }
-  $("lcBody").innerHTML = h + `<div style="height:20px"></div>`;
+  $("lcBody").innerHTML = h + `<div style="height:90px"></div>`;
+  lcBar();
 }
 const LC_REASON = { dry:"Secado en 31 a 45 días", pAbort:"En el programa con aborto", pLacto:"En el programa por lactoinducción", fresh:"Recién parida (menos de 120 DEL)", noLac:"Ya no está en ordeño", gone:"Ya no está en la finca", low:`Menos de ${LC.minL} L`, vacia:"Vacía bajando leche",
   lacto:"Lactoinducida", abort:"Aborto o pérdida", enter:"Cumple DEL y leche" };
-async function lcDecide(list, decision){
+async function lcDecide(list, decision, reload = true){
   const L = lcEngine(), cat = id => Object.keys(L).find(k=>L[k].some(r=>r.id===id)) || "";
   const all = [...lcData.rows, ...lcData.gone], D = today();
   const rows = list.map(id=>all.find(r=>r.id===id)).filter(Boolean);
@@ -5975,10 +5987,23 @@ async function lcDecide(list, decision){
       reason:LC_REASON[cat(r.id)] || null, updated_at:new Date().toISOString() }));
     ({ error } = await sb.from("lacto_program").upsert(up, { onConflict:"cow_id" }));
   }
-  if (error) return toast("No se pudo guardar: " + error.message);
-  toast(`${rows.length===1 ? "Vaca " + rows[0].id : rows.length + " vacas"}: ${decision.replace("_", " ")} ✓`);
+  if (error){ toast("No se pudo guardar: " + error.message); return false; }
+  if (reload){ toast(`${rows.length===1 ? "Vaca " + rows[0].id : rows.length + " vacas"}: ${decision.replace("_", " ")} ✓`); await lcLoad(); lcRender(); }
+  return true;
+}
+async function lcSavePend(btn){
+  const groups = {}; Object.entries(lcPend).forEach(([id, k])=>(groups[k] ||= []).push(id));
+  btn && (btn.disabled = true);
+  let ok = 0;
+  for (const [k, ids] of Object.entries(groups)) if (await lcDecide(ids, k, false)) ok += ids.length;
+  lcPend = {}; lcBar(); toast(`${ok} decisiones guardadas ✓`);
   await lcLoad(); lcRender();
 }
+document.addEventListener("click", e=>{
+  if (e.target.closest("[data-lcpendsave]")) return lcSavePend(e.target.closest("button"));
+  if (e.target.closest("[data-lcpendclear]")){ lcPend = {}; lcBar(); lcRender(); }
+});
+window.addEventListener("hashchange", ()=>lcBar());
 async function lcApply(){
   const xs = lcData.rows.filter(r=>r.inProg && r.lac).sort((a, b)=>byNum(a.id, b.id));
   if (!xs.length) return toast("No hay vacas en el programa");
@@ -6002,16 +6027,20 @@ async function lcApply(){
 }
 $("lcBody").addEventListener("change", async e=>{
   const t = e.target;
-  if (t.name==="lcF"){ lcState.farm = +t.value; jset("lcLast", { farm:lcState.farm }); await lcLoad(); return lcRender(); }
+  if (t.name==="lcF"){ if (Object.keys(lcPend).length && !confirm("Tienes decisiones sin guardar. ¿Cambiar de finca y descartarlas?")){ document.querySelector(`input[name="lcF"][value="${lcState.farm}"]`).checked = true; return; } lcPend = {}; lcState.farm = +t.value; jset("lcLast", { farm:lcState.farm }); await lcLoad(); return lcRender(); }
   if (t.name==="lcT"){ lcState.tab = t.value; return lcRender(); }
 });
 $("lcBody").addEventListener("click", async e=>{
   const t = e.target, cw = t.closest("[data-cow]"), dd = t.closest("[data-lcdo]"), bulk = t.closest("[data-lcbulk]"), dl = t.closest("[data-lcappdel]");
   if (cw){ e.preventDefault(); return openCow(cw.dataset.cow); }
-  if (dd){ const [kind, id] = dd.dataset.lcdo.split("|"); dd.disabled = true; return lcDecide([id], kind); }
+  if (dd){ const [kind, id] = dd.dataset.lcdo.split("|");   // solo marca (no guarda); otro toque la desmarca
+    if (lcPend[id]===kind) delete lcPend[id]; else lcPend[id] = kind;
+    dd.closest("td").querySelectorAll("[data-lcdo]").forEach(x=>{ const [k] = x.dataset.lcdo.split("|"), on = lcPend[id]===k;
+      x.style.cssText = "width:auto;padding:6px 10px;font-size:13px;margin:2px;" + lcBtnSty(on, x.dataset.c); x.textContent = (on ? "✓ " : "") + x.textContent.replace(/^✓ /, ""); });
+    dd.closest("tr").style.background = lcPend[id] ? "color-mix(in srgb,var(--accent) 10%,transparent)" : "";
+    return lcBar(); }
   if (bulk){ const L = lcEngine(), k = bulk.dataset.lcbulk, xs = L[k] || [], kind = ["enter", "lacto"].includes(k) ? "entra" : "sale";
-    if (!xs.length || !confirm(`¿${kind==="entra" ? "Meter al programa" : "Sacar del programa"} ${xs.length} vacas?\n\n${xs.map(r=>r.id).join(", ")}`)) return;
-    return lcDecide(xs.map(r=>r.id), kind); }
+    xs.forEach(r=>{ lcPend[r.id] = kind; }); lcRender(); return lcBar(); }
   if (t.closest("[data-lcapp]")) return lcApply();
   if (dl){ if (!confirm("¿Borrar esta aplicación? Las dosis vuelven al inventario.")) return;
     const { error } = await sb.from("lacto_applications").delete().eq("id", +dl.dataset.lcappdel);
