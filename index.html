@@ -5874,11 +5874,17 @@ async function lcLoadFarm(farm){
   return { rows, gone, apps:(ap.data || []).map(a=>({ ...a, farm })), decs:(dc.data || []).map(x=>({ ...x, farm })) };
 }
 // el motor: cada vaca cae en una sola lista (la más importante primero)
+// próxima aplicación de la finca (última + 14 días; si ya pasó, hoy): los 120 DEL se cuentan a ese día
+function lcNextApp(farm){
+  const D = today(), a = (lcData?.apps || []).find(x=>x.farm===farm), nx = a ? addDays(a.app_date, LC.every) : D;
+  return nx < D ? D : nx;
+}
 function lcEngine(){
   const D = today(), L = { gone:[], noLac:[], dry:[], pAbort:[], pLacto:[], fresh:[], low:[], vacia:[], lacto:[], abort:[], enter:[] };
   const quiet = (r, kinds, d) => r.dec && kinds.includes(r.dec.decision) && r.dec.decided_on >= addDays(D, -d);
   lcData.gone.forEach(r=>L.gone.push(r));
   lcData.rows.forEach(r=>{
+    const delApp = r.del==null ? null : r.del + days(D, lcNextApp(r.farm ?? r.prog?.farm_id));   // DEL el día de la aplicación
     if (r.inProg){
       if (!r.lac) return L.noLac.push(r);
       if (r.toDry!=null && r.toDry <= LC.dryAuto) return;   // ya salió sola (lacto_auto_out)
@@ -5886,7 +5892,7 @@ function lcEngine(){
       if (r.toDry!=null && r.toDry <= LC.dryDays) return L.dry.push(r);
       if (r.ab || r.abortLac) return L.pAbort.push(r);   // en el programa con aborto: se revisa
       if (r.lactoInd) return L.pLacto.push(r);           // en el programa por lactoinducción: se revisa
-      if (r.del!=null && r.del < LC.del) return L.fresh.push(r);   // parió y sigue en la lista (lactoinducidas y abortadas sí van)
+      if (delApp!=null && delApp < LC.del) return L.fresh.push(r);   // parió y sigue en la lista (lactoinducidas y abortadas sí van)
       if (r.milk!=null && r.milk < LC.minL) return L.low.push(r);
       if (!r.preg && r.drop!=null && r.drop >= LC.dropVacia) return L.vacia.push(r);
       return;
@@ -5896,7 +5902,7 @@ function lcEngine(){
     if (r.lactoInd) return L.lacto.push(r);
     if (r.ab) return L.abort.push(r);
     const min = r.parity <= 1 ? LC.l1 : LC.lm;
-    if (r.del!=null && r.del >= LC.del && r.milk!=null && r.milk >= min) return L.enter.push(r);
+    if (delApp!=null && delApp >= LC.del && r.milk!=null && r.milk >= min) return L.enter.push(r);
   });
   Object.values(L).forEach(xs=>xs.sort((a, b)=>byNum(a.id, b.id)));
   return L;
@@ -5966,7 +5972,7 @@ function lcRender(){
        + box("vacia", "📉 Vacías bajando leche", `No están cargadas y bajaron ${LC.dropVacia}% o más desde el pesaje anterior: tú decides si siguen.`, L.vacia, sigueSale)
        + box("lacto", "🍼 Lactoinducidas (fuera del programa)", "Las lactoinducidas entran al programa.", L.lacto, entraNo, "Entran todas")
        + box("abort", "⚠️ Con aborto (fuera del programa)", "Abortaron en esta lactancia: revisa si entran.", L.abort, entraNo)
-       + box("enter", "➕ Pueden entrar", `${LC.del} DEL o más y ≥ ${LC.l1} L (1er parto) / ≥ ${LC.lm} L (multíparas), sin secado cercano.`, L.enter, entraNo, "Entran todas");
+       + box("enter", "➕ Pueden entrar", `${LC.del} DEL o más el día de la aplicación y ≥ ${LC.l1} L (1er parto) / ≥ ${LC.lm} L (multíparas), sin secado cercano.`, L.enter, entraNo, "Entran todas");
     if (!dec) h += `<div class="sub" style="margin:0 4px 12px">Las decisiones (sigue / sale / entra) las toma el Admin Principal.</div>`;
   } else if (lcState.tab==="prog"){
     const can = canDo("lacto_registrar") || isMain();
