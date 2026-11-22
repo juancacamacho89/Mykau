@@ -5970,6 +5970,7 @@ function lcRender(){
     if (!dec) h += `<div class="sub" style="margin:0 4px 12px">Las decisiones (sigue / sale / entra) las toma el Admin Principal.</div>`;
   } else if (lcState.tab==="prog"){
     const can = canDo("lacto_registrar") || isMain();
+    h += `<div style="display:flex;justify-content:flex-end;margin:0 0 8px"><button class="btn ghost" data-lcxls style="width:auto;padding:8px 12px">⬇️ Descargar Excel</button></div>`;
     h += d.farms.map(f=>{ const xs = d.rows.filter(r=>r.inProg && r.farm===f).sort((a, b)=>byNumTxt(a.pen || "", b.pen || "") || byNum(a.id, b.id)), pens = [...new Set(xs.map(r=>r.pen || "—"))];
       return `<div class="card"><div style="display:flex;justify-content:space-between;align-items:center;gap:8px"><b>📋 ${d.farms.length > 1 ? esc(lcFarmName(f)) + " · " : ""}En el programa (${xs.length})</b>
         ${can ? `<button class="btn" data-lcapp="${f}" style="width:auto;padding:8px 12px">💉 Registrar aplicación</button>` : ""}</div>
@@ -6013,6 +6014,27 @@ async function lcDecide(list, decision, reload = true){
   if (error){ toast("No se pudo guardar: " + error.message); return false; }
   if (reload){ toast(`${rows.length===1 ? "Vaca " + rows[0].id : rows.length + " vacas"}: ${decision.replace("_", " ")} ✓`); await lcLoad(); lcRender(); }
   return true;
+}
+// Excel con las vacas que hoy están en el programa (de la finca o fincas elegidas)
+async function lcExport(){
+  const d = lcData; if (!d) return;
+  const xs = d.rows.filter(r=>r.inProg).sort((a, b)=>(a.farm - b.farm) || byNumTxt(a.pen || "", b.pen || "") || byNum(a.id, b.id));
+  if (!xs.length) return toast("No hay vacas en el programa");
+  let X; try{ X = await mtLoadXlsx(); }catch(e){ return toast("Se necesita señal la primera vez para armar el Excel"); }
+  const dt = v => { if (!v) return null; const x = new Date(String(v).slice(0, 10) + "T12:00"); return isNaN(x) ? null : x; };
+  const head = ["Finca", "Grupo", "Vaca", "Lactancia", "DEL", "Leche (L)", "Fecha leche", "Leche anterior (L)", "Estado", "Días gestación", "Fecha secado", "Días al secado", "Entró al programa", "Nota"];
+  const data = [head, ...xs.map(r=>[lcFarmName(r.farm), r.pen || "", isNaN(+r.id) ? r.id : +r.id, r.parity ?? null, r.del ?? null, r.milk ?? null, dt(r.milkDate), r.prev ?? null,
+    r.preg ? "Cargada" : "Vacía", r.preg ? r.gest ?? null : null, dt(r.dry), r.toDry ?? null, dt(r.prog?.entered_on),
+    r.lactoInd ? "Lactoinducida" : r.abortLac || r.ab ? "Aborto" : ""])];
+  const ws = X.utils.aoa_to_sheet(data, { cellDates:true, dateNF:"dd/mm/yyyy" });
+  ws["!cols"] = head.map(h=>({ wch:Math.max(8, h.length + 2) }));
+  ws["!autofilter"] = { ref:X.utils.encode_range({ s:{ r:0, c:0 }, e:{ r:data.length - 1, c:head.length - 1 } }) };
+  const wb = X.utils.book_new(); X.utils.book_append_sheet(wb, ws, "En programa");
+  const name = `lactotropina_${d.farms.length > 1 ? "ambas" : lcFarmName(d.farms[0]).toLowerCase().replace(/\s+/g, "_")}_${today()}.xlsx`;
+  const file = new File([X.write(wb, { bookType:"xlsx", type:"array", cellDates:true })], name, { type:"application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" });
+  if (navigator.canShare?.({ files:[file] })){ try{ await navigator.share({ files:[file], title:name }); return; }catch(e){ if (e.name==="AbortError") return; } }
+  const a = document.createElement("a"); a.href = URL.createObjectURL(file); a.download = name; document.body.appendChild(a); a.click();
+  setTimeout(()=>{ URL.revokeObjectURL(a.href); a.remove(); }, 2000);
 }
 async function lcSavePend(btn){
   const groups = {}; Object.entries(lcPend).forEach(([id, k])=>(groups[k] ||= []).push(id));
@@ -6073,6 +6095,7 @@ $("lcBody").addEventListener("click", async e=>{
   if (bulk){ const L = lcEngine(), k = bulk.dataset.lcbulk, xs = L[k] || [], kind = ["enter", "lacto"].includes(k) ? "entra" : "sale";
     xs.forEach(r=>{ lcPend[r.id] = kind; }); lcRender(); return lcBar(); }
   if (t.closest("[data-lcapp]")) return lcApply(t.closest("[data-lcapp]").dataset.lcapp);
+  if (t.closest("[data-lcxls]")) return lcExport();
   if (dl){ if (!confirm("¿Borrar esta aplicación? Las dosis vuelven al inventario.")) return;
     const { error } = await sb.from("lacto_applications").delete().eq("id", +dl.dataset.lcappdel);
     if (error) return toast("No se pudo borrar: " + error.message); toast("Aplicación borrada"); await lcLoad(); lcRender(); }
