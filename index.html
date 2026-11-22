@@ -5879,6 +5879,11 @@ function lcNextApp(farm){
   const D = today(), a = (lcData?.apps || []).find(x=>x.farm===farm), nx = a ? addDays(a.app_date, LC.every) : D;
   return nx < D ? D : nx;
 }
+function lcThisCycle(r, kinds){
+  if (!r.dec || !kinds.includes(r.dec.decision)) return false;
+  const a = (lcData?.apps || []).find(x=>x.farm===(r.farm ?? r.prog?.farm_id));
+  return a ? r.dec.decided_on > a.app_date : r.dec.decided_on >= addDays(today(), -LC.every);
+}
 function lcEngine(){
   const D = today(), L = { gone:[], noLac:[], dry:[], pAbort:[], pLacto:[], fresh:[], low:[], vacia:[], lacto:[], abort:[], enter:[] };
   const quiet = (r, kinds, d) => r.dec && kinds.includes(r.dec.decision) && r.dec.decided_on >= addDays(D, -d);
@@ -5897,7 +5902,8 @@ function lcEngine(){
       if (!r.preg && r.drop!=null && r.drop >= LC.dropVacia) return L.vacia.push(r);
       return;
     }
-    if (!r.lac || r.desc || quiet(r, ["no_entra", "sale"], LC.noEntraDays)) return;
+    // "no entra" / "sale" solo vale para esta aplicación: cuando se registra la siguiente aplicación de la finca, vuelve a revisión
+    if (!r.lac || r.desc || lcThisCycle(r, ["no_entra", "sale"])) return;
     if (r.toDry!=null && r.toDry <= LC.dryDays) return;
     if (r.lactoInd) return L.lacto.push(r);
     if (r.ab) return L.abort.push(r);
