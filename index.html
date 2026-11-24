@@ -11708,8 +11708,17 @@ async function sgPdf(){
   let JsPDF; try{ JsPDF = await lsLoadJsPdf(); }catch(e){ return toast("Se necesita señal la primera vez para armar el PDF"); }
   const d = sgDate, farm = $("finca").selectedOptions[0]?.textContent || "", all = sgData.ex.filter(x=>x.exam_date===d);
   const sick = all.filter(x=>+x.score >= 2).sort((a,b)=>byNum(String(a.animals?.calf_id), String(b.animals?.calf_id)));
-  const drugOf = x => { const done = (sgData.txByA[x.animal_id] || []).filter(t=>t.treatment_date===d).map(t=>t.drugs?.name || t.drug_raw).filter(Boolean);
-    return done.length ? done.join(" + ") : sgRecommend(+x.score, sgHistory(x.animal_id, d, +x.score))?.best || ""; };
+  // medicamento de cada ternera: el aplicado; si no, el escogido en la lista o el recomendado (igual que en pantalla)
+  const drugsOf = x => { const done = (sgData.txByA[x.animal_id] || []).filter(t=>t.treatment_date===d).map(t=>t.drugs?.name || t.drug_raw).filter(Boolean);
+    if (done.length) return done;
+    const r = sgRecommend(+x.score, sgHistory(x.animal_id, d, +x.score));
+    return [sgPick[x.animal_id] || r?.top?.[0]?.d || r?.best].filter(Boolean); };
+  const drugOf = x => drugsOf(x).join(" + ");
+  // peso proyectado y dosis por ternera (mL por aplicación × aplicaciones)
+  const doseTxt = x => { const w = sgWeight(x, d);
+    return drugsOf(x).map(n=>{ const ds = sgDose(n, w.kg), dr = sgData.drugs.find(z=>z.name===n);
+      return ds ? `${sgN1(ds.ml)} mL${ds.apps > 1 ? ` x ${ds.apps}` : ""}${dr?.every_hours ? ` c/${dr.every_hours} h` : ""}` : "falta dosis"; }).join(" + "); };
+  const tot = {}; sick.forEach(x=>{ const w = sgWeight(x, d); drugsOf(x).forEach(n=>{ const ds = sgDose(n, w.kg), b = tot[n] ||= { n:0, ml:0, miss:0 }; b.n++; if (ds) b.ml += ds.total; else b.miss++; }); });
   const navy = [11, 35, 64], ink = [16, 32, 56], fill = { 2:[251,248,196], 3:[253,233,199], 4:[251,213,213], 5:[252,224,228] };
   const doc = new JsPDF({ unit:"pt", format:"letter", compress:true }), M = 54, W = 612 - 2*M;
   const page = () => { doc.setFillColor(...navy); doc.rect(M, 48, W, 56, "F");
@@ -11723,21 +11732,38 @@ async function sgPdf(){
     doc.setTextColor(...ink); doc.setFont("helvetica", "bold"); doc.setFontSize(10); doc.text(String(v), x + 8, 120);
     doc.setFont("helvetica", "normal"); doc.setFontSize(6.5); doc.text(l, x + 8, 134); });
   // tabla
-  const cx = [M, M + W*0.142, M + W*0.257, M + W*0.471], RH = 22;
+  const cx = [M, M + W*0.10, M + W*0.18, M + W*0.29, M + W*0.60, M + W*0.71], RH = 22;
   const head = y => { doc.setFillColor(...navy); doc.rect(M, y, W, RH, "F"); doc.setTextColor(255); doc.setFont("helvetica", "bold"); doc.setFontSize(8.5);
-    ["ID", "Score", "Lóbulos", "Tratamiento"].forEach((h, k)=>doc.text(h, cx[k] + 7, y + 14)); return y + RH; };
+    ["ID", "Score", "Lóbulos", "Tratamiento", "Peso kg", "Dosis por animal"].forEach((h, k)=>doc.text(h, cx[k] + 7, y + 14)); return y + RH; };
   let y = head(156);
   sick.forEach(x=>{
     if (y + RH > 792 - 60){ doc.addPage(); page(); y = head(116); }
     const sc = Math.min(5, Math.floor(+x.score));
     doc.setFillColor(...(fill[sc] || fill[2])); doc.rect(M, y, W, RH, "F");
-    doc.setDrawColor(255); doc.setLineWidth(0.6); doc.line(M, y + RH, M + W, y + RH); [1, 2, 3].forEach(k=>doc.line(cx[k], y, cx[k], y + RH));
+    doc.setDrawColor(255); doc.setLineWidth(0.6); doc.line(M, y + RH, M + W, y + RH); [1, 2, 3, 4, 5].forEach(k=>doc.line(cx[k], y, cx[k], y + RH));
     doc.setTextColor(...ink); doc.setFont("helvetica", "bold"); doc.setFontSize(8.5);
     doc.text(String(x.animals?.calf_id ?? ""), cx[0] + 7, y + 14); doc.text(String(+x.score), cx[1] + 7, y + 14);
     doc.setFont("helvetica", "normal"); doc.text(String(x.lobes_raw || ""), cx[2] + 7, y + 14);
-    doc.setFont("helvetica", "bold"); doc.text(drugOf(x), cx[3] + 7, y + 14);
+    doc.setFont("helvetica", "bold"); doc.setFontSize(drugOf(x).length > 24 ? 7 : 8.5); doc.text(drugOf(x), cx[3] + 7, y + 14);
+    const w = sgWeight(x, d); doc.setFont("helvetica", "normal"); doc.setFontSize(8.5);
+    doc.text(w.kg ? (w.est ? "~" : "") + sgN1(w.kg) : "—", cx[4] + 7, y + 14);
+    doc.setFont("helvetica", "bold"); doc.text(doseTxt(x), cx[5] + 7, y + 14);
     y += RH;
   });
+  // total de medicamento para la sesión
+  if (Object.keys(tot).length){
+    if (y + 40 + Object.keys(tot).length * 14 > 792 - 60){ doc.addPage(); page(); y = 116; }
+    y += 12; doc.setTextColor(...ink); doc.setFont("helvetica", "bold"); doc.setFontSize(9.5); doc.text("Total de medicamento para la sesión", M + 6, y + 10); y += 16;
+    doc.setFontSize(8.5);
+    Object.entries(tot).sort((a, b)=>b[1].n - a[1].n).forEach(([n, b])=>{
+      doc.setFont("helvetica", "bold"); doc.text(n, M + 12, y + 10);
+      doc.setFont("helvetica", "normal"); doc.text(`${b.n} ternera${b.n === 1 ? "" : "s"}`, M + W*0.45, y + 10);
+      doc.setFont("helvetica", "bold"); doc.text(b.ml ? `${sgN1(b.ml)} mL` : "", M + W*0.65, y + 10);
+      if (b.miss){ doc.setFont("helvetica", "normal"); doc.text(`(${b.miss} sin dosis)`, M + W*0.80, y + 10); }
+      y += 14; });
+    doc.setFont("helvetica", "normal"); doc.setFontSize(6.5); doc.setTextColor(150, 160, 175);
+    doc.text(`Peso proyectado al ${d} desde el último pesaje (~ = estimado; GDP de la ternera o del hato ${sgN2(sgData.adg)} kg/d). Dosis redondeada a 0,5 mL.`, M + 6, y + 8); y += 8;
+  }
   if (!sick.length){ doc.setTextColor(...ink); doc.setFontSize(10); doc.text("Ninguna ternera con score 2 o más 👍".replace(" 👍", ""), M + 7, y + 16); y += RH; }
   doc.setDrawColor(200, 208, 220); doc.line(M + 6, y + 10, M + W - 6, y + 10);
   doc.setTextColor(150, 160, 175); doc.setFont("helvetica", "normal"); doc.setFontSize(6.5); doc.text(`Score Ollivett 0–5 · ${d} · Juan Camilo Camacho MV`, M + 6, y + 22);
