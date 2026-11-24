@@ -11277,7 +11277,8 @@ function usSetTab(t){
   $("usReg").classList.toggle("hidden", usTab!=="reg");
   $("usSug").classList.toggle("hidden", usTab!=="sug");
   if (usTab==="reg"){ if (!usCur) usNew(); renderUs(); usLoadToday(); }
-  if (usTab==="sug") renderSug();
+  // siempre recarga: las ecografías registradas después de abrir la pestaña deben aparecer (abre en la sesión más reciente)
+  if (usTab==="sug"){ sgDate = null; renderSug(true); }
   if (usTab==="hist") renderHistTx();
 }
 function renderUs(){
