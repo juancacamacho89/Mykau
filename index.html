@@ -357,7 +357,7 @@ details.lac td{padding:6px 8px}
           <path d="M12 32q15 5 30 0" fill="none" stroke="#fff" stroke-width="3" stroke-linecap="round" stroke-opacity=".75"/>
           <path d="M9 39q18 6 36 0" fill="none" stroke="#fff" stroke-width="3" stroke-linecap="round" stroke-opacity=".5"/>
         </svg></span><b>Chequeo repro</b><i class="badge hidden" id="badgeCheq"></i></a>
-        <a class="appicon hidden" href="#reporte" data-perm="reporte_ver produccion_ver pastos_ver calidad_ver"><span class="ic" style="--g1:#b48cff;--g2:#6b3fd6">📊</span><b>Reportes</b></a>
+        <a class="appicon hidden" href="#reporte" data-perm="reporte_ver produccion_ver calidad_ver"><span class="ic" style="--g1:#b48cff;--g2:#6b3fd6">📊</span><b>Reportes</b></a>
         <a class="appicon hidden" href="#registros" data-perm="registros_ver"><span class="ic" style="--g1:#9aa9bd;--g2:#4b5a70">🗂️</span><b>Registros</b><i class="badge hidden" id="badgeReg"></i></a>
         <a class="appicon hidden" href="#pastos" data-perm="pastos_ver pastos_registrar"><span class="ic" style="--g1:#a8e063;--g2:#3c8d2f"><svg viewBox="0 0 48 48" aria-hidden="true">
           <path d="M24 44C23 30 20 18 13 8c9 6 14 18 14 36z" fill="#fff"/>
@@ -2475,7 +2475,7 @@ async function loadPaddock(id){
     sb.from("paddock_occupancy").select("paddock_id,grp,entry_date,exit_date,current,animals,aforo,milk_l,source").in("paddock_id", ids).order("entry_date").limit(5000),
     sb.from("paddock_ndvi").select("obs_date,ndvi,ndmi").eq("paddock_id", id).eq("haze", false).gte("obs_date", addDays(today(), -400)).order("obs_date")
       .then(r=>r.error ? sb.from("paddock_ndvi").select("obs_date,ndvi").eq("paddock_id", id).eq("haze", false).gte("obs_date", addDays(today(), -400)).order("obs_date") : r),
-    sb.from("paddock_works").select("id,paddock_id,work_date,activity,product,supply_code,qty,value,notes,source,created_by").in("paddock_id", ids).order("work_date", { ascending:false }).limit(3000),
+    sb.from("paddock_works").select("id,paddock_id,work_date,activity,product,supply_code,qty,value,hours,mm,notes,source,created_by").in("paddock_id", ids).order("work_date", { ascending:false }).limit(3000),
     sb.from("grazing").select("id,grp,entry_date,source,created_by").in("paddock_id", ids).eq("source", "app").gte("entry_date", addDays(today(), -400)),
   ]);
   const cyc = psCycles(oc.data || []), works = wk.data || [], t0 = today(), y1 = addDays(t0, -365);
@@ -2498,7 +2498,7 @@ async function loadPaddock(id){
     ...Object.values(works.reduce((g, w)=>{ const k = w.work_date + "|" + w.activity; (g[k] = g[k] || []).push(w); return g; }, {})).map(ws=>{
       const w = ws[0], prods = [...new Set(ws.map(x=>x.product).filter(Boolean))], val = ws.find(x=>x.value!=null)?.value;
       const mine = ws.every(x=>x.source==="app" && (x.created_by===me || isAdmin));
-      return { d:w.work_date, kind:w.activity, sw: isMain() || mine ? "paddock_works|" + ws.map(x=>x.id).join(",") : "", html:`<b>${esc(w.activity)}</b>${prods.length ? " · " + esc(prods.join(", ")) : ""}${val!=null ? ` · ${val}${w.activity==="AFORO" ? " kg/m²" : ""}` : ""}${ws.some(x=>x.qty) ? `<span class="sub"> · ${ws.filter(x=>x.qty).map(x=>`${(+x.qty).toLocaleString("es-CO", { maximumFractionDigits:1 })} ${esc(x.supply_code)}`).join(", ")}</span>` : ""}${[...new Set(ws.map(x=>x.notes).filter(Boolean))].map(n=>` <span class="tag">${esc(n)}</span>`).join("")}${ws.some(x=>label[x.paddock_id]) ? ` <span class="tag">${esc(label[ws[0].paddock_id] || "")}</span>` : ""}` };
+      return { d:w.work_date, kind:w.activity, sw: isMain() || mine ? "paddock_works|" + ws.map(x=>x.id).join(",") : "", html:`<b>${esc(w.activity)}</b>${prods.length ? " · " + esc(prods.join(", ")) : ""}${val!=null ? ` · ${val}${w.activity==="AFORO" ? " kg/m²" : ""}` : ""}${psIrr(ws)}${ws.some(x=>x.qty) ? `<span class="sub"> · ${ws.filter(x=>x.qty).map(x=>`${(+x.qty).toLocaleString("es-CO", { maximumFractionDigits:1 })} ${esc(x.supply_code)}`).join(", ")}</span>` : ""}${[...new Set(ws.map(x=>x.notes).filter(Boolean))].map(n=>` <span class="tag">${esc(n)}</span>`).join("")}${ws.some(x=>label[x.paddock_id]) ? ` <span class="tag">${esc(label[ws[0].paddock_id] || "")}</span>` : ""}` };
     }),
   ].sort((a,b)=>b.d.localeCompare(a.d));
   const years = [...new Set(ev.map(e=>e.d.slice(0,4)))];
@@ -2557,7 +2557,7 @@ async function loadPaddock(id){
 function psOpen(kind, pid){
   const pads = psList.filter(p=>p.active && !p.merged_into).sort((a,b)=>a.predio.localeCompare(b.predio) || byNumTxt(a.number, b.number));
   const pens = (jget("mkFarms", []).find(f=>f.id===psFarm)?.pens) || [];
-  psSheet = { kind, date:today(), pads:pid ? [+pid] : [], act:"", items:[], product:"", value:"", note:"", grp:"", animals:"", aforo:"", mm:"",
+  psSheet = { kind, date:today(), pads:pid ? [+pid] : [], act:"", items:[], product:"", value:"", hours:"", rmm:"", note:"", grp:"", animals:"", aforo:"", mm:"",
     predio: pid ? psList.find(p=>p.id===+pid)?.predio : (pads[0]?.predio || ""), pens };
   renderPsSheet();
 }
@@ -2587,7 +2587,11 @@ function renderPsSheet(){
       <input data-psi="${i}" data-k="qty" inputmode="decimal" placeholder="Cantidad" value="${it.qty??""}" style="flex:0 0 110px"><button class="del" data-psrm="${i}">✕</button></div>`).join("")}
     <button class="lnk" id="psAddItem" style="margin-top:6px">＋ agregar insumo</button>${sup.length ? "" : `<div class="sub">No hay fertilizantes ni herbicidas en el catálogo: agrégalos en Mykau_insumos_y_salud.xlsx. Mientras tanto escribe el producto abajo.</div>`}
     <label>Producto (texto, opcional)</label><input id="psProd" value="${esc(s.product)}" autocapitalize="characters" placeholder="CASTA, TILT">
-    ${s.act==="RIEGO" ? `<label>Riego (valor)</label><input id="psVal" inputmode="decimal" value="${esc(s.value)}">` : ""}`;
+    ${s.act==="RIEGO" ? `<div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">
+        <div><label>Horas de riego</label><input id="psHrs" inputmode="decimal" placeholder="ej. 4" value="${esc(s.hours)}" style="min-width:0"></div>
+        <div><label>Agua aplicada (mm)</label><input id="psRmm" inputmode="decimal" placeholder="ej. 10" value="${esc(s.rmm)}" style="min-width:0"></div></div>
+      <div class="sub">Si escogiste varios potreros, las horas y los mm son los de cada potrero.</div>
+      ${s.value!=="" ? `<div class="sub">Valor anterior (Excel, sin unidad): ${esc(s.value)}</div>` : ""}` : ""}`;
   if (s.kind==="move") body += `<label>Lote</label><div class="chips">${lots.map(g=>`<button class="${s.grp===g?"on":""}" data-psgrp="${esc(g)}">${esc(g)}</button>`).join("")}</div>
     <input id="psGrp" value="${esc(lots.includes(s.grp) ? "" : s.grp)}" autocapitalize="characters" placeholder="Otro lote" style="margin-top:6px">
     <label>Potrero al que entra</label>${psPadPicker(false)}
@@ -2607,7 +2611,7 @@ function psRead(){
   const s = psSheet, v = id => $(id)?.value;
   if (!s) return;
   if ($("psDate")) s.date = v("psDate") || today();
-  ["psProd:product","psVal:value","psNote:note","psAnim:animals","psAfo:aforo","psMm:mm"].forEach(x=>{ const [id, k] = x.split(":"); if ($(id)) s[k] = v(id).trim(); });
+  ["psProd:product","psVal:value","psHrs:hours","psRmm:rmm","psNote:note","psAnim:animals","psAfo:aforo","psMm:mm"].forEach(x=>{ const [id, k] = x.split(":"); if ($(id)) s[k] = v(id).trim(); });
   if ($("psGrp") && v("psGrp").trim()) s.grp = v("psGrp").trim().toUpperCase();
   if (s.product) s.product = s.product.toUpperCase();
   // insumos: lo que está en pantalla (por si el celular no avisó el cambio del producto)
@@ -2650,10 +2654,10 @@ function psSave(){
     const rows = [];
     pads.forEach(p=>{
       const base = { farm_id:psFarm, paddock_id:p.id, work_date:s.date, activity:s.act, product:prod, notes:s.note || null,
-        value:s.act==="RIEGO" ? num(s.value) : null };
+        value:s.act==="RIEGO" ? num(s.value) : null, hours:s.act==="RIEGO" ? num(s.hours) : null, mm:s.act==="RIEGO" ? num(s.rmm) : null };
       if (!items.length) rows.push({ ...base, client_id:uid() });
       items.forEach((i, k)=>rows.push({ ...base, client_id:uid(), supply_code:i.code, qty:Math.round(i.qty*share(p)*100)/100,
-        ...(k ? { product:null, value:null } : {}) }));
+        ...(k ? { product:null, value:null, hours:null, mm:null } : {}) }));
     });
     ob.push({ kind:"works", rows, replace: s.edit?.tbl==="paddock_works" ? s.edit.ids : null });
   }
@@ -3181,7 +3185,10 @@ async function rgMkSheet(herd, pen, date, who){
       <td class="sub">prom. ${cnt("total_kg") ? n(Math.round(sum("total_kg")/cnt("total_kg")*10)/10) : "—"}</td></tr>` : ""}</table></div>`;
 }
 // Registros → Pastos: ver el detalle completo de una labor (cada potrero con su insumo), un movimiento de lote o una lluvia
-const PS_SEL = { paddock_works:"id,farm_id,paddock_id,work_date,activity,product,supply_code,qty,value,notes,paddocks(predio,number)",
+// riego: horas y mm de una labor (en la hoja de vida del potrero)
+const psIrr = ws => { const h = ws.find(x=>x.hours!=null)?.hours, m = ws.find(x=>x.mm!=null)?.mm;
+  return h==null && m==null ? "" : " · 💧 " + [h!=null ? (+h).toLocaleString("es-CO") + " h" : "", m!=null ? (+m).toLocaleString("es-CO") + " mm" : ""].filter(Boolean).join(" · "); };
+const PS_SEL = { paddock_works:"id,farm_id,paddock_id,work_date,activity,product,supply_code,qty,value,hours,mm,notes,paddocks(predio,number)",
   grazing:"id,farm_id,paddock_id,grp,entry_date,exit_date,animals,aforo,notes,paddocks(predio,number)", rainfall:"id,farm_id,rain_date,mm" };
 async function rgPsView(tbl, ids){
   const { data, error } = await sb.from(tbl).select(PS_SEL[tbl]).in("id", ids.split(",").map(Number));
@@ -3192,10 +3199,10 @@ async function rgPsView(tbl, ids){
   if (tbl==="paddock_works"){
     const rows = data.slice().sort((a, b)=>pn(a).localeCompare(pn(b), "es", { numeric:true }));
     const tot = {}; rows.forEach(w=>{ if (w.supply_code) tot[w.supply_code] = (tot[w.supply_code] || 0) + (+w.qty || 0); });
-    return box(`<table style="font-size:13px;width:100%"><tr><th>Potrero</th><th>Insumo</th><th style="text-align:right">Cantidad</th><th>Valor</th><th>Nota</th></tr>
+    return box(`<table style="font-size:13px;width:100%"><tr><th>Potrero</th><th>Insumo</th><th style="text-align:right">Cantidad</th><th>Valor</th><th>Horas</th><th>mm</th><th>Nota</th></tr>
       ${rows.map(w=>`<tr><td>${esc(pn(w))}</td><td>${esc(w.supply_code ? hsSupply(w.supply_code)?.name || w.supply_code : w.product || "—")}</td>
-        <td style="text-align:right">${w.supply_code ? n(w.qty) + " " + esc(hsSupply(w.supply_code)?.unit || "") : "—"}</td><td>${n(w.value)}</td><td class="sub">${esc(w.notes || "")}</td></tr>`).join("")}
-      ${Object.keys(tot).length ? `<tr style="font-weight:800"><td>Total</td><td colspan="4">${Object.entries(tot).map(([c, q])=>`${esc(hsSupply(c)?.name || c)} ${n(q)} ${esc(hsSupply(c)?.unit || "")}`).join(" · ")}</td></tr>` : ""}</table>`)
+        <td style="text-align:right">${w.supply_code ? n(w.qty) + " " + esc(hsSupply(w.supply_code)?.unit || "") : "—"}</td><td>${n(w.value)}</td><td>${n(w.hours)}</td><td>${n(w.mm)}</td><td class="sub">${esc(w.notes || "")}</td></tr>`).join("")}
+      ${Object.keys(tot).length ? `<tr style="font-weight:800"><td>Total</td><td colspan="6">${Object.entries(tot).map(([c, q])=>`${esc(hsSupply(c)?.name || c)} ${n(q)} ${esc(hsSupply(c)?.unit || "")}`).join(" · ")}</td></tr>` : ""}</table>`)
       + `<div class="sub" style="margin-top:4px">${esc(rows[0].activity)} del ${fmt(rows[0].work_date)}${rows.find(w=>w.product) ? " · producto: " + esc(rows.find(w=>w.product).product) : ""}</div>`;
   }
   if (tbl==="grazing") return box(data.map(g=>`<div style="padding:8px"><b>${esc(g.grp)}</b> → ${esc(pn(g))}<div class="sub">Entró ${fmt(g.entry_date)} · ${g.exit_date ? "salió " + fmt(g.exit_date) : "sigue ahí"}${g.animals ? ` · ${g.animals} animales` : ""}${g.aforo ? ` · aforo ${n(g.aforo)} kg/m²` : ""}${g.notes ? " · " + esc(g.notes) : ""}</div></div>`).join(""));
@@ -3209,7 +3216,7 @@ async function psEditOpen(tbl, ids, farm){
   const prevFarm = psFarm; psFarm = data[0].farm_id || farm;
   await psLoadData(); await hsCatalog();
   const x = data[0], pens = (jget("mkFarms", []).find(f=>f.id===psFarm)?.pens) || [];
-  const base = { date:today(), pads:[], act:"", items:[], product:"", value:"", note:"", grp:"", animals:"", aforo:"", mm:"", pens };
+  const base = { date:today(), pads:[], act:"", items:[], product:"", value:"", hours:"", rmm:"", note:"", grp:"", animals:"", aforo:"", mm:"", pens };
   let sh;
   if (tbl==="paddock_works"){
     const tot = {}; data.forEach(w=>{ if (w.supply_code) tot[w.supply_code] = (tot[w.supply_code] || 0) + (+w.qty || 0); });
@@ -3218,7 +3225,9 @@ async function psEditOpen(tbl, ids, farm){
     const val = data.find(w=>w.value!=null)?.value;
     sh = { ...base, kind: x.activity==="AFORO" ? "aforo" : "labor", date:x.work_date, act: x.activity==="AFORO" ? "" : x.activity,
       pads:[...new Set(data.map(w=>w.paddock_id))], items:Object.entries(tot).map(([code, q])=>({ code, qty:Math.round(q*100)/100 })),
-      product:prod, value: val==null ? "" : String(val), note:data.find(w=>w.notes)?.notes || "" };
+      product:prod, value: val==null ? "" : String(val), note:data.find(w=>w.notes)?.notes || "",
+      hours: data.find(w=>w.hours!=null)?.hours ?? "", rmm: data.find(w=>w.mm!=null)?.mm ?? "" };
+    sh.hours = sh.hours==="" ? "" : String(sh.hours); sh.rmm = sh.rmm==="" ? "" : String(sh.rmm);
   } else if (tbl==="grazing"){
     sh = { ...base, kind:"move", date:x.entry_date, grp:x.grp, pads:[x.paddock_id], animals: x.animals==null ? "" : String(x.animals), aforo: x.aforo==null ? "" : String(x.aforo), note:x.notes || "" };
   } else sh = { ...base, kind:"rain", date:x.rain_date, mm: x.mm==null ? "" : String(x.mm) };
@@ -3300,7 +3309,7 @@ async function loadRegistros(){
   })());
   if (want("pastos")) jobs.push((async()=>{
     const [w, g, r] = await Promise.all([
-      sb.from("paddock_works").select("id,farm_id,work_date,activity,product,value,created_by,created_at,paddocks(predio,number)").eq("source", "app").gte("created_at", qFrom).lt("created_at", t1).limit(2000),
+      sb.from("paddock_works").select("id,farm_id,work_date,activity,product,value,hours,mm,created_by,created_at,paddocks(predio,number)").eq("source", "app").gte("created_at", qFrom).lt("created_at", t1).limit(2000),
       sb.from("grazing").select("id,farm_id,grp,entry_date,animals,created_by,created_at,paddocks(predio,number)").eq("source", "app").gte("created_at", qFrom).lt("created_at", t1).limit(2000),
       sb.from("rainfall").select("id,farm_id,rain_date,mm,created_by").eq("source", "app").gte("rain_date", byEv ? s.from : dFrom).lte("rain_date", s.to).limit(2000),
     ]);
@@ -3308,7 +3317,7 @@ async function loadRegistros(){
     const wk = {};   // una labor en varios potreros = un registro
     (w.data||[]).forEach(x=>{ const k = x.created_at.slice(0,16) + x.activity + x.work_date; (wk[k] = wk[k] || { ...x, pads:[], ids:[] }).pads.push(pn(x.paddocks)); wk[k].ids.push(x.id); });
     Object.values(wk).forEach(x=>add({ kind:"pastos", icon:"🌾", when:x.created_at, date:x.work_date, farm:x.farm_id, who:x.created_by, tbl:"paddock_works", id:x.ids.join(","),
-      title:x.activity, detail:[[...new Set(x.pads)].join(", "), x.product, x.value!=null ? x.value : ""].filter(Boolean).join(" · "), status:"app" }));
+      title:x.activity, detail:[[...new Set(x.pads)].join(", "), x.product, x.value!=null ? x.value : "", x.hours!=null ? x.hours + " h" : "", x.mm!=null ? x.mm + " mm" : ""].filter(Boolean).join(" · "), status:"app" }));
     (g.data||[]).forEach(x=>add({ kind:"pastos", icon:"🌾", when:x.created_at, date:x.entry_date, farm:x.farm_id, who:x.created_by, tbl:"grazing", id:String(x.id),
       title:"Movió lote", detail:x.grp + " → " + pn(x.paddocks) + (x.animals ? ` · ${x.animals} animales` : ""), status:"app" }));
     (r.data||[]).forEach(x=>add({ kind:"pastos", icon:"🌧️", when:x.rain_date, date:x.rain_date, farm:x.farm_id, who:x.created_by, tbl:"rainfall", id:String(x.id), title:"Lluvia", detail:x.mm + " mm", status:"app" }));
@@ -3759,7 +3768,8 @@ function prDraw(){
 // ── Reportes: contenedor (Reproducción · Producción · Pastos) ──
 let rptTab = null;
 function initReportes(){
-  const tabs = [["repro","Reproducción","reporte_ver"],["eval","IA y toros","reporte_ver"],["prod","Producción","produccion_ver"],["calidad","Calidad","calidad_ver"],["pastos","Pastos","pastos_ver"]].filter(t=>canSee(t[2]));
+  const tabs = [["repro","Reproducción","reporte_ver"],["eval","IA y toros","reporte_ver"],["prod","Producción","produccion_ver"],["calidad","Calidad","calidad_ver"],["pastos","Pastos","pastos_ver"]]
+    .filter(t=>canSee(t[2]) && (t[0]!=="pastos" || ["reporte_ver","produccion_ver","calidad_ver"].some(canSee)));   // Pastos va dentro de Reportes solo si el perfil tiene algún permiso de Reportes
   if (!tabs.length) return;
   if (!rptTab || !tabs.some(t=>t[0]===rptTab)) rptTab = jget("rptTab", tabs[0][0]);
   if (!tabs.some(t=>t[0]===rptTab)) rptTab = tabs[0][0];
@@ -11529,25 +11539,93 @@ async function sgLoad(force){
   const [tx, ex, dr] = await Promise.all([
     psAll(()=>sb.from("treatments").select("id,animal_id,treatment_date,score_at_treatment,exam_id,created_by,drugs(name)").eq("farm_id", farm).order("treatment_date"))
       .then(r=>r.error ? psAll(()=>sb.from("treatments").select("id,animal_id,treatment_date,score_at_treatment,exam_id,drugs(name)").eq("farm_id", farm).order("treatment_date")) : r),
-    psAll(()=>sb.from("ultrasound_exams").select("id,animal_id,exam_date,score,lobes_raw,age_days,animals(calf_id)").eq("farm_id", farm).order("exam_date")),
-    sb.from("drugs").select("id,name").order("name")]);
+    psAll(()=>sb.from("ultrasound_exams").select("id,animal_id,exam_date,score,lobes_raw,age_days,weight_kg,animals(calf_id,birth_date)").eq("farm_id", farm).order("exam_date")),
+    sb.from("drugs").select("id,name,dose_ml,dose_kg,applications,every_hours").order("name")
+      .then(r=>r.error ? sb.from("drugs").select("id,name").order("name") : r)]);
+  // pesajes de las terneras de la finca (último año) para proyectar el peso al día de la sesión
+  const wt = await psAll(()=>sb.from("cow_events").select("cow_id,event_date,weight_kg,cows!inner(farm_id,birth_date)")
+    .eq("event_type", "weight").gt("weight_kg", 0).eq("cows.farm_id", farm).gte("event_date", addDays(today(), -400)).order("event_date"));
   if (tx.error || ex.error){ $("usSug").innerHTML = `<div class="card"><div class="empty">No se pudo cargar: ${esc((tx.error || ex.error).message)}</div></div>`; return; }
   const exByA = {}, txByA = {};
   ex.data.forEach(e=>(exByA[e.animal_id] ||= []).push(e)); tx.data.forEach(t=>(txByA[t.animal_id] ||= []).push(t));
-  sgData = { farm, tx:tx.data, ex:ex.data, exByA, txByA, drugs:dr.data || [], stats: sgStats(tx.data, ex.data) };
+  sgData = { farm, tx:tx.data, ex:ex.data, exByA, txByA, drugs:dr.data || [], stats: sgStats(tx.data, ex.data), ...sgWeights(wt.error ? [] : wt.data || []) };
   sgDate = sgDate || [...new Set(ex.data.map(e=>e.exam_date))].sort().pop() || today();
+}
+// ── Peso proyectado y total de medicamentos de la sesión ──
+// Peso: último pesaje (≤ 7 días: tal cual); si es más viejo, se proyecta con la ganancia diaria (GDP) de la ternera
+// (sus 2 últimos pesajes, ≥ 14 días entre ellos) o, si no tiene, la GDP promedio del hato. Sin pesajes: peso al nacer + GDP × edad.
+let sgPick = {}, sgDoseOpen = false;
+function sgWeights(rows){
+  const W = {}; rows.forEach(r=>(W[String(r.cow_id)] ||= []).push({ d:r.event_date, kg:+r.weight_kg }));
+  const g = [], born = [];
+  Object.values(W).forEach(ws=>ws.forEach((w, i)=>{ const p = ws[i - 1]; if (!p) return; const dd = days(p.d, w.d);
+    if (dd >= 14 && dd <= 120 && w.kg > p.kg * 0.8) g.push((w.kg - p.kg) / dd); }));
+  rows.forEach(r=>{ const b = r.cows?.birth_date; if (b && days(b, r.event_date) <= 5) born.push(+r.weight_kg); });
+  const med = a => { if (!a.length) return null; const x = a.slice().sort((p, q)=>p - q); return x[Math.floor(x.length / 2)]; };
+  return { W, adg: Math.round((med(g) ?? 0.8) * 1000) / 1000, birthKg: med(born) ?? 35 };
+}
+const sgN1 = v => (+v).toLocaleString("es-CO", { maximumFractionDigits:1 }), sgN2 = v => (+v).toLocaleString("es-CO", { maximumFractionDigits:2 });
+function sgWeight(e, date){
+  const id = String(e.animals?.calf_id ?? ""), ws = (sgData.W[id] || []).filter(w=>w.d <= date);
+  if (e.weight_kg > 0) return { kg:+e.weight_kg, how:"pesada en la ecografía" };
+  const last = ws[ws.length - 1];
+  if (!last){
+    const age = e.age_days ?? (e.animals?.birth_date ? days(e.animals.birth_date, date) : null);
+    return age==null ? { kg:null, how:"sin pesajes ni edad" }
+      : { kg: Math.round(sgData.birthKg + sgData.adg * age), how:`sin pesajes: ${sgN1(sgData.birthKg)} kg al nacer + ${sgN2(sgData.adg)} kg/d × ${age} d`, est:true };
+  }
+  const dd = days(last.d, date);
+  if (dd <= 7) return { kg:last.kg, how:`pesada el ${fmt(last.d).slice(0, 5)}` };
+  const prev = [...ws].reverse().find(w=>days(w.d, last.d) >= 14);
+  let adg = prev ? (last.kg - prev.kg) / days(prev.d, last.d) : null, src = "propia";
+  if (adg==null || adg < 0.2 || adg > 1.5){ adg = sgData.adg; src = "del hato"; }
+  return { kg: Math.round(last.kg + adg * dd), how:`${sgN1(last.kg)} kg el ${fmt(last.d).slice(0, 5)} + ${sgN2(adg)} kg/d (${src}) × ${dd} d`, est:true };
+}
+function sgDose(drugName, kg){
+  const dr = sgData.drugs.find(x=>x.name===drugName);
+  if (!dr || !(dr.dose_ml > 0) || !(dr.dose_kg > 0) || !(kg > 0)) return null;
+  const ml = Math.round(kg * dr.dose_ml / dr.dose_kg * 2) / 2, apps = dr.applications || 1;   // redondeado a 0,5 mL
+  return { ml, apps, total: ml * apps, every: dr.every_hours };
+}
+function sgTotalsHtml(items){
+  if (!items.length) return "";
+  const by = {}; items.forEach(x=>{ const b = by[x.drug] ||= { n:0, kg:0, ml:0, miss:0 }; b.n++; b.kg += x.w.kg || 0;
+    const d = sgDose(x.drug, x.w.kg); if (d) b.ml += d.total; else b.miss++; });
+  const dr = n => sgData.drugs.find(x=>x.name===n);
+  return `<div class="card"><div class="row" style="align-items:center;gap:8px"><b style="flex:1">💊 Medicamentos para la sesión</b>
+      ${isMain() ? `<button class="lnk" id="sgDoseBtn">⚙️ Dosis</button>` : ""}</div>
+    <table style="width:100%;font-size:14px;margin-top:6px"><tr><th>Medicamento</th><th style="text-align:right">Terneras</th><th style="text-align:right">kg</th><th style="text-align:right">Total</th></tr>
+    ${Object.entries(by).sort((a, b)=>b[1].n - a[1].n).map(([n, b])=>{ const d = dr(n);
+      return `<tr><td><b>${esc(n)}</b>${d?.dose_ml > 0 ? `<div class="sub">${sgN2(d.dose_ml)} mL/${sgN1(d.dose_kg)} kg · ${d.applications || 1} aplic.${d.every_hours ? ` c/${d.every_hours} h` : ""}</div>` : ""}</td>
+        <td style="text-align:right">${b.n}</td><td style="text-align:right">${sgN1(b.kg)}</td>
+        <td style="text-align:right"><b>${b.ml ? sgN1(b.ml) + " mL" : ""}</b>${b.miss ? `<div class="sub" style="color:var(--s4)">${b.miss === b.n ? "falta la dosis" : b.miss + " sin calcular"}</div>` : ""}</td></tr>`; }).join("")}</table>
+    <div class="sub" style="margin-top:6px">Peso proyectado al ${fmt(sgDate)} desde el último pesaje (GDP de cada ternera o del hato: ${sgN2(sgData.adg)} kg/d). Compra un poco más por lo que se pierde en la jeringa.</div>
+    ${sgDoseOpen && isMain() ? `<div class="hscard" style="margin-top:8px"><div class="sub">Dosis = <b>mL</b> por cada <b>kg</b> de peso · aplicaciones · cada cuántas horas</div>
+      ${sgData.drugs.map(d=>`<div class="row" data-sgdose="${d.id}" style="gap:4px;align-items:center;margin-top:6px;flex-wrap:nowrap">
+        <span style="flex:1;min-width:0;font-size:13px;overflow:hidden;text-overflow:ellipsis">${esc(d.name)}</span>
+        <input data-k="dose_ml" inputmode="decimal" placeholder="mL" value="${d.dose_ml ?? ""}" style="width:52px;min-width:0;padding:6px">
+        <span class="sub">/</span><input data-k="dose_kg" inputmode="decimal" placeholder="kg" value="${d.dose_kg ?? ""}" style="width:52px;min-width:0;padding:6px">
+        <input data-k="applications" inputmode="numeric" placeholder="aplic" value="${d.applications ?? ""}" style="width:46px;min-width:0;padding:6px">
+        <input data-k="every_hours" inputmode="numeric" placeholder="c/h" value="${d.every_hours ?? ""}" style="width:46px;min-width:0;padding:6px"></div>`).join("")}
+      <button class="btn" id="sgDoseSave" style="margin-top:8px">Guardar dosis</button></div>` : ""}</div>`;
 }
 async function renderSug(force){
   await sgLoad(force); if (!sgData) return;
   const d = sgDate, rows = sgData.ex.filter(e=>e.exam_date===d && +e.score >= 2).sort((a,b)=>+b.score - +a.score || byNum(String(a.animals?.calf_id), String(b.animals?.calf_id)));
   const pend = jget("usOutbox", []).filter(x=>x.farm===sgData.farm && x.date===d).length;
   const dates = [...new Set(sgData.ex.map(e=>e.exam_date))].sort().reverse().slice(0, 12);
+  const optsOf = r => [...new Set([...r.top.map(x=>x.d), ...sgData.drugs.map(x=>x.name)])];
+  const items = rows.map(e=>{ const h = sgHistory(e.animal_id, d, +e.score), r = sgRecommend(+e.score, h);
+    const done = (sgData.txByA[e.animal_id] || []).filter(t=>t.treatment_date===d);
+    const drug = done[0]?.drugs?.name || sgPick[e.animal_id] || optsOf(r)[0];
+    return { e, h, r, done, drug, w: sgWeight(e, d) }; });
+  const byA = Object.fromEntries(items.map(x=>[x.e.animal_id, x]));
   $("usSug").innerHTML = `<div class="card"><div class="row" style="align-items:center;gap:8px"><b style="flex:1">Sesión</b>
       <select id="sgDate" style="width:auto">${[...new Set([d, ...dates])].map(x=>`<option value="${x}" ${x===d ? "selected" : ""}>${fmt(x)}</option>`).join("")}</select></div>
       <div class="sub" style="margin-top:6px">${rows.length} terneras con score ≥ 2${pend ? ` · ⚠️ ${pend} ecografías de ese día aún no se han subido` : ""} · niveles: Primera línea → Intermedio (score 4 o 2ª vez) → Reserva (score 5 o 3ª vez)</div>
       ${rows.length && isMain() ? `<button class="btn ghost" id="sgShare" style="margin-top:8px">📄 Compartir reporte (PDF)</button>` : ""}</div>
-    ${rows.map(e=>{ const h = sgHistory(e.animal_id, d, +e.score), r = sgRecommend(+e.score, h);
-      const done = (sgData.txByA[e.animal_id] || []).filter(t=>t.treatment_date===d);
+    ${sgTotalsHtml(items)}
+    ${rows.map(e=>{ const { h, r, done, drug, w } = byA[e.animal_id], ds = sgDose(drug, w.kg);
       return `<div class="card" data-sga="${e.animal_id}" data-sge="${e.id}">
         <div class="row" style="align-items:baseline;gap:8px"><b style="font-size:22px">${esc(e.animals?.calf_id)}</b> ${badge(+e.score)}
           <span class="sub" style="flex:1">${e.lobes_raw ? "lóbulos " + esc(e.lobes_raw) : ""}${e.age_days ? ` · ${e.age_days} d` : ""}</span><b>${r.epTxt}</b></div>
@@ -11556,14 +11634,16 @@ async function renderSug(force){
           <div style="font-size:19px;margin-top:2px">💉 <b>${esc(r.best)}</b></div><div class="sub">${esc(r.efi)}</div>
           ${r.alt ? `<div class="sub">Alternativa: <b>${esc(r.alt)}</b></div>` : ""}
           ${r.al.map(a=>`<div class="sub" style="color:var(--ink)">${esc(a)}</div>`).join("")}</div>
+        <div class="sub" style="margin-top:6px">⚖️ <b style="color:var(--ink)">${w.kg ? (w.est ? "~" : "") + sgN1(w.kg) + " kg" : "sin peso"}</b> · ${esc(w.how)}${ds ? ` · 💉 <b style="color:var(--ink)">${sgN1(ds.ml)} mL</b>${ds.apps > 1 ? ` × ${ds.apps} = ${sgN1(ds.total)} mL` : ""} de ${esc(drug)}` : ""}</div>
         ${done.length ? `<div style="margin-top:8px">✅ Tratada con <b>${done.map(t=>esc(t.drugs?.name)).join(", ")}</b>
             ${done.filter(t=>t.created_by && (t.created_by===me || isAdmin)).map(t=>` <button class="del" data-sgdel="${t.id}">quitar</button>`).join("")}</div>`
           : canDo("terneras_registrar") ? `<div class="row" style="gap:6px;margin-top:8px;align-items:center">
-            <select data-sgdrug style="flex:1">${[...new Set([...r.top.map(x=>x.d), ...sgData.drugs.map(x=>x.name)])].map(n=>`<option>${esc(n)}</option>`).join("")}</select>
+            <select data-sgdrug style="flex:1">${optsOf(r).map(n=>`<option ${n===drug ? "selected" : ""}>${esc(n)}</option>`).join("")}</select>
             <button class="btn" data-sgapply style="width:auto">Aplicar</button></div>` : ""}
       </div>`; }).join("") || `<div class="card"><div class="empty">Ninguna ternera con score ≥ 2 en esa sesión 👍</div></div>`}`;
 }
-$("usSug").addEventListener("change", e=>{ if (e.target.id==="sgDate"){ sgDate = e.target.value; renderSug(); } });
+$("usSug").addEventListener("change", e=>{ if (e.target.id==="sgDate"){ sgDate = e.target.value; renderSug(); }
+  if (e.target.matches("[data-sgdrug]")){ const c = e.target.closest("[data-sga]"); if (c){ sgPick[c.dataset.sga] = e.target.value; renderSug(); } } });
 // Historial: tratamientos de las sesiones pasadas (sencillo: ternera, score y lo que se le aplicó)
 let usHtDate = null;
 async function renderHistTx(){
@@ -11632,6 +11712,20 @@ async function sgPdf(){
 $("usSug").addEventListener("click", async e=>{
   const t = e.target, card = t.closest("[data-sga]");
   if (t.id==="sgShare"){ t.disabled = true; await sgPdf(); t.disabled = false; return; }
+  if (t.id==="sgDoseBtn"){ sgDoseOpen = !sgDoseOpen; return renderSug(); }
+  if (t.id==="sgDoseSave"){
+    const num = v => v==="" ? null : +String(v).replace(",", ".");
+    t.disabled = true; let bad = 0;
+    for (const row of document.querySelectorAll("[data-sgdose]")){
+      const id = +row.dataset.sgdose, cur = sgData.drugs.find(x=>x.id===id), upd = {};
+      row.querySelectorAll("input[data-k]").forEach(i=>{ const v = num(i.value.trim()); if ((cur[i.dataset.k] ?? null) !== v) upd[i.dataset.k] = v; });
+      if (!Object.keys(upd).length) continue;
+      const { data, error } = await sb.from("drugs").update(upd).eq("id", id).select("id");
+      if (error || !data?.length){ bad++; continue; } Object.assign(cur, upd);
+    }
+    t.disabled = false; toast(bad ? `No se pudieron guardar ${bad} (¿falta correr SQL/registrar_ecografias.sql?)` : "Dosis guardadas ✓");
+    sgDoseOpen = !!bad; return renderSug();
+  }
   if (t.closest("[data-sgapply]") && card){
     const drug = card.querySelector("[data-sgdrug]").value, dr = sgData.drugs.find(x=>x.name===drug), ex = sgData.ex.find(x=>x.id===+card.dataset.sge);
     t.disabled = true;
