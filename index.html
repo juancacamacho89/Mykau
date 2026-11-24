@@ -1591,7 +1591,7 @@ function lacHtml(s, open, kids, bulls, proj){
     if (e.source==="app") det += pendTag(e); else det += ihDel(e);
     return `<tr${swAttr(e)}><td>${fmt(e.event_date)}</td><td class="ev">${EV[e.event_type]||esc(e.event_type)}</td><td>${det}</td></tr>`;
   }).join("");
-  const cvRow = cv ? `<tr${swAttr(cv)}><td>${fmt(cv.event_date)}</td><td class="ev">Parto</td><td>${esc(cv.category||"")}${cv.bull?` · toro ${bullTxt(cv.bull,bulls)}`:""}
+  const cvRow = cv ? `<tr${swAttr(cv)}><td>${fmt(cv.event_date)}</td><td class="ev">${cv.details?.lacto || /LACTOIND/i.test(cv.category || "") ? "Lactoinducción" : "Parto"}</td><td>${esc(cv.category||"")}${cv.bull?` · toro ${bullTxt(cv.bull,bulls)}`:""}
       ${kid ? ` · cría <button class="lnk" data-cow="${esc(kid.id)}">${esc(kid.id)}</button>` : ""}${cv.source==="app" ? calvingTxt(cv) + pendTag(cv) : ihDel(cv)}</td></tr>` : "";
   const pRows = (proj || []).slice().reverse().map(p=>`<tr style="opacity:.75;font-style:italic"><td>${fmt(p.d)}</td><td class="ev">📅 ${p.ev}</td>
     <td><span class="tag">programado</span> ${p.det}${p.d < today() ? ` <b style="color:var(--s4)">· atrasado</b>` : ""}</td></tr>`).join("");
@@ -8241,7 +8241,8 @@ async function openCalving(ev){
   const dryAfter = lastC && others.some(e=>e.event_type==="dry_off" && e.event_date > lastC.event_date && (!ev || e.event_date <= ev.event_date));
   const milking = !!lastC && !dryAfter && !/(^|\/)(Horra|Seca)/i.test(ev ? "" : c.status || "");
   const warns = [];
-  if (!ev && !/(^|\/)PR(\/|$)/.test(c.status||"")) warns.push("No figura <b>preñada</b> en Interherd.");
+  const pregWarn = !ev && !/(^|\/)PR(\/|$)/.test(c.status||"");
+  if (pregWarn) warns.push("No figura <b>preñada</b> en Interherd.");
   const abNote = milking ? `Está <b>en ordeño</b> (parto ${fmt(lastC.event_date)}): el aborto <b>no cuenta como parto</b>; sigue en su lactancia y en su grupo.`
                          : `Está <b>seca</b>: el aborto <b>inicia una nueva lactancia</b> (cuenta como parto).`;
   const lastCv = others.filter(e=>e.event_type==="calving").pop();
@@ -8271,7 +8272,7 @@ async function openCalving(ev){
   const bg = document.createElement("div"); bg.className = "sheet-bg";
   bg.innerHTML = `<form class="sheet" autocomplete="off">
     <h3>${ev ? "Editar" : "Parto / aborto"} · vaca ${esc(c.id)}</h3>
-    ${warns.map(w=>`<div class="warn">⚠️ ${w}</div>`).join("")}
+    ${warns.map((w, i)=>`<div class="warn"${i===0 && pregWarn ? ` id="cvPregWarn"` : ""}>⚠️ ${w}</div>`).join("")}
     <label>Fecha</label><input type="date" name="date" value="${ev?.event_date || today()}" max="${today()}" required>
     <label>Tipo</label>${seg("kind", [["parto","Parto"],["lacto","Lactoinducción"],["aborto","Aborto"],["me","Muerte embrionaria"]], kind0)}
     <div class="sub" id="cvKindNote" style="margin-top:6px"></div>
@@ -8282,7 +8283,7 @@ async function openCalving(ev){
       <div id="calves">${calfBox(0)}</div>
       <label style="display:flex;gap:8px;align-items:center;color:var(--ink)"><input type="checkbox" name="pre" style="width:auto" ${x.preterm ? "checked" : ""}> Pretérmino</label>
     </div>
-    <label>Toro (del servicio que la preñó)</label><input name="bull" value="${esc(sire)}" style="text-transform:uppercase">
+    <div id="cvBull"><label>Toro (del servicio que la preñó)</label><input name="bull" value="${esc(sire)}" style="text-transform:uppercase"></div>
     <label>Nota (opcional)</label><input name="note" maxlength="200" value="${esc(ev?.comments || "")}">
     <div class="err" id="regErr"></div>
     <div class="btns"><button type="button" class="btn ghost" data-close>Cancelar</button><button class="btn" id="regSave">Guardar</button></div>
@@ -8293,6 +8294,8 @@ async function openCalving(ev){
   const sync = ()=>{
     const k = f.kind.value, noCalv = k==="me" || (k==="aborto" && milking);
     $("cvParto").classList.toggle("hidden", k!=="parto");
+    $("cvBull").classList.toggle("hidden", k==="lacto");          // lactoinducción: sin cría ni toro, solo el grupo al que pasa
+    $("cvPregWarn")?.classList.toggle("hidden", k==="lacto");
     $("cvPen").classList.toggle("hidden", noCalv);
     $("cvKindNote").innerHTML = k==="aborto" ? abNote : k==="me" ? "La muerte embrionaria <b>no cuenta como parto</b>: la vaca queda vacía y sigue en su grupo."
       : k==="lacto" ? "Lactoinducción: <b>empieza una nueva lactancia sin cría</b> (cuenta como parto) y la vaca pasa al grupo de ordeño que escojas." : "";
@@ -8353,7 +8356,7 @@ async function openCalving(ev){
       const ex = (ex0||[]).filter(x=>!(x.dam==null && !(x.lactation_num > 0)) && x.dam!==c.id);
       if (ex.length) return err(`El número ${ex.map(x=>x.id).join(", ")} ya lo tiene otro animal activo.`);
     }
-    const bull = f.bull.value.trim().toUpperCase() || null;
+    const bull = lacto ? null : f.bull.value.trim().toUpperCase() || null;
     if (bull && !o.bulls.some(b=>b.code===bull)){
       const { data:bx } = await sb.from("bulls").select("code").eq("code", bull).maybeSingle();
       if (!bx) return err(`El toro ${bull} no existe en Interherd. Revisa el código.`);
