@@ -5889,12 +5889,14 @@ function lcEngine(){
   const quiet = (r, kinds, d) => r.dec && kinds.includes(r.dec.decision) && r.dec.decided_on >= addDays(D, -d);
   lcData.gone.forEach(r=>L.gone.push(r));
   lcData.rows.forEach(r=>{
-    const delApp = r.del==null ? null : r.del + days(D, lcNextApp(r.farm ?? r.prog?.farm_id));   // DEL el día de la aplicación
+    const nxApp = lcNextApp(r.farm ?? r.prog?.farm_id);
+    const delApp = r.del==null ? null : r.del + days(D, nxApp);   // DEL el día de la aplicación
+    r.toDryApp = r.dry ? days(nxApp, r.dry) : null;               // días al secado contados al día de la aplicación (no al día que se revisa)
     if (r.inProg){
       if (!r.lac) return L.noLac.push(r);
-      if (r.toDry!=null && r.toDry <= LC.dryAuto) return;   // ya salió sola (lacto_auto_out)
+      if (r.toDryApp!=null && r.toDryApp <= LC.dryAuto) return;   // ya salió sola (lacto_auto_out)
       if (quiet(r, ["sigue"], LC.quiet)) return;
-      if (r.toDry!=null && r.toDry <= LC.dryDays) return L.dry.push(r);
+      if (r.toDryApp!=null && r.toDryApp <= LC.dryDays) return L.dry.push(r);
       if (r.ab || r.abortLac) return L.pAbort.push(r);   // en el programa con aborto: se revisa
       if (r.lactoInd) return L.pLacto.push(r);           // en el programa por lactoinducción: se revisa
       if (delApp!=null && delApp < LC.del) return L.fresh.push(r);   // parió y sigue en la lista (lactoinducidas y abortadas sí van)
@@ -5904,7 +5906,7 @@ function lcEngine(){
     }
     // "no entra" / "sale" solo vale para esta aplicación: cuando se registra la siguiente aplicación de la finca, vuelve a revisión
     if (!r.lac || r.desc || lcThisCycle(r, ["no_entra", "sale"])) return;
-    if (r.toDry!=null && r.toDry <= LC.dryDays) return;
+    if (r.toDryApp!=null && r.toDryApp <= LC.dryDays) return;
     if (r.lactoInd) return L.lacto.push(r);
     if (r.ab) return L.abort.push(r);
     const min = r.parity <= 1 ? LC.l1 : LC.lm;
@@ -5935,7 +5937,7 @@ function lcRow(r, acts){
     <td class="sub" style="white-space:normal">${r.gone ? "ya no está activa en la finca" : [
       r.del!=null ? `${r.del} DEL` : "", r.parity ? `${r.parity}º parto` : ""].filter(Boolean).join(" · ")}
       ${r.gone ? "" : r.preg ? `<div><b style="color:var(--s0)">Cargada</b>${r.gest!=null ? ` · ${r.gest} días` : ""}${r.sv?.bull ? ` · toro ${esc(r.sv.bull)}` : ""}</div>
-        <div>Secado programado: <b style="color:var(--ink)">${r.dry ? fmt(r.dry) : "—"}</b>${r.toDry!=null ? ` (${r.toDry < 0 ? "pasó hace " + -r.toDry : "en " + r.toDry} d)` : ""}</div>`
+        <div>Secado programado: <b style="color:var(--ink)">${r.dry ? fmt(r.dry) : "—"}</b>${r.toDry!=null ? ` (${r.toDry < 0 ? "pasó hace " + -r.toDry : "en " + r.toDry} d)` : ""}${r.toDryApp!=null && r.toDryApp!==r.toDry ? ` · <b>${r.toDryApp} d al aplicar</b>` : ""}</div>`
         : `<div><b style="color:var(--s3)">Vacía</b>${r.sv ? ` · último servicio ${fmt(r.sv.event_date)}` : " · sin servicio en esta lactancia"}</div>`}
       ${r.ab ? `<div style="color:var(--s3)">aborto ${fmt(r.ab.event_date)}</div>` : ""}
       ${r.lactoInd ? `<div style="color:var(--accent)">lactoinducida</div>` : r.abortLac ? `<div style="color:var(--s3)">lactancia por aborto</div>` : ""}
@@ -5968,7 +5970,7 @@ function lcRender(){
     h += total ? "" : `<div class="card"><div class="empty">Nada para revisar hoy 👍</div></div>`;
     const auto = d.decs.filter(x=>x.decided_on===today() && /^Automático/.test(x.reason || ""));
     h += auto.length ? `<div class="card"><b>✅ Salieron solas hoy (${auto.length})</b><div class="sub">Cargadas a ${LC.dryAuto} días o menos del secado: ${auto.map(x=>esc(x.cow_id)).join(", ")}</div></div>` : "";
-    h += box("dry", `⏏️ Secado en ${LC.dryAuto + 1} a ${LC.dryDays} días`, `Revisa si siguen o salen. Las de ${LC.dryAuto} días o menos salen solas del programa.`, L.dry, sigueSale)
+    h += box("dry", `⏏️ Secado en ${LC.dryAuto + 1} a ${LC.dryDays} días (al día de la aplicación)`, `Revisa si siguen o salen. Las que el día de la aplicación estén a ${LC.dryAuto} días o menos del secado salen solas del programa.`, L.dry, sigueSale)
        + box("noLac", "🚫 Ya no están en ordeño", "Están en el programa pero ya no están lactando (secas u horras).", L.noLac, r=>b("sale", r.id, "Sacar", "--s4"), "Sacar todas")
        + box("gone", "📤 Ya no están en la finca", "Vendidas, muertas o trasladadas.", L.gone, r=>b("sale", r.id, "Sacar", "--s4"), "Sacar todas")
        + box("pAbort", "⚠️ En el programa con aborto", "Abortaron en esta lactancia (o la lactancia empezó por aborto): ¿siguen?", L.pAbort, sigueSale)
