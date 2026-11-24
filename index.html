@@ -1513,7 +1513,8 @@ function renderCow(d){
       ${d.conc?.length ? `<span><i style="background:var(--s3);border-radius:2px;height:3px;width:14px;vertical-align:3px"></i>Concentrado kg/día</span>` : ""}
       <span>┆ parto</span></div>
     <div id="milkChart" style="cursor:pointer"></div>
-    <div id="milkList" class="sub" style="margin-top:6px">Toca la gráfica para ver los controles de esa lactancia</div></div>` : ""}
+    <div id="milkList" class="sub" style="margin-top:6px">Toca la gráfica para ver los controles de esa lactancia</div>
+    ${milkLacHist(d, p305, del, dryDate)}</div>` : ""}
 
   ${canSee("vacas_repro") || (c.active && ["vacas_servicio","vacas_celo","vacas_parto"].some(canDo)) ? `<div class="card"><b>Reproducción</b>
     ${c.active && ["vacas_servicio","vacas_celo","vacas_parto","pesot_registrar"].some(canDo) ? (()=>{
@@ -7713,6 +7714,43 @@ function milkLacs(d){
   const cv = d.events.filter(e=>e.event_type==="calving").map(e=>e.event_date);
   const n = cv.length, L = lacNum(d.cow, d.events);
   return [null, ...cv].map((start,i)=>({ i, start, end:cv[i]||null, num: i===0 ? L-n : (L>=n ? L-(n-i) : i) }));
+}
+// Histórico por lactancia (hoja de vida → Leche): kg a 305 días y kg de la lactancia completa.
+// Lactancias cerradas: controles unidos en línea recta (del parto al 1er control, plano) hasta el último control (o el día 305).
+// Lactancia actual: la misma proyección del Chequeo (ck305): 305 d proyectada y total hasta el secado esperado.
+function lacKg(pts, C, end){
+  let acc = 0, prevD = 0, prevV = pts[0][1];
+  for (const [d, v] of pts){ const x = days(C, d); if (x > end){ if (x > prevD) acc += (end - prevD) * (prevV + (prevV + (v - prevV) * (end - prevD) / (x - prevD))) / 2; prevD = end; break; }
+    if (x > prevD){ acc += (x - prevD) * (prevV + v) / 2; prevD = x; } prevV = v; }
+  return Math.round(acc);
+}
+function milkLacHist(d, p305, del, dryDate){
+  const lacs = milkLacs(d), last = lacs[lacs.length - 1], nf = v => v==null ? "—" : (+v).toLocaleString("es-CO");
+  const rows = lacs.map(l=>{
+    const pts = d.milk.filter(m=>(!l.start || m.test_date >= l.start) && (!l.end || m.test_date < l.end)).map(m=>[m.test_date, +m.total_kg]);
+    if (!pts.length) return null;
+    const peak = pts.reduce((a, b)=>b[1] > a[1] ? b : a);
+    if (!l.start) return { l, n:pts.length, peak, k305:null, tot:null, dd:null, note:"sin fecha de parto" };
+    const curNow = l===last && del!=null && p305;
+    if (curNow) return { l, n:pts.length, peak, k305:p305.kg305, tot:p305.lact, dd:p305.lact ? p305.dryDel : null, cur:true,
+      note: p305.lact ? `proyectada · secado ~${fmt(dryDate)}` : "proyectada · sin fecha de secado" };
+    const lastDay = days(l.start, pts[pts.length - 1][0]);
+    return { l, n:pts.length, peak, k305:lacKg(pts, l.start, Math.min(305, lastDay)), tot:lacKg(pts, l.start, lastDay), dd:lastDay,
+      note: lastDay < 305 ? "no llegó a 305 d" : "" };
+  }).filter(Boolean);
+  if (!rows.length) return "";
+  const done = rows.filter(r=>!r.cur && r.k305!=null && r.dd >= 305);
+  const avg = done.length ? Math.round(done.reduce((a, r)=>a + r.k305, 0) / done.length) : null;
+  return `<details style="margin-top:8px" open><summary class="lnk">📈 Histórico por lactancia</summary>
+    <table style="margin-top:6px;width:100%;font-size:13px;color:var(--ink)">
+      <tr><th>Lact.</th><th>Parto</th><th style="text-align:right">305 d kg</th><th style="text-align:right">Total kg</th><th style="text-align:right">Días</th><th style="text-align:right">Pico</th></tr>
+      ${rows.slice().reverse().map(r=>`<tr${r.cur ? ` style="background:color-mix(in srgb,var(--milk) 12%,transparent)"` : ""}>
+        <td><b>${r.l.num > 0 ? r.l.num : "—"}</b></td><td>${r.l.start ? fmt(r.l.start) : "—"}</td>
+        <td style="text-align:right"><b>${nf(r.k305)}</b></td><td style="text-align:right">${nf(r.tot)}</td>
+        <td style="text-align:right">${r.dd ?? "—"}</td><td style="text-align:right">${r.peak[1].toFixed(1)}</td></tr>
+        ${r.note ? `<tr><td></td><td colspan="5" class="sub" style="padding-top:0">${esc(r.note)} · ${r.n} controles</td></tr>` : ""}`).join("")}
+    </table>
+    <div class="sub" style="margin-top:4px">${avg!=null ? `Promedio 305 d (lactancias completas): <b>${nf(avg)} kg</b> · ` : ""}calculado con los controles de leche (en línea recta entre controles). Total = hasta el último control${rows.some(r=>r.cur) ? "; la actual, hasta el secado esperado" : ""}.</div></details>`;
 }
 const lacOf = (lacs, date) => lacs.reduce((k,l)=> l.start && date >= l.start ? l : k, lacs[0]);
 const concAt = (conc, date) => (conc||[]).reduce((v,c)=> c.rec_date <= date ? +c.kg_day : v, null);
