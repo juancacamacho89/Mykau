@@ -748,7 +748,7 @@ const can = k => k==="finanzas_ver" || k==="lacto_ver" || k==="lacto_registrar" 
 const canSee = k => can(k) !== "N", canDo = k => can(k) === "R";
 // ── Configuración por finca (☰ → Configuración; tabla farm_settings). Lo que no esté guardado usa estos valores ──
 const CFG_DEF = {
-  repro:{ gest:282, dry:60, vwp:50, heiferMonths:16, heiferKg:380 },
+  repro:{ gest:282, dry:60, vwp:50, heiferMonths:16, heiferKg:380, heiferMonths2:19, heiferKg2:360 },
   racion:{ minL:12, std:[15.9, 19.9, 23.9, 27.9, 31.9], first:[15, 19, 23, 27, 31], kg:[2, 4, 6, 8, 10, 12],
            dimDays:100, dimKg:8, dry0:20, dryLowDays:40, dryLowL:16, caps:[[21, 30, 4], [31, 40, 6]], drop:25, dropStrong:30, maxDown:2 },
   tanks:null,
@@ -757,13 +757,19 @@ const CFG_DEF = {
     stages:[ { code:"ECO1", label:"ECO1", from:25, late:38, on:true }, { code:"ECO2", label:"ECO2", from:39, late:55, on:true },
              { code:"DPR", label:"DPR", from:56, late:80, on:true }, { code:"DP5", label:"DP5", from:140, late:164, on:true },
              { code:"DPSEC", label:"DPSEC", from:200, late:224, on:true } ],
-    resEco:["Positivo","Negativo","Dudoso","ME"], resDp:["Cargada Hembra","Cargada Macho","Cargada","Vacía","Aborto"],
+    resEco:["Positivo","Negativo","Dudoso","ME"], resDp:["Cargada","Cargada Hembra","Cargada Macho","Vacía","Aborto"],
     negEco:["OVSYNCH","OVS2","DIB","Servir","Ojo al celo"], negDp:["OVSYNCH","DIB","Servir","Ojo al celo"],
     treatments:["PGF2","Cefalexina","Ceftiofur","Penicilina","Antibiótico","Vitaminas","Baño"] } };
 let cfgRows = jget0("cfgRows", {});   // {finca: settings}
 const cfgMerge = (a, b) => { const o = { ...a }; for (const k in (b || {})) o[k] = b[k] && typeof b[k]==="object" && !Array.isArray(b[k]) && a[k] && typeof a[k]==="object" && !Array.isArray(a[k]) ? cfgMerge(a[k], b[k]) : b[k]; return o; };
 const fcfg = f => cfgMerge(CFG_DEF, cfgRows[f] || {});
 const cGest = f => 282, cDry = f => +fcfg(f).repro.dry, cVwp = f => +fcfg(f).repro.vwp, cHm = f => +fcfg(f).repro.heiferMonths, cHkg = f => +fcfg(f).repro.heiferKg;
+// novilla lista para servicio (Juan 25/11/2026): 16 meses y 380 kg, o ya con 19 meses o más le basta 360 kg
+const cHm2 = f => +fcfg(f).repro.heiferMonths2, cHkg2 = f => +fcfg(f).repro.heiferKg2;
+function heiferOk(f, ageM, kg){
+  const okA = ageM >= cHm(f), okK = kg==null || kg >= cHkg(f), alt = ageM >= cHm2(f) && kg!=null && kg >= cHkg2(f);
+  return { ok:(okA && okK) || alt, okA: okA || alt, okK: okK || alt, alt };
+}
 async function cfgLoad(){
   if (!navigator.onLine) return;
   const { data, error } = await sb.from("farm_settings").select("farm_id,settings");
@@ -1086,7 +1092,9 @@ function cfRender(){
       <tr><td>Período voluntario de espera</td><td style="white-space:nowrap">${num("repro.vwp", P.vwp)} días</td></tr>
       <tr><td>Secado: días antes del parto</td><td style="white-space:nowrap">${num("repro.dry", P.dry)} días</td></tr>
       <tr><td>Novillas a servicio: edad mínima</td><td style="white-space:nowrap">${num("repro.heiferMonths", P.heiferMonths)} meses</td></tr>
-      <tr><td>Novillas a servicio: peso mínimo</td><td style="white-space:nowrap">${num("repro.heiferKg", P.heiferKg)} kg</td></tr></table>`)}
+      <tr><td>Novillas a servicio: peso mínimo</td><td style="white-space:nowrap">${num("repro.heiferKg", P.heiferKg)} kg</td></tr>
+      <tr><td>O novillas desde esta edad…</td><td style="white-space:nowrap">${num("repro.heiferMonths2", P.heiferMonths2)} meses</td></tr>
+      <tr><td>…con este peso mínimo</td><td style="white-space:nowrap">${num("repro.heiferKg2", P.heiferKg2)} kg</td></tr></table>`)}
     ${sec("chequeo", `<svg viewBox="0 0 24 24" width="20" height="20" style="vertical-align:-4px" aria-hidden="true"><path d="M6 3h7a1 1 0 0 1 1 1v8.5l2.6 2.6A6 6 0 0 1 18 18.6V20a1 1 0 0 1-1 1H8a1 1 0 0 1-1-1v-1.4a6 6 0 0 1 1.4-3.5L5 11.7V4a1 1 0 0 1 1-1z" fill="#6fd3f2" stroke="#1b7fa8" stroke-width="1.2"/><path d="M8.5 19.5c2.5-1.2 5.5-1.2 8 0" stroke="#1b7fa8" stroke-width="1.4" fill="none"/><path d="M7.5 6h4M7.5 8.5h4" stroke="#1b7fa8" stroke-width="1.2"/></svg> Chequeo reproductivo`, (()=>{ const C = d.checkup;
       const lst = (k, t, hint) => `<div style="margin-top:12px"><b>${t}</b>${hint ? `<div class="sub">${hint}</div>` : ""}
         <div class="list" style="margin-top:4px">${(C[k] || []).map((v, i)=>`<span class="chip">${esc(v)} <button class="lnk" data-cfckdel="${k}|${i}" style="color:var(--s4)">✕</button></span>`).join("")}</div>
@@ -1394,6 +1402,9 @@ const EV = { weight:"Peso", service:"Servicio", calving:"Parto", preg_check:"Dia
              embryo_loss:"Muerte embrionaria", abortion:"Aborto" };
 const isPositive = e => (e.event_type==="preg_check" && /^(cargada|confirmada)/i.test(e.result||"")) ||
                         (e.event_type==="ultrasound" && /^positivo/i.test(e.result||""));
+// cómo empezó la lactancia de ese día: lactoinducción o aborto (si no, "parto")
+const cvKindOf = (evs, dt) => { const e = (evs || []).find(x=>x.event_type==="calving" && x.event_date===dt); if (!e) return "";
+  return e.details?.lacto || /LACTOIND/i.test(e.category || "") ? "lactoinducción" : /ABORT/i.test(e.category || "") ? "aborto" : ""; };
 // Estado de Interherd agrupado: Preñada / Servida / Vacía (+ En leche / Horra)
 const STATUS = [
   [/^PR$/,         "Preñada",   "--s0"],
@@ -1493,7 +1504,7 @@ function renderCow(d){
     ${canSee("vacas_datos") || canSee("vacas_leche") ? `<div class="kpis">
       ${canSee("vacas_datos") ? `<div class="kpi"><b>${age(c.birth_date)}</b><span>Edad · nació ${fmt(c.birth_date)}</span></div>
       <div class="kpi"><b>${c.lactation_num!=null || appCv ? lacNum(c, events) : "—"}</b><span>Partos</span></div>
-      <div class="kpi"><b>${del!=null ? del+" d" : fmt(lastCalv)}</b><span>${del!=null ? "En leche · parto "+fmt(lastCalv) : "Último parto"}</span></div>` : ""}
+      <div class="kpi"><b>${del!=null ? del+" d" : fmt(lastCalv)}</b><span>${del!=null ? "En leche · " + (cvKindOf(d.events, lastCalv) || "parto") + " " + fmt(lastCalv) : "Último parto"}</span></div>` : ""}
       ${canSee("vacas_leche") ? `<div class="kpi"><b>${lastMilk ? (+lastMilk.total_kg).toFixed(1)+" kg" : "—"}</b><span>Última leche${lastMilk?" · "+fmt(lastMilk.test_date):""}</span></div>` : ""}
       ${canSee("vacas_leche") && p305 ? `<div class="kpi"><b>${p305.kg305.toLocaleString("es-CO")} kg</b><span>305 d proyectada${p305.early ? " · estimado (antes del pico)" : ""}</span></div>
       <div class="kpi"><b>${p305.lact ? p305.lact.toLocaleString("es-CO") + " kg" : "—"}</b><span>Lactancia total${p305.lact ? ` · secado ~${fmt(dryDate)} (${p305.dryDel} d)` : " · sin fecha de secado (no preñada)"}</span></div>` : ""}
@@ -4131,7 +4142,7 @@ const tnAgeTxt = m => m==null ? "—" : m < 1 ? `${Math.round(m*30.44)} d` : `${
 function tnSvc(c, date, kg, gdp){
   if (/(^|\/)PR(\/|$)/.test(c?.status || "")) return `<b style="color:var(--s0)">🤰 preñada</b>`;
   const m = tnAgeM(c, date); if (m==null || !kg) return "";
-  const okM = m >= cHm(tnFarm), okK = kg >= cHkg(tnFarm);
+  const hk = heiferOk(tnFarm, m, kg), okM = hk.okA, okK = hk.okK;
   if (okM && okK) return `<b style="color:var(--s0)">✅ lista para servicio</b>`;
   const falta = [!okM ? `${Math.ceil(cHm(tnFarm) - m)} mes${Math.ceil(cHm(tnFarm) - m)===1 ? "" : "es"}` : "", !okK ? `${Math.round(cHkg(tnFarm) - kg)} kg` : ""].filter(Boolean).join(" y ");
   // a qué fecha llega a los 380 kg con la ganancia que trae
@@ -8353,7 +8364,10 @@ async function openCalving(ev){
   const pregWarn = !ev && !/(^|\/)PR(\/|$)/.test(c.status||"");
   if (pregWarn) warns.push("No figura <b>preñada</b> en Interherd.");
   const abNote = milking ? `Está <b>en ordeño</b> (parto ${fmt(lastC.event_date)}): el aborto <b>no cuenta como parto</b>; sigue en su lactancia y en su grupo.`
-                         : `Está <b>seca</b>: el aborto <b>inicia una nueva lactancia</b> (cuenta como parto).`;
+                         : `Está <b>seca</b>. ¿Arrancó a dar leche con el aborto? Si <b>sí</b>, inicia una nueva lactancia (cuenta como parto).
+                            Si <b>no</b>, no cuenta como parto: queda vacía y seca en su grupo, y puedes programarle lactoinducción.`;
+  // aborto estando seca (Juan 25/11/2026): se escoge si entra a lactancia nueva o no (ej. la 697 abortó seca y no dio leche)
+  const abLac0 = ev ? (ev.event_type==="abortion" ? "0" : "1") : "1";
   const lastCv = others.filter(e=>e.event_type==="calving").pop();
   if (lastCv && days(lastCv.event_date, today()) < 250) warns.push(`Tuvo parto hace <b>${days(lastCv.event_date, today())} d</b> (${fmt(lastCv.event_date)}).`);
   if (!o.groups.length) warns.push("Esta finca no tiene grupos de parto configurados (tabla farm_lists).");
@@ -8385,6 +8399,10 @@ async function openCalving(ev){
     <label>Fecha</label><input type="date" name="date" value="${ev?.event_date || today()}" max="${today()}" required>
     <label>Tipo</label>${seg("kind", [["parto","Parto"],["lacto","Lactoinducción"],["aborto","Aborto"],["me","Muerte embrionaria"]], kind0)}
     <div class="sub" id="cvKindNote" style="margin-top:6px"></div>
+    <div id="cvAbLac" class="hidden"><label>¿Entra a lactancia nueva?</label>${seg("ablac", [["1","Sí, dio leche"],["0","No dio leche"]], abLac0)}
+      <div id="cvLactoPlan" class="hidden" style="margin-top:8px">
+        <label style="display:flex;gap:8px;align-items:center;color:var(--ink)"><input type="checkbox" name="lactop" style="width:auto"> 🍼 Programar lactoinducción</label>
+        <div id="cvLactoD" class="hidden"><label>Inicia</label><input type="date" name="lactod" value="${today()}"></div></div></div>
     <div id="cvPen"><label>Pasa al grupo</label>${o.groups.length ? seg("pen", o.groups.map(g=>[g,g]), x.dest_pen || "") : `<input name="pen" placeholder="Grupo" value="${esc(x.dest_pen||"")}" style="text-transform:uppercase">`}</div>
     <div id="cvParto">
       <label>Dificultad</label>${seg("ease", [["Normal","Normal"],["Asistido","Asistido"],["Distocia","Distocia"],["Cesárea","Cesárea"]], x.ease || "Normal")}
@@ -8401,7 +8419,10 @@ async function openCalving(ev){
   const f = bg.querySelector("form");
   // los machos por defecto se venden; si muere no se pide número ni destino
   const sync = ()=>{
-    const k = f.kind.value, noCalv = k==="me" || (k==="aborto" && milking);
+    const k = f.kind.value, noLac = k==="aborto" && !milking && f.ablac.value==="0", noCalv = k==="me" || (k==="aborto" && milking) || noLac;
+    $("cvAbLac").classList.toggle("hidden", k!=="aborto" || milking);
+    $("cvLactoPlan").classList.toggle("hidden", !noLac || !!ev);
+    $("cvLactoD").classList.toggle("hidden", !f.lactop.checked);
     $("cvParto").classList.toggle("hidden", k!=="parto");
     $("cvBull").classList.toggle("hidden", k==="lacto");          // lactoinducción: sin cría ni toro, solo el grupo al que pasa
     $("cvPregWarn")?.classList.toggle("hidden", k==="lacto");
@@ -8438,15 +8459,25 @@ async function openCalving(ev){
     e.preventDefault();
     const err = msg => { f.querySelector("#regErr").textContent = msg; f.querySelector("#regSave").disabled = false; };
     f.querySelector("#regSave").disabled = true;
-    const date = f.date.value, kind = f.kind.value, aborto = kind!=="parto", noCalv = kind==="me" || (kind==="aborto" && milking);
+    const date = f.date.value, kind = f.kind.value, aborto = kind!=="parto", noLac = kind==="aborto" && !milking && f.ablac.value==="0";
+    const noCalv = kind==="me" || (kind==="aborto" && milking) || noLac;
     if (!date || date > today()) return err("La fecha no puede ser futura.");
     if (!noCalv && others.some(x=>x.event_type==="calving" && x.event_date===date)) return err("Ya hay un parto registrado ese día.");
     if (noCalv){   // aborto en ordeño o muerte embrionaria: no es parto (no abre lactancia ni cambia de grupo)
       const row = { cow_id:c.id, event_date:date, event_type: kind==="me" ? "embryo_loss" : "abortion", source:"app", sync_status:"pending",
-                    category:null, bull:f.bull.value.trim().toUpperCase() || null, comments:f.note.value.trim() || (kind==="me" ? "Muerte embrionaria" : "Aborto en lactancia"),
-                    details:{ in_milk: milking } };
+                    category:null, bull:f.bull.value.trim().toUpperCase() || null,
+                    comments:f.note.value.trim() || (kind==="me" ? "Muerte embrionaria" : noLac ? "Aborto estando seca (sin lactancia nueva)" : "Aborto en lactancia"),
+                    details:{ in_milk: milking, ...(noLac ? { new_lac:false } : {}) } };
       const { error } = ev ? await sb.from("cow_events").update(editRow(row)).eq("id", ev.id) : await sb.from("cow_events").insert(row);
       if (error) return err(/row-level|permission/i.test(error.message) ? "No tienes permiso para registrar en esta finca." : "No se pudo guardar: " + error.message);
+      // lactoinducción programada: igual que desde el chequeo (examen "Lactoinducir" + evento programado en la hoja de vida)
+      if (noLac && !ev && f.lactop.checked){
+        const ld = f.lactod.value || today();
+        const r1 = await sb.from("cow_events").insert({ cow_id:c.id, event_date:date, event_type:"repro_exam", source:"app", sync_status:"pending",
+                     result:"Lactoinducir", category:"EXREP", comments:"Lactoinducción programada " + fmt(ld) });
+        const r2 = await sb.from("cow_plans").insert({ cow_id:c.id, farm_id:c.farm_id, plan_type:"otro", due_date:ld, note:`Lactoinducción · Aborto ${fmt(date)}` });
+        if (r1.error || r2.error) toast("El aborto quedó, pero la lactoinducción no se programó: " + (r1.error || r2.error).message);
+      }
       bg.remove(); toast(`${kind==="me" ? "Muerte embrionaria" : "Aborto"} ${ev ? "corregido" : "guardado"} ✓`); loadCow(c.id); loadPending(); return;
     }
     const pen = String(f.pen.value||"").trim().toUpperCase(), lacto = kind==="lacto";
@@ -10424,7 +10455,7 @@ function ckClassify(c, ev, D){
     if (c.bd && days(c.bd, D)/30.44 < cHm(c.farm_id ?? lsState.farm) - 4) return null;   // < 12 meses: un servicio ahí es un error de datos
     if (!sv){
       const ageM = c.bd ? days(c.bd, D)/30.44 : 0, w = ev.filter(e=>e.t==="weight" && e.w).pop();
-      if (ageM < cHm(c.farm_id ?? lsState.farm) || (w && +w.w < cHkg(c.farm_id ?? lsState.farm))) return null;
+      if (!heiferOk(c.farm_id ?? lsState.farm, ageM, w ? +w.w : null).ok) return null;
       return { ...exrep(), heifer:true, ageM, weight: w ? +w.w : null };
     }
   } else if (!sv) return exrep();
@@ -10688,6 +10719,15 @@ function ckSugHtml(list, doneN){
       return `<button data-pick="${esc(c.id)}"><b>${esc(c.id)}</b> ${k ? `<span class="ckcat" style="background:${css(CK_COLOR[k.cat]||"--muted")}">${k.cat==="REPETIR"?"REP":esc(ckName(k.cat, ckData?.farm))}</span>` : `<span class="sub">no le toca</span>`}${r?.res ? " ✓" : ""}</button>`; }).join("")
     || (q ? `<span class="sub">Ninguna vaca activa con ese número</span>` : `<span class="sub">${list.length - doneN} vacas pendientes en este chequeo</span>`);
 }
+// novilla en EXREP (Juan 25/11/2026): siempre su edad y último peso; si no cumple edad o peso, aviso
+function ckHeiferHtml(c, C, cat, D){
+  if (C || cat!=="EXREP" || !c.bd) return "";
+  const f = ckData?.farm, ageM = days(c.bd, D)/30.44, w = c.ev.filter(e=>e.t==="weight" && e.w && e.d <= D).pop(), kg = w ? +w.w : null;
+  const h = heiferOk(f, ageM, kg), no = [!h.okA ? `edad (mín. ${cHm(f)} m)` : "", !h.okK ? `peso (mín. ${cHkg(f)} kg)` : ""].filter(Boolean);
+  const txt = `Novilla <b>${ageM.toLocaleString("es-CO", { maximumFractionDigits:1 })} meses</b> · ${kg ? `<b>${kg} kg</b> (pesada ${fmt(w.d)})` : "<b>sin peso</b>"}`;
+  return no.length ? `<div class="warn" style="margin:6px 0">${txt}<br>⚠ No cumple ${no.join(" ni ")} para servicio${h.alt ? "" : ` · con ${cHm2(f)} meses le basta ${cHkg2(f)} kg`}</div>`
+    : `<div class="sub" style="margin:6px 0">${txt} · ✅ cumple para servicio${h.alt && !(ageM >= cHm(f) && kg >= cHkg(f)) ? ` (${cHm2(f)} m y ${cHkg2(f)} kg o más)` : ""}</div>`;
+}
 // ficha de la vaca: lo de la última lactancia en grande y los botones del chequeo
 function ckCard(id, list){
   const c = ckFind(id) || { id, pen:"—", ev:[], milk:[] }, D = ckD();
@@ -10710,6 +10750,7 @@ function ckCard(id, list){
     <div class="sub" style="margin-top:2px">Toca el número para abrir la hoja de vida (ej. registrar un servicio que faltó). Al volver, descarga la lista de nuevo para que lo tenga en cuenta.</div>
     ${item ? `<div class="sub" style="margin:6px 0">${ckInfoTxt(item.k)}</div>`
            : `<div class="warn">No le toca chequeo hoy. ¿Qué examen le hiciste?</div>`}
+    ${ckHeiferHtml(c, C, cat, D)}
     <div class="ckbig">
       ${big(C ? days(C, D) : "—", "Días de parida", C ? (cvKind ? `<b style="color:var(--s4)">${cvKind}</b> ` : "parto ") + fmt(C) : "novilla")}
       ${big(sv ? days(sv.d, D) : "—", "Días de servida", sv ? `${svs.length} serv.${sv.b ? " · toro "+esc(sv.b) : ""}` : "sin servicio")}
@@ -10791,7 +10832,10 @@ const ckResTxt = r => [r.cat==="EXREP" ? (r.sel||[]).join(" + ") : [r.main, ckAu
   r.lacto ? "🍼 lactoinducción" : "", r.sale && (r.sel?.length || r.main || r.lacto) ? "🚪 venta" : ""].filter(Boolean).join(" · ");
 function ckPanel(c, k, r){
   const cat = k.cat==="REPETIR" ? k.stage : k.cat, ex = cat==="EXREP";
-  const opts = ex ? ckExrepOpts() : /^ECO/.test(cat) ? ckCfg(ckData?.farm).resEco : isMain() ? ckCfg(ckData?.farm).resDp : ckCfg(ckData?.farm).resDp.filter(x=>!/hembra|macho/i.test(x));
+  // DPR / DP5 / DPSEC (Juan): primero Cargada, luego Cargada hembra y Cargada macho, aunque la finca los tenga en otro orden
+  const dpOrd = x => /^cargada$/i.test(x) ? 0 : /hembra/i.test(x) ? 1 : /macho/i.test(x) ? 2 : 3;
+  const resDp = ckCfg(ckData?.farm).resDp.slice().sort((a, b)=>dpOrd(a) - dpOrd(b));
+  const opts = ex ? ckExrepOpts() : /^ECO/.test(cat) ? ckCfg(ckData?.farm).resEco : isMain() ? resDp : resDp.filter(x=>!/hembra|macho/i.test(x));
   const chip = (v, on, attr) => `<button class="${on?"on":""}" ${attr}="${esc(v)}">${esc(v)}</button>`;
   const neg = !ex && ckNegMain(cat, r.main), meAuto = ckAutoLoss(r);
   const ready = ex ? (r.sel||[]).length || r.lacto : !!r.main;
