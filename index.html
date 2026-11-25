@@ -10530,7 +10530,10 @@ function ckLoadData(farm){
   p.ev.forEach(([id,d,t,r,c,w,b])=>{ (evBy[id] ||= []).push({ d, t, r, c, w, b }); });
   const cows = p.cows.map(([id,pen,status,bd,lc,ln,sex])=>({ id, pen, status, bd, lc, ln, sex,
     milk:(p.milk?.[id]||[]).slice().sort((a,b)=>a[0].localeCompare(b[0])) }));
-  cows.forEach(c=>{ c.ev = (evBy[c.id]||[]).filter(e=>!c.bd || e.d >= c.bd).sort((a,b)=>a.d.localeCompare(b.d)); });
+  // eventos de otra vaca vieja con el mismo número: nada reproductivo antes de nacer ni en los primeros 9 meses de vida
+  const ckRp9 = new Set(["service","calving","ultrasound","preg_check","repro_exam","embryo_loss","abortion"]);
+  cows.forEach(c=>{ const m9 = c.bd ? addDays(c.bd, 270) : "";
+    c.ev = (evBy[c.id]||[]).filter(e=>!c.bd || (e.d >= c.bd && !(ckRp9.has(e.t) && e.d < m9))).sort((a,b)=>a.d.localeCompare(b.d)); });
   return { at:p.at, cows, plans:p.plans || [], rs:p.rs || {} };
 }
 
@@ -10715,6 +10718,7 @@ function ckCard(id, list){
       ${big(p305?.lact ? p305.lact.toLocaleString("es-CO") : "—", "Lactancia total kg", p305?.lact ? `secado ~${fmt(preg)} · ${p305.dryDel} d` : "sin fecha de secado (no preñada)")}
     </div>
     ${hist.length ? `<div class="sub" style="margin-top:6px">Últimos: ${hist.map(e=>`${fmt(e.d)} ${esc(EV[e.t]||e.t)} ${esc(noSex(e.r)||"")}`).join(" · ")}</div>` : ""}
+    ${cat && !r.up ? `<div class="chips sm" style="margin-top:8px;align-items:center"><span class="sub" style="margin-right:4px">Cambiar examen:</span>${["EXREP","ECO1","ECO2","DPR","DP5","DPSEC"].map(x=>`<button class="${x===cat ? "on" : ""}" data-setcat="${x}">${x}</button>`).join("")}</div>` : ""}
     ${cat ? ckPanel(c, { cat }, r) :
       `<div class="ckpan"><div class="chips">${["EXREP","ECO1","ECO2","DPR","DP5","DPSEC"].map(x=>`<button data-setcat="${x}">${x}</button>`).join("")}</div></div>`}
     ${ckMoreInfo(c)}
@@ -10798,7 +10802,7 @@ function ckPanel(c, k, r){
     ${meAuto ? `<div class="warn" style="margin:6px 0">Venía preñada y sale ${/^ECO/.test(cat) ? "negativa" : "vacía"}: se registra <b>${meAuto==="ME" ? "muerte embrionaria" : "aborto"}</b> automáticamente.</div>` : ""}
     ${neg ? `<div class="sub">¿Qué hacer? (puedes marcar varios)</div><div class="chips">${(/^ECO/.test(cat) ? ckCfg(ckData?.farm).negEco : ckCfg(ckData?.farm).negDp).map(v=>chip(v, (r.fol||[]).includes(v), "data-fol")).join("")}</div>` : ""}
     <div class="sub">Tratamiento</div>
-    <div class="chips sm">${ckCfg(ckData?.farm).treatments.map(v=>chip(v, (r.extras||[]).some(x=>ckSameTx(x, v)), "data-ext")).join("")}</div>
+    <div class="chips sm">${[...ckCfg(ckData?.farm).treatments.filter(v=>ckTxKey(v)!=="Otro"), "Otro"].map(v=>chip(v, (r.extras||[]).some(x=>ckSameTx(x, v)), "data-ext")).join("")}</div>
     ${(r.extras||[]).map(v=>ckTxHtml(v, r)).join("")}
     ${ckLongOpen(c, r) ? `<div class="sub" style="margin-top:8px">Vacía con ${ckLongOpen(c, r)} días de parida:</div>
       <div class="chips sm"><button class="${r.lacto ? "on" : ""}" data-cklacto="1">🍼 Lactoinducción</button>${canDo("vacas_salida") || isMain() ? `<button class="${r.sale ? "on" : ""}" data-cksale="1">🚪 Descarte</button>` : ""}</div>
@@ -10828,11 +10832,17 @@ const CK_TX = {
   "Penicilina":  { codes:["PENTRIL","BENZETA","GANAPEN"], dose:1, doses:[1,2], n:1, ns:[1], every:1, route:"IM" },
   "Antibiótico": { cats:["Antibiótico"], dose:null, n:1, ns:[1,2,3,4,5], every:1, route:"IM" },
   "Vitaminas":   { cats:["Vitamina / mineral","Vitamina / suplemento"], prefer:"OVERSEL", dose:15, heiferDose:10, n:3, ns:[1,2,3], every:2, route:"IM" },
-  "Baño":        { codes:["OXITETRA"], dose:20, water:{ codes:["AGUAD500","AGUAD1L"], ml:30 }, n:1, ns:[1,2,3], every:1, everies:[1,2], askNow:true, route:"Intrauterina" } };
+  "Baño":        { codes:["OXITETRA"], dose:20, water:{ codes:["AGUAD500","AGUAD1L"], ml:30 }, n:1, ns:[1,2,3], every:1, everies:[1,2], askNow:true, route:"Intrauterina" },
+  // Otro (Juan 25/11/2026): cualquier producto del inventario, o un nombre escrito si no está (queda solo como comentario)
+  "Otro":        { all:true, dose:null, n:1, ns:[1,2,3,4,5], every:1, everies:[1,2], route:"IM", routes:["IM","SC","IV","Oral","Intrauterina","Tópica"] } };
+// nombre que queda en el comentario: "Otro" se reemplaza por el producto o el nombre escrito
+const ckTxLabel = (v, r) => { if (ckTxKey(v)!=="Otro") return v; const t = (r.tx || {}).Otro || {};
+  const sup = t.code && hsCatGet().supplies.find(m=>m.code===t.code); return (sup?.name || String(t.name || "").trim() || "Otro"); };
 const ckTxKey = v => { const x = String(v).toLowerCase(); return Object.keys(CK_TX).find(k=>k.toLowerCase()===x || k.toLowerCase()===x.replace(/s$/, "")); };
 function ckTxOpts(v){
   const d = CK_TX[ckTxKey(v)]; if (!d) return [];
   const all = hsCatGet().supplies.filter(m=>m.active!==false);
+  if (d.all) return all.slice().sort((a, b)=>String(a.name).localeCompare(String(b.name)));
   return d.codes ? d.codes.map(c=>all.find(m=>m.code===c)).filter(Boolean) : all.filter(m=>d.cats.includes(m.category));
 }
 // valores de cada tratamiento: lo que se cambió en esa vaca, o el predeterminado
@@ -10840,7 +10850,7 @@ function ckTxVal(k, r){
   const d = CK_TX[k], t = (r.tx || {})[k] || {}, ops = ckTxOpts(k);
   const code = t.code || (d.prefer && ops.some(m=>m.code===d.prefer) ? d.prefer : d.codes ? ops[0]?.code : "") || "";
   const n = +(t.n || d.n), dose = t.dose!=null && t.dose!=="" ? +String(t.dose).replace(",", ".") : (r.heifer && d.heiferDose ? d.heiferDose : d.dose);
-  return { code, dose, n, every: +(t.every || d.every), now: d.askNow ? (t.now!=null ? !!t.now : n===1) : true, sup: hsCatGet().supplies.find(m=>m.code===code) };
+  return { code, dose, n, every: +(t.every || d.every), route: t.route || d.route || "IM", name: t.name || "", now: d.askNow ? (t.now!=null ? !!t.now : n===1) : true, sup: hsCatGet().supplies.find(m=>m.code===code) };
 }
 // días (después del chequeo) de cada aplicación
 const ckTxDays = v => { const first = v.now ? 0 : 1; return Array.from({ length:Math.max(1, v.n) }, (_, i)=>first + i*v.every); };
@@ -10855,6 +10865,9 @@ function ckTxHtml(v, r){
   const sel = (key, opts, cur) => `<select data-cktx="${esc(k)}" data-k="${key}" style="width:auto;padding:8px">${opts.map(([val, t])=>`<option value="${val}" ${String(cur)===String(val) ? "selected" : ""}>${esc(t)}</option>`).join("")}</select>`;
   return `<div class="hscard" style="margin-top:6px;padding:8px"><div class="row" style="gap:6px;align-items:center;flex-wrap:wrap"><b style="flex:0 0 auto">${esc(k)}</b>
     ${ops.length > 1 || !d.codes ? `<select data-cktx="${esc(k)}" data-k="code" style="flex:1;min-width:120px;padding:8px"><option value="">— producto —</option>${ops.map(m=>`<option value="${esc(m.code)}" ${m.code===x.code ? "selected" : ""}>${esc(m.name)}</option>`).join("")}</select>` : `<span class="sub">${esc(x.sup?.name || "")}</span>`}</div>
+    ${d.all ? `<div class="row" style="gap:6px;margin-top:6px;align-items:center;flex-wrap:wrap">
+      ${x.code ? "" : `<input data-cktx="${esc(k)}" data-k="name" placeholder="Nombre si no está en el inventario" value="${esc(x.name)}" maxlength="60" style="flex:1;min-width:150px;padding:8px">`}
+      ${sel("route", d.routes.map(v=>[v, "Vía " + v]), x.route)}</div>` : ""}
     <div class="row" style="gap:6px;margin-top:6px;align-items:center;flex-wrap:wrap">
       ${d.doses ? sel("dose", d.doses.map(n=>[n, `${n} ${unit}${n > 1 && !/s$/.test(unit) ? "s" : ""}`]), x.dose)
         : `<input data-cktx="${esc(k)}" data-k="dose" inputmode="decimal" placeholder="dosis" value="${esc(x.dose ?? "")}" style="flex:0 0 64px;padding:8px"><span class="sub">${esc(unit)}${water ? ` + agua destilada ${d.water.ml} mL` : ""}</span>`}
@@ -10873,8 +10886,8 @@ function ckTxPlan(r){
     const unit = x.sup?.unit || "mL", water = !!d.water;
     ckTxDays(x).forEach((off, i)=>{
       const b = by[off] ||= { off, keys:[], items:[], txt:[] };
-      if (!b.keys.includes(k)) b.keys.push(k);
-      b.items.push({ code:x.code, dose:x.dose, unit, route:d.route || "IM" });
+      const kn = d.all ? (x.sup?.name || k) : k; if (!b.keys.includes(kn)) b.keys.push(kn);
+      b.items.push({ code:x.code, dose:x.dose, unit, route:x.route || d.route || "IM" });
       b.txt.push(`${(x.sup?.name || x.code).replace(/ (L\.A\.|R\.L\.A\.|LPU)$/i, "")} ${x.dose} ${unit}${water ? " + agua destilada " + d.water.ml + " mL" : ""}${x.n > 1 ? ` (${i + 1}/${x.n})` : ""}`);
     }); });
   return Object.values(by).sort((a, b)=>a.off - b.off);
@@ -10955,7 +10968,11 @@ $("ckBody").addEventListener("click", e=>{
     return;
   }
   const sc = e.target.closest("[data-setcat]");
-  if (sc){ const id = e.target.closest("[data-ck]").dataset.ck; ckRes[id] = { ...(ckRes[id]||{}), cat:sc.dataset.setcat }; ckSave(); ckRender(); return; }
+  if (sc){ const id = e.target.closest("[data-ck]").dataset.ck; const o = ckRes[id] || {}, nc = sc.dataset.setcat, fam = x => x==="EXREP" ? "X" : /^ECO/.test(x||"") ? "E" : "D";
+    const ki = !o.cat && ckData ? ckList().find(x=>x.c.id===id)?.k : null, oc = o.cat || (ki ? (ki.cat==="REPETIR" ? ki.stage : ki.cat) : null);
+    // ECO1 ↔ ECO2 conserva el resultado; si cambia de tipo (EXREP / ECO / DP) se borra porque las opciones son otras
+    ckRes[id] = fam(oc)===fam(nc) || !oc ? { ...o, cat:nc } : { ...o, cat:nc, main:undefined, sel:undefined, fol:undefined };
+    ckSave(); ckRender(); return; }
   const f = e.target.closest("[data-ckf]"); if (f){ ckFilter = f.dataset.ckf; ckRender(); return; }
   if (e.target.id==="ckUp"){ ckQueue(); return; }
   if (e.target.id==="ckAdd"){
@@ -11055,7 +11072,7 @@ function ckQueue(){
 function ckRows(D, id, r){
   const base = { cow_id:id, event_date:D, source:"app", sync_status:"pending" };
   const eco = /^ECO/.test(r.cat || ""), fol = (r.fol||[]).filter(x=>eco ? !/^(OVSYNCH|OVS2)$/.test(x) : true);   // en la ECO el Ovsynch va en el resultado
-  const com = [fol.join(", ") || null, (r.extras||[]).join(", ") || null, r.sale ? "Venta programada " + fmt(r.sale.date) : null, r.note || null].filter(Boolean).join(" · ") || null;
+  const com = [fol.join(", ") || null, (r.extras||[]).map(v=>ckTxLabel(v, r)).join(", ") || null, r.sale ? "Venta programada " + fmt(r.sale.date) : null, r.note || null].filter(Boolean).join(" · ") || null;
   // lactoinducción: examen "Lactoinducir" (así sale del chequeo, como en Interherd)
   const lacto = r.lacto ? [{ ...base, event_type:"repro_exam", result:"Lactoinducir", category:r.cat || "EXREP", comments:"Lactoinducción programada " + fmt(r.lacto.date || D) }] : [];
   if (r.cat==="EXREP") return [...(r.sel||[]).map(v=>({ ...base, event_type:"repro_exam", result:v, category:"EXREP", comments:com })), ...lacto];
