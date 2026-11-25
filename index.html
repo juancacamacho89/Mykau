@@ -1094,7 +1094,10 @@ function cfRender(){
   const F = cf.farms.find(x=>x.id===cf.farm) || {}, d = cf.draft, R = d.racion, P = d.repro;
   const num = (path, v, w) => `<input type="number" inputmode="decimal" step="any" data-cfn="${path}" value="${v ?? ""}" style="width:${w || 80}px;min-width:0;padding:6px">`;
   const clients = [...new Set(cf.farms.map(x=>x.client || "Sin cliente"))].sort();
-  const sec = (k, t, body, open) => `<details class="card rgt" data-cfsec="${k}" ${open ? "open" : ""} style="padding:0">
+  // al redibujar (＋ agregar toro, ✕, tanques…) las secciones abiertas siguen abiertas y no se pierde el lugar
+  const openNow = new Set([...document.querySelectorAll("#cfBody details[data-cfsec][open]")].map(x=>x.dataset.cfsec)), y0 = window.scrollY;
+  requestAnimationFrame(()=>window.scrollTo({ top:y0 }));
+  const sec = (k, t, body, open) => `<details class="card rgt" data-cfsec="${k}" ${open || openNow.has(k) ? "open" : ""} style="padding:0">
     <summary style="padding:12px 14px;cursor:pointer;font-weight:800;list-style:none">${t}</summary><div style="padding:0 14px 14px">${body}</div></details>`;
   const listBox = ([kind, title, hint]) => { const xs = cf.lists.filter(x=>x.farm_id===cf.farm && x.kind===kind);
     return `<div style="margin-top:10px"><b>${title}</b>${hint ? `<div class="sub">${hint}</div>` : ""}
@@ -8836,23 +8839,38 @@ const plDoneBy = (pl, evs) => pl.status==="done" ? { event_date:pl.done_date } :
 const ivTxt = v => v==null ? "—" : `${Math.round(v)} %`;
 const ivColor = v => v==null ? "" : v >= 115 ? "color:var(--s0);font-weight:700" : v < 95 ? "color:var(--s4);font-weight:700" : "";
 async function cowMeritCard(d){
-  const box = $("cowMerit"); if (!box || !canSee("vacas_datos") || !navigator.onLine) return;
+  // solo Admin Principal y perfiles de gerentes (Juan 25/11/2026), igual que el sexo del feto
+  const box = $("cowMerit"); if (!box) return;
+  if (!seeSex() || !navigator.onLine){ box.innerHTML = ""; return; }
   const c = d.cow;
-  const [m, dau, bull] = await Promise.all([
+  const [m, dau, bull, pa, st, sx] = await Promise.all([
     sb.from("cow_merit").select("*").eq("id", c.id).maybeSingle(),
     c.birth_date ? sb.from("cows").select("id,birth_date,lactation_num,active,exit_type,exit_date,status,snapshot").eq("dam", c.id).gte("birth_date", addDays(c.birth_date, 600)).order("birth_date")
       : Promise.resolve({ data:[] }),
-    c.sire ? sb.from("bulls").select("code,name").eq("code", c.sire).maybeSingle() : Promise.resolve({ data:null })]);
+    c.sire ? sb.from("bulls").select("code,name").eq("code", c.sire).maybeSingle() : Promise.resolve({ data:null }),
+    sb.from("cow_plans").select("bull").eq("cow_id", c.id).eq("plan_type", "toro").eq("status", "pending").order("id", { ascending:false }).limit(1),
+    sb.from("semen_stock").select("tank,bull_code,straws"), sb.from("bulls").select("code").eq("sexed", true)]);
   if (lastCowData?.cow?.id !== c.id) return;
+  // toro sugerido para el próximo servicio (mismas reglas de Ingreso rápido): clase + toros por servicio + pajillas del termo
+  const cls = pa.data?.[0]?.bull || null, preg = /(^|\/)PR(\/|$)/.test(c.status || "");
+  const svd = (d.events || []).filter(e=>e.event_type==="service" && (!c.birth_date || e.event_date >= c.birth_date)).map(e=>e.event_date);
+  const nSv = nextSvN(svd, c.last_calving, c.birth_date);
+  const sg = c.active && !preg ? bullSuggest(c.farm_id, c.pen, nSv, !(c.lactation_num > 0), cls, st.data || [], new Set((sx.data || []).map(z=>z.code))) : null;
+  const noRules = !((fcfg(c.farm_id).breed || {}).bulls || []).length;
   const x = m.data, hs = dau.data || [];
-  if (!x && !hs.length) { box.innerHTML = ""; return; }
-  const cls = { BUENA:"⭐ Buena", GYR:"Gyr", NORMAL:"Normal" }[x?.class_sug] || "";
+  const sugHtml = c.active && !preg ? `<div style="margin-top:8px;padding:8px;border-radius:10px;background:var(--card2, rgba(0,0,0,.04))">🐂 <b>Próximo servicio (${nSv}º)</b>: ${sg?.bull
+      ? `toro sugerido <b>${esc(sg.bull)}</b> · ${esc(sg.why)}${sg.noStock ? " · sin pajillas en el termo" : sg.straws ? ` · ${sg.straws} pajillas en el termo ${esc(sg.tank || "")}` : ""}`
+      : noRules && !c.lactation_num ? "sin sexado ni convencional con pajillas en el termo" : noRules ? `<span class="sub">falta llenar ☰ Configuración → Toros por servicio${isMain() ? "" : " (lo hace el administrador)"}</span>` : "sin toro permitido con pajillas"}
+      ${cls ? `<div class="sub">Clase asignada: ${esc(gnClsTxt(cls))}</div>` : ""}</div>` : "";
+  if (!x && !hs.length && !sugHtml) { box.innerHTML = ""; return; }
+  const cls2 = { BUENA:"⭐ Buena", GYR:"Gyr", NORMAL:"Normal" }[x?.class_sug] || "";
   const hIv = h => gnIx((h.snapshot || {})["Leche vida vs.hato"]);
   box.innerHTML = `<div class="card"><b>📈 Vida productiva</b>
     ${x?.merit!=null ? `<div style="display:flex;gap:10px;align-items:baseline;flex-wrap:wrap;margin-top:6px">
         <span style="font-size:28px;font-weight:800;${ivColor(x.merit)}">${ivTxt(x.merit)}</span>
-        <span>${cls ? `<b>${cls}</b> · ` : ""}${x.pct!=null ? `percentil ${x.pct} de ${x.heifer ? "las novillas" : "las vacas"} de la finca` : ""}</span></div>
+        <span>${cls2 ? `<b>${cls2}</b> · ` : ""}${x.pct!=null ? `percentil ${x.pct} de ${x.heifer ? "las novillas" : "las vacas"} de la finca` : ""}</span></div>
       <div class="sub">Índice de clasificación (100 % = promedio) · base: ${esc(x.basis || "")}</div>` : `<div class="sub" style="margin-top:4px">Sin índice todavía.</div>`}
+    ${sugHtml}
     ${x?.review ? `<div class="warn" style="margin-top:8px">🔎 <b>Para revisar:</b> ${esc(x.review)}. Mira sus hijas abajo antes de decidir su clase.</div>` : ""}
     <table class="ivt" style="font-size:13px;margin-top:8px">
       ${x?.iv!=null ? `<tr><td>Propia</td><td><b style="${ivColor(x.iv)}">${ivTxt(x.iv)}</b> leche vida vs hato · ${x.nlac} lactancia${x.nlac===1 ? "" : "s"}${x.l305v ? ` · 305 d vida ${Math.round(x.l305v).toLocaleString("es-CO")} kg` : ""}${x.llactv ? ` · lactancia vida ${Math.round(x.llactv).toLocaleString("es-CO")} kg` : ""}</td></tr>` : ""}
@@ -10785,7 +10803,7 @@ function ckClassify(c, ev, D){
   const calv = ev.filter(e=>e.t==="calving" && e.d <= D);   // un parto con aborto también reinicia el ciclo
   const C = calv.length ? calv[calv.length-1].d : (c.lc && c.lc <= D ? c.lc : null);
   const after = ev.filter(e=>e.d > (C || "0000") && e.d <= D);
-  if (after.some(e=>e.t==="repro_exam" && /^(DESCARTE|Lactoinducir)$/i.test(e.r||""))) return null;
+  if (after.some(e=>e.t==="repro_exam" && /(^|\+\s*)(DESCARTE|Lactoinducir)\s*(\+|$)/i.test(e.r||""))) return null;   // también "OVSYN + DESCARTE"
   const svs = after.filter(e=>e.t==="service"), sv = svs[svs.length-1];
   const lastEx = after.filter(e=>e.t==="repro_exam").pop();
   const exrep = (why) => {
@@ -11480,7 +11498,8 @@ function ckRows(D, id, r){
   const com = [fol.join(", ") || null, (r.extras||[]).map(v=>ckTxLabel(v, r)).join(", ") || null, r.sale ? "Venta programada " + fmt(r.sale.date) : null, r.note || null].filter(Boolean).join(" · ") || null;
   // lactoinducción: examen "Lactoinducir" (así sale del chequeo, como en Interherd)
   const lacto = r.lacto ? [{ ...base, event_type:"repro_exam", result:"Lactoinducir", category:r.cat || "EXREP", comments:"Lactoinducción programada " + fmt(r.lacto.date || D) }] : [];
-  if (r.cat==="EXREP") return [...(r.sel||[]).map(v=>({ ...base, event_type:"repro_exam", result:v, category:"EXREP", comments:com })), ...lacto];
+  // un solo EXREP con todos los resultados juntos (Juan 25/11/2026: "OVSYN + DIB" = Ovsynch con dispositivo, no dos exámenes)
+  if (r.cat==="EXREP") return [...((r.sel||[]).length ? [{ ...base, event_type:"repro_exam", result:r.sel.join(" + "), category:"EXREP", comments:com }] : []), ...lacto];
   const g = r.g ?? null, main = r.main;
   if (/^ECO/.test(r.cat)){
     const res = main==="Positivo" ? "Positivo" : main==="Dudoso" ? "Dudoso" : (r.fol||[]).includes("OVS2") ? "Negativo  OVS2"   // así está en Interherd (dos espacios)
