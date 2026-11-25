@@ -1392,7 +1392,7 @@ async function loadCow(id){
 const EV = { weight:"Peso", service:"Servicio", calving:"Parto", preg_check:"Diag. preñez", ultrasound:"Ecografía",
              repro_exam:"Examen rep.", heat:"Celo", vaccine:"Vacuna rep.", dry_off:"Secado", note:"Nota", transfer:"Traslado", exit:"Salida",
              embryo_loss:"Muerte embrionaria", abortion:"Aborto" };
-const isPositive = e => (e.event_type==="preg_check" && /^cargada/i.test(e.result||"")) ||
+const isPositive = e => (e.event_type==="preg_check" && /^(cargada|confirmada)/i.test(e.result||"")) ||
                         (e.event_type==="ultrasound" && /^positivo/i.test(e.result||""));
 // Estado de Interherd agrupado: Preñada / Servida / Vacía (+ En leche / Horra)
 const STATUS = [
@@ -2978,6 +2978,7 @@ const rgCat = r => r.kind==="vacas" ? (RG_REPRO_EV.includes(r.etype) ? "repro" :
 const RG_HERD_FARM = { RC:1, ISLA:7 };
 let rgReady = false, rgNames = null, rgState = null;
 async function initRegistros(){
+  await prodFarms().catch(()=>{});   // nombres de las fincas del usuario para el filtro y la lista
   if (!rgReady){
     rgReady = true;
     rgState = { farm:"", cat:"", status:"all", user:"", by:"evento", q:"", from:addDays(today(), -30), to:today(), view:jget("rgView", "tablas") };
@@ -3368,7 +3369,7 @@ async function rgExport(){
   const cat = c => (RG_CATS.find(x=>x[0]===c) || ["", ""])[1].replace(/^\S+\s/, "");
   const head = ["Fecha del evento","Categoría","Tipo","Vaca","Finca","Detalle","Toro","Resultado","Categoría Interherd","Operario","Comentarios","Registró","Registrado el","Estado"];
   const cell = v => String(v ?? "").replace(/[\t\r\n]+/g, " ").trim();
-  const lines = rows.map(r=>[String(r.date || "").slice(0, 10), cat(r.cat), r.title, r.cow, r.farm===7 ? "La Isla" : r.farm===1 ? "El Recodo" : "", r.detail,
+  const lines = rows.map(r=>[String(r.date || "").slice(0, 10), cat(r.cat), r.title, r.cow, r.farm ? farmName(r.farm) : "", r.detail,
     r.raw?.bull, r.raw?.result, r.raw?.category, r.raw?.operator, r.raw?.comments, rgWho(r.who), rgTime(r.when),
     r.status==="app" ? "" : r.status].map(cell).join("\t"));
   const txt = "\ufeff" + [head.join("\t"), ...lines].join("\r\n");
@@ -3408,7 +3409,7 @@ function rgDraw(){
           <div>${r.icon} <b>${esc(r.title)}</b>${r.cow ? ` · <button class="lnk" data-cow="${esc(r.cow)}">${esc(r.cow)}</button>` : ""}</div>
           <div class="sub" style="text-align:right;white-space:nowrap">${rgTime(r.when)}</div></div>
           <div class="sub">${esc(r.detail)}</div>
-          <div class="sub" style="margin-top:2px">Para el ${fmt(r.date)} · <b style="color:var(--ink)">${esc(rgWho(r.who))}</b>${r.farm ? " · " + (r.farm===7 ? "La Isla" : "El Recodo") : ""} ${pill(r.status)}${rgActs(r)}</div></div>`).join("")}`).join("")
+          <div class="sub" style="margin-top:2px">Para el ${fmt(r.date)} · <b style="color:var(--ink)">${esc(rgWho(r.who))}</b>${r.farm ? " · " + farmName(r.farm) : ""} ${pill(r.status)}${rgActs(r)}</div></div>`).join("")}`).join("")
         || `<div class="empty">${pend ? "Nada pendiente de pasar a Interherd 👍" : "Sin registros en esas fechas"}</div>`}</div>`}`;
   if (s.view==="tablas") rgTablesFill(rows);
 }
@@ -3855,6 +3856,7 @@ function evInit(){
     <div class="chips sm ckpan" style="padding:0;margin-top:8px"><div class="chips sm">${[["365","12 meses"],["180","6 meses"],["90","3 meses"]].map(([d,t])=>`<button data-evq="${d}">${t}</button>`).join("")}</div></div>
     <div class="sub" style="margin-top:8px">Tipo de servicio</div>
     <div class="chips sm ckpan" style="padding:0"><div class="chips sm">${EV_TYPES.map(([k,t])=>`<button class="${s.type===k ? "on" : ""}" data-evt="${k}">${t}</button>`).join("")}</div></div></div>
+    <div id="fsBody"><div class="card"><div class="empty">Cargando resumen de fertilidad…</div></div></div>
     <div id="evBody"><div class="card"><div class="empty">Cargando…</div></div></div>`;
   box.onchange = e => { const t = e.target;
     if (t.name==="evF"){ s.farm = t.value; jset("evFarm", s.farm); }
@@ -3865,7 +3867,108 @@ function evInit(){
   box.onclick = e => { const q = e.target.closest("[data-evq]"), ty = e.target.closest("[data-evt]");
     if (q){ s.to = today(); s.from = addDays(today(), -+q.dataset.evq); return evInit(); }
     if (ty){ s.type = ty.dataset.evt; return evInit(); } };
-  evLoad();
+  evLoad(); fsLoad();
+}
+// ── Resumen de fertilidad por lote (como el de Interherd) · SQL/reporte_fertilidad.sql (fertility_cows) ──
+// Es una foto de HOY de las vacas adultas activas (1 parto o más); no depende de las fechas de arriba.
+let fsCache = {}, fsSel = { lac:"", pens:[] };   // filtros: lactando / secas y lotes escogidos (vacío = todos)
+async function fsLoad(){
+  const farm = evState.farm, box = $("fsBody");
+  if (!fsCache[farm]){
+    if (!navigator.onLine){ box.innerHTML = `<div class="card"><div class="empty">El resumen de fertilidad necesita señal.</div></div>`; return; }
+    const { data, error } = await sb.rpc("fertility_cows", { p_farm: farm ? +farm : null });
+    if (error){ box.innerHTML = `<div class="card"><div class="empty">${/function|schema cache/i.test(error.message) ? "Falta correr SQL/reporte_fertilidad.sql" : "No se pudo cargar: " + esc(error.message)}</div></div>`; return; }
+    fsCache[farm] = data || [];
+  }
+  if (evState.farm===farm) fsRender(fsCache[farm]);
+}
+function fsAgg(rows){
+  const D = today(), dd = (a, b) => a && b ? days(a, b) : null;
+  const avg = xs => { const v = xs.filter(x=>x!=null && isFinite(x)); return v.length ? v.reduce((a, b)=>a + b, 0) / v.length : null; };
+  const pr = r => /^PR(\/|$)/.test(r.status || ""), n = rows.length;
+  const P = rows.filter(pr), L = rows.filter(r=>r.lact), S = rows.filter(r=>!r.lact);
+  const cnt = f => rows.filter(f).length;
+  const diag1 = cnt(r=>r.n_svc >= 2 || (r.n_svc===1 && (pr(r) || r.first_svc <= addDays(D, -45))));
+  const pend = cnt(r=>!pr(r) && r.last_svc && r.last_svc > addDays(D, -45));
+  const svcs = rows.reduce((a, r)=>a + (r.n_svc || 0), 0) - pend;
+  const lac = rows.filter(r=>r.lac_dur >= 200);
+  const kgL = L.filter(r=>r.last_kg > 0 && r.conc != null);
+  return { n, vistas:cnt(r=>r.first_heat), servidas:cnt(r=>r.n_svc > 0), pren:P.length, desc:cnt(r=>/^Desc/i.test(r.status || "")),
+    dHeat:avg(rows.map(r=>dd(r.lc, r.first_heat))), dSvc:avg(rows.map(r=>dd(r.lc, r.first_svc))),
+    dConc:avg(P.map(r=>dd(r.lc, r.last_svc))), d1Conc:avg(P.map(r=>dd(r.first_svc, r.last_svc))),
+    iepPrev:avg(rows.map(r=>{ const g = dd(r.pc, r.lc); return g >= 280 && g <= 800 ? g : null; })),
+    iepProy:avg(P.map(r=>r.last_svc ? dd(r.lc, r.last_svc) + cGest(r.farm_id) : null)),
+    t1: diag1 ? cnt(r=>pr(r) && r.n_svc===1) / diag1 : null, tAll: svcs > 0 ? P.length / svcs : null,
+    tres:cnt(r=>r.n_svc >= 3), s24:cnt(r=>r.first_svc && r.first_svc <= addDays(r.lc, cVwp(r.farm_id) + 24)),
+    pr100:cnt(r=>pr(r) && r.last_svc && dd(r.lc, r.last_svc) <= 100),
+    nopr200:cnt(r=>pr(r) ? r.last_svc && dd(r.lc, r.last_svc) > 200 : dd(r.lc, D) > 200),
+    lact:L.length, secas:S.length,
+    dur:avg(lac.map(r=>+r.lac_dur)), tot:avg(lac.map(r=>+r.lac_tot)), k305:avg(lac.map(r=>+r.lac_305)),
+    kg:avg(L.map(r=>r.last_kg > 0 ? +r.last_kg : null)), conc:avg(L.map(r=>r.conc!=null ? +r.conc : null)),
+    cl: kgL.length ? kgL.reduce((a, r)=>a + +r.conc, 0) / kgL.reduce((a, r)=>a + +r.last_kg, 0) : null,
+    del:avg(L.map(r=>dd(r.lc, D))), dPeak:avg(rows.map(r=>r.dpeak)), peak:avg(rows.map(r=>r.peak!=null ? +r.peak : null)),
+    dSecos:avg(S.filter(pr).map(r=>r.last_svc && r.dry ? dd(r.dry, addDays(r.last_svc, cGest(r.farm_id))) : null)) };
+}
+function fsRender(all){
+  const box = $("fsBody");
+  if (!all.length){ box.innerHTML = `<div class="card"><b>📊 Resumen de fertilidad</b><div class="empty">Sin vacas adultas activas</div></div>`; return; }
+  const allPens = [...new Set(all.map(r=>r.pen || "—"))].sort(byNumTxt);
+  fsSel.pens = fsSel.pens.filter(p=>allPens.includes(p));
+  const rows = all.filter(r=>(!fsSel.lac || (fsSel.lac==="lac" ? r.lact : !r.lact)) && (!fsSel.pens.length || fsSel.pens.includes(r.pen || "—")));
+  const pens = [...new Set(rows.map(r=>r.pen || "—"))].sort(byNumTxt);
+  const cols = [[fsSel.pens.length || fsSel.lac ? "Selección" : "Todas", fsAgg(rows)], ...pens.map(p=>[p, fsAgg(rows.filter(r=>(r.pen || "—")===p))])];
+  const chip = (on, attr, txt) => `<button class="${on ? "on" : ""}" ${attr}>${on ? "✓ " : ""}${esc(txt)}</button>`;
+  const filt = `<div class="sub" style="margin-top:8px">Estado</div>
+    <div class="chips sm ckpan" style="padding:0"><div class="chips sm">${[["","Todas"],["lac","Lactando"],["seca","Secas"]].map(([k, t])=>chip(fsSel.lac===k, `data-fslac="${k}"`, t)).join("")}</div></div>
+    <div class="sub" style="margin-top:6px">Lotes <span class="sub">(toca varios; ninguno = todos)</span></div>
+    <div class="chips sm ckpan" style="padding:0"><div class="chips sm">${allPens.map(p=>chip(fsSel.pens.includes(p), `data-fspen="${esc(p)}"`, p)).join("")}${fsSel.pens.length ? `<button data-fspen="">✕ Quitar</button>` : ""}</div></div>`;
+  if (!rows.length){ box.innerHTML = `<div class="card"><b>📊 Resumen de fertilidad por lote</b>${filt}<div class="empty">Ninguna vaca con esos filtros</div></div>`; fsBind(all); return; }
+  const nf = (v, d = 0) => v==null ? "" : (+v).toLocaleString("es-CO", { minimumFractionDigits:d, maximumFractionDigits:d });
+  const np = (x, n) => x ? `${nf(x)} <span class="sub">(${Math.round(x / n * 100)}%)</span>` : "";
+  const pc = v => v==null ? "" : Math.round(v * 100) + "%";
+  const sec = t => `<tr><td colspan="${cols.length + 1}" style="font-weight:800;padding-top:10px">${t}</td></tr>`;
+  const row = (t, f, cls = "") => `<tr${cls}><td style="position:sticky;left:0;background:var(--card);white-space:nowrap">${t}</td>${cols.map(([, a])=>`<td style="text-align:right;white-space:nowrap">${f(a)}</td>`).join("")}</tr>`;
+  box.innerHTML = `<div class="card"><b>📊 Resumen de fertilidad por lote</b>
+    <div class="sub">Vacas adultas activas hoy (1 parto o más)${evState.farm ? " · " + esc(farmName(evState.farm)) : ""}. No depende de las fechas de abajo.</div>${filt}
+    <div style="overflow-x:auto;margin-top:6px"><table class="ivt" style="font-size:13px;min-width:100%">
+      <tr><th style="position:sticky;left:0;background:var(--card)"></th>${cols.map(([p])=>`<th style="text-align:right;white-space:nowrap">${esc(p)}</th>`).join("")}</tr>
+      ${row("<b># vacas</b>", a=>`<b>${nf(a.n)}</b>`)}
+      ${sec("Estado de fertilidad actual")}
+      ${row("Vistas en calor", a=>np(a.vistas, a.n))}${row("Servidas", a=>np(a.servidas, a.n))}
+      ${row("Confirmadas preñadas", a=>np(a.pren, a.n))}${row("Para descarte", a=>np(a.desc, a.n))}
+      ${sec("Intervalos de fertilidad")}
+      ${row("Días parto - 1er calor", a=>nf(a.dHeat))}${row("Días parto - 1er servicio", a=>nf(a.dSvc))}
+      ${row("Días parto - concepción", a=>nf(a.dConc))}${row("Días 1er servicio - concepción", a=>nf(a.d1Conc))}
+      ${row("Intervalo entre partos previo", a=>nf(a.iepPrev))}${row("Intervalo entre partos proyectado", a=>nf(a.iepProy))}
+      ${sec("Tasas de fertilidad")}
+      ${row("Concepción al primer servicio", a=>pc(a.t1))}${row("Concepción todos los servicios", a=>pc(a.tAll))}
+      ${row("Servicios / concepción", a=>a.tAll ? nf(1 / a.tAll, 1) : "")}${row("Vacas con 3 o más servicios", a=>np(a.tres, a.n))}
+      ${row("Servidas 24 días desde inicio de servicio", a=>np(a.s24, a.n))}${row("Preñadas antes de 100 días", a=>np(a.pr100, a.n))}
+      ${row("No preñadas después de 200 días", a=>np(a.nopr200, a.n))}
+      ${sec("Estado de lactancia")}
+      ${row("Lactando", a=>np(a.lact, a.n))}${row("Secas", a=>np(a.secas, a.n))}
+      ${sec("Parámetros de la lactancia")}
+      ${row("Duración de la lactancia (días)", a=>nf(a.dur))}${row("Producción por lactancia (kg)", a=>nf(a.tot))}${row("Producción a 305 días (kg)", a=>nf(a.k305))}
+      ${sec("Producción y alimentación")}
+      ${row("Última leche / día", a=>nf(a.kg, 1))}${row("Último concentrado / día", a=>nf(a.conc, 1))}${row("Último concentrado / leche", a=>nf(a.cl, 3))}
+      ${row("Días en leche", a=>nf(a.del))}${row("Días al pico", a=>nf(a.dPeak))}${row("Producción al pico", a=>nf(a.peak, 1))}
+      ${row("Días secos proyectados", a=>nf(a.dSecos))}
+    </table></div>
+    <details style="margin-top:6px"><summary class="lnk">¿Cómo se calcula?</summary><div class="sub" style="margin-top:4px">
+      Servicios de la lactancia actual (dos con 3 días o menos cuentan como uno). Preñada = estado PR. Concepción = último servicio de las preñadas.
+      Tasa al 1er servicio = preñadas con un solo servicio ÷ primeros servicios con resultado (repitió, quedó preñada o pasaron 45 días).
+      Todos los servicios = preñadas ÷ servicios con resultado. Inicio de servicio = parto + PVE de la finca (☰ Configuración).
+      No preñadas después de 200 días = preñadas después del día 200 + vacías con más de 200 días en leche.
+      Lactancia = la última cerrada (secas: la actual; en ordeño: la anterior) con los controles unidos en línea recta; solo lactancias de 200 días o más.
+      Leche y concentrado = último control y último concentrado de las vacas en ordeño. Proteína, grasa y CCS por vaca todavía no están en Mykau.</div></details></div>`;
+  fsBind(all);
+}
+function fsBind(all){
+  $("fsBody").onclick = e => {
+    const l = e.target.closest("[data-fslac]"), p = e.target.closest("[data-fspen]");
+    if (l){ fsSel.lac = l.dataset.fslac; return fsRender(all); }
+    if (p){ const v = p.dataset.fspen; fsSel.pens = !v ? [] : fsSel.pens.includes(v) ? fsSel.pens.filter(x=>x!==v) : [...fsSel.pens, v]; return fsRender(all); }
+  };
 }
 async function evLoad(){
   const s = evState, key = [s.farm, s.from, s.to].join("|");
@@ -3884,7 +3987,7 @@ async function evLoad(){
 function evCompute(d){
   const s = evState, byCow = {};
   d.ev.forEach(e=>(byCow[e.cow_id] ||= []).push(e));
-  const pos = e => (e.event_type==="ultrasound" && e.result==="Positivo") || (e.event_type==="preg_check" && /^(cargada|positivo)/i.test(e.result || ""));
+  const pos = e => (e.event_type==="ultrasound" && e.result==="Positivo") || (e.event_type==="preg_check" && /^(cargada|confirmada|positivo)/i.test(e.result || ""));
   const neg = e => /^(negativo|vac)/i.test(e.result || "");
   const svc = [];
   Object.values(byCow).forEach(xs=>{
@@ -5674,7 +5777,7 @@ function rnTablesHtml(){
         return `<tr${has ? "" : ` style="opacity:.5"`}><td style="${sticky}"><b>${fmt(day).slice(0, 5)}</b></td>${grps.map(g=>`<td style="text-align:right">${cell(get(day, g))}</td>`).join("")}${total ? `<td style="text-align:right"><b>${total(day)}</b></td>` : ""}</tr>`; }).join("")}
     </table></div></div>`;
   const sumDay = (day, f) => rep.filter(r=>r.report_date===day).reduce((a, r)=>a + (f(r) || 0), 0);
-  return `<div class="sub" style="margin:0 2px 8px">Últimos 14 días · ${d.farm===7 ? "La Isla" : d.farm===1 ? "El Recodo" : "finca " + d.farm}. Los días sin reporte salen en gris.</div>`
+  return `<div class="sub" style="margin:0 2px 8px">Últimos 14 días · ${farmName(d.farm)}. Los días sin reporte salen en gris.</div>`
     + table("🐄 Animales por lote", "# de animales del reporte de cada día", r=>r?.animals ?? "", day=>sumDay(day, r=>+r.animals) || "")
     + table("🌱 Potrero de cada lote", "Potrero (y 2º potrero) donde estuvo", r=>esc(pad(r)), null)
     + table("🌾 Bultos de concentrado", "Bultos de concentrado que se le dieron a cada lote", r=>n1(conc(r)), day=>n1(sumDay(day, conc)));
@@ -6706,7 +6809,7 @@ async function lsRpLoad(){
   lsRpRender();
 }
 const lsRpView = () => (lsRp.rows || []).filter(r=>(!lsRp.f || lsRp.tag[r.id]?.[lsRp.f]) && (!lsRp.pen || r.pen===lsRp.pen) && (!lsRp.ev || r.ev===lsRp.ev));
-const lsRpTone = (ev, res) => /^(Positivo|Cargada)/.test(res) ? "--s0" : /^(Negativo|Vacía|ME|Aborto)/.test(res) ? "--s4" : /^Dudoso/.test(res) ? "--s2"
+const lsRpTone = (ev, res) => /^(Positivo|Cargada|Confirmada)/i.test(res) ? "--s0" : /^(Negativo|Vacía|ME|Aborto)/.test(res) ? "--s4" : /^Dudoso/.test(res) ? "--s2"
   : ev==="EXREP" && /SUCIA|METRITIS|PIOMETRA|RETE/.test(res) ? "--s3" : "--muted";
 function lsRpRender(){
   const box = $("lsRp"); if (!box) return;
@@ -6715,7 +6818,7 @@ function lsRpRender(){
   const rows = lsRpView(), cows = new Set(rows.map(r=>r.id)), nCow = f => new Set(all.filter(r=>!f || lsRp.tag[r.id]?.[f]).map(r=>r.id)).size;
   const chip = (attr, v, cur, t) => `<button class="${cur===v ? "on" : ""}" ${attr}="${esc(v)}">${t}</button>`;
   const kpi = (n, t) => `<div><b>${n}</b><span>${t}</span></div>`;
-  const preg = rows.filter(r=>/^(Positivo|Cargada)/.test(r.res)).length;
+  const preg = rows.filter(r=>/^(Positivo|Cargada|Confirmada)/i.test(r.res)).length;
   const fd = d => new Date(d + "T12:00").toLocaleDateString("es-CO", { weekday:"short", day:"numeric", month:"short" });
   const protos = (lsRp.protos || []).map(P=>{ const mine = P.cows.filter(c=>cows.has(c)).sort(byNum); if (!mine.length) return "";
     return `<div class="hscard" style="margin-top:10px"><div style="display:flex;justify-content:space-between;align-items:baseline;gap:8px">
@@ -8045,12 +8148,15 @@ function calvingTxt(e){
   return parts.length ? ` · ${esc(parts.join(" · "))}` : "";
 }
 
-const FARM_TG = [["1","El Recodo"],["7","La Isla"]];
-const farmOn = (cur, all) => cur===all ? FARM_TG.map(f=>f[0]) : [String(cur)];
-const farmToggle = (attr, cur, all) => `<div class="chips sm ckpan" style="padding:0"><div class="chips">${FARM_TG.map(([v, t])=>{
+// fincas del usuario (farm_lists, guardadas por prodFarms); si aún no se han descargado, las de siempre
+const FARM_TG0 = [["1","El Recodo"],["7","La Isla"]];
+const farmTg = () => { const fs = jget("mkFarms", []); return fs.length ? fs.map(f=>[String(f.id), farmLabel(f)]) : FARM_TG0; };
+const farmName = id => { const f = jget("mkFarms", []).find(x=>x.id===+id); return f ? farmLabel(f) : (FARM_TG0.find(x=>x[0]===String(id))?.[1] || (id ? "Finca " + id : "")); };
+const farmOn = (cur, all) => cur===all ? farmTg().map(f=>f[0]) : [String(cur)];
+const farmToggle = (attr, cur, all) => `<div class="chips sm ckpan" style="padding:0"><div class="chips">${farmTg().map(([v, t])=>{
   const on = farmOn(cur, all).includes(v); return `<button class="${on ? "on" : ""}" ${attr}="${v}">${on ? "✓ " : ""}${t}</button>`; }).join("")}</div></div>`;
 const farmFlip = (cur, v, all) => { const s = new Set(farmOn(cur, all)); s.has(v) ? s.delete(v) : s.add(v);
-  return !s.size ? cur : s.size===FARM_TG.length ? all : [...s][0]; };
+  return !s.size ? cur : s.size===farmTg().length ? all : [...s][0]; };
 const seg = (name, opts, val) => `<div class="seg">${opts.map(([v,t])=>
   `<label><input type="radio" name="${name}" value="${esc(v)}" ${v===val?"checked":""}><span>${esc(t)}</span></label>`).join("")}</div>`;
 
@@ -10285,7 +10391,7 @@ const ckCfg = f => fcfg(f).checkup;
 const ckStagesF = f => (ckCfg(f).stages || []).filter(x=>x.on!==false).map(x=>[x.code, +x.from, +x.late]);
 const ckName = (code, f) => (ckCfg(f).stages || []).find(x=>x.code===code)?.label || code;
 const ckSameTx = (x, v) => x===v || (!!ckTxKey(x) && ckTxKey(x)===ckTxKey(v));
-const ckIsPos = e => (e.t==="preg_check" || e.t==="ultrasound") && /^(cargada|positivo)/i.test(e.r||"");
+const ckIsPos = e => (e.t==="preg_check" || e.t==="ultrasound") && /^(cargada|confirmada|positivo)/i.test(e.r||"");
 const ckIsEmpty = e => e.t==="embryo_loss" || e.t==="abortion" || (e.t==="preg_check" && /^vac/i.test(e.r||"")) ||
                        (e.t==="ultrasound" && /^negativo/i.test(e.r||""));
 const ckStageOf = g => g < 39 ? "ECO1" : g < 60 ? "ECO2" : g < 140 ? "DPR" : g < 200 ? "DP5" : "DPSEC";
@@ -10357,12 +10463,12 @@ window.addEventListener("online", ()=>{ updCheckNet(); flushCheck(); });
 window.addEventListener("offline", ()=>updCheckNet());
 
 let ckReady = false;
-function initCheck(){
+async function initCheck(){
   updCheckNet();
   if (!ckReady){
     ckReady = true;
-    const last = jget("ckLast", {});
-    $("ckFarm").innerHTML = seg("ckF", RP_FARMS.map(([id,n])=>[String(id),n]), String(last.farm || 1));
+    const last = jget("ckLast", {}), fl = await rpFarmList();   // fincas del usuario (no fijas El Recodo / La Isla)
+    $("ckFarm").innerHTML = seg("ckF", fl.map(([id,n])=>[String(id),n]), String(fl.some(f=>f[0]===last.farm) ? last.farm : fl[0][0]));
     $("ckDate").value = today(); $("ckDate").max = addDays(today(), 7);
     $("ckFarm").addEventListener("change", ckShow); $("ckDate").addEventListener("change", ckShow);
     $("ckLoad").addEventListener("click", ckDownload);
@@ -11030,10 +11136,16 @@ async function flushCheck(){
 //   cuota total finca G = hato/chequeos al año × (1 + % ME) · cuota novillas F = G × tasa descarte · cuota vacas E = G − F
 let rpRows = null, rpReady = false;
 const RP_FARMS = [[1,"El Recodo"],[7,"La Isla"]];
+// fincas de producción del usuario (de farm_lists); si no hay datos, las de siempre
+async function rpFarmList(){
+  const fs = await prodFarms().catch(()=>null);
+  return fs?.length ? fs.map(f=>[f.id, farmLabel(f)]) : RP_FARMS;
+}
 async function initReport(){
   if (!rpReady){
     rpReady = true;
-    $("rpFarm").innerHTML = seg("rpF", RP_FARMS.map(([id,n])=>[String(id),n]), String(jget("rpLast", {}).farm || 1));
+    const fl = await rpFarmList(), lastF = jget("rpLast", {}).farm;
+    $("rpFarm").innerHTML = seg("rpF", fl.map(([id,n])=>[String(id),n]), String(fl.some(f=>f[0]===lastF) ? lastF : fl[0][0]));
     $("rpPeriod").innerHTML = seg("rpP", [["365","1 año"],["730","2 años"],["99999","Todo"]], jget("rpLast", {}).per || "365");
     $("rpFarm").addEventListener("change", renderReport); $("rpPeriod").addEventListener("change", renderReport);
   }
