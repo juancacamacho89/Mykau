@@ -5920,7 +5920,8 @@ const LS_LISTS = [
   ["sinserv", "⏳ Sin servir", "Informativa · en lactancia, vacías, más de 60 días de paridas y sin servicio (anestro)", "service"],
   ["repet", "🔁 Repetidoras", "Informativa · 3 o más servicios en esta lactancia sin quedar preñadas", "service"],
   ["novillas", "🐂 Novillas para servir", "Informativa · 16 meses o más y 380 kg o más, sin servicio", "service"],
-  ["abiertas", "⚠️ Abiertas largas", "Informativa · más de 150 días de paridas y vacías", ""]];
+  ["abiertas", "⚠️ Abiertas largas", "Informativa · más de 150 días de paridas y vacías", ""],
+  ["descarte", "🚪 Descarte / venta", "Vacas en descarte: programadas (resultado DESCARTE en el chequeo, 🚪 Descarte u hoja de vida) con su fecha y motivo, y las que ya están en estado Descarte", ""]];
 // Mykau Clientes: ningún cliente hace resincro (Juan 25/11/2026) → sin la lista OVS2
 if (window.MKC) LS_LISTS.splice(LS_LISTS.findIndex(l=>l[0]==="resincro"), 1);
 let lsData = null, lsState = { farm:null, list:"chequeo", pen:"", sel:new Set(), ckDate:null, ord:"num", q:"" };
@@ -6529,25 +6530,43 @@ $("gnBody").addEventListener("input", e=>{
 
 async function initListas(){
   if (!lsState.ckDate) lsState.ckDate = addDays(today(), 1);
-  if (!lsState.farm){ const fs = await prodFarms(); lsState.farm = jget("lsLast", {}).farm || fs[0]?.id || 1; }
+  if (lsState.farm==null){ const fs = await prodFarms(); lsState.farm = jget("lsLast", {}).farm ?? fs[0]?.id ?? 1; }
   await lsLoad(); renderListas();
 }
+// fincas de las listas: farm 0 = las dos (Juan 25/11/2026, para revisar secados y todo junto)
+const lsFarmList = () => (jget("mkFarms", []).length ? jget("mkFarms", []) : [{ id:1, herd:"RC" }, { id:7, herd:"ISLA" }]);
+const lsFarmIds = () => lsState.farm===0 ? lsFarmList().map(f=>f.id) : [lsState.farm];
+const lsFarmName = () => { if (lsState.farm===0) return "Ambas fincas"; const f = lsFarmList().find(x=>x.id===lsState.farm); return f ? farmLabel(f) : ""; };
 async function lsLoad(force){
-  const farm = lsState.farm, key = `lsData:${farm}`;
-  if (navigator.onLine && (force || !lsData || lsData.farm !== farm || Date.now() - lsData.at > 10*6e4)){
+  const ids = lsFarmIds();
+  if (navigator.onLine && (force || !lsData || lsData.farm !== lsState.farm || Date.now() - lsData.at > 10*6e4)){
     $("lsBody").innerHTML = `<div class="card"><div class="empty">Descargando vacas y eventos…</div></div>`;
-    const c = await psAll(()=>sb.from("cows").select("id,pen,status,birth_date,last_calving,lactation_num,sex").eq("farm_id", farm).eq("active", true).order("id"));
+    for (const f of ids) await lsFetch(f);
+  }
+  // una finca: su copia; las dos: se juntan (cada vaca lleva su farm_id)
+  const parts = ids.map(f=>jget(`lsData:${f}`, null)).filter(Boolean);
+  if (!parts.length){ lsData = null; return; }
+  lsData = parts.length===1 && lsState.farm!==0 ? parts[0] : { farm:lsState.farm, at:Math.min(...parts.map(p=>p.at)),
+    cows:parts.flatMap(p=>(p.cows || []).map(c=>({ ...c, farm_id:c.farm_id ?? p.farm }))), ev:parts.flatMap(p=>p.ev || []),
+    lacto:parts.flatMap(p=>p.lacto || []), plans:parts.flatMap(p=>p.plans || []), rs:parts.flatMap(p=>p.rs || []), dryPlans:parts.flatMap(p=>p.dryPlans || []),
+    cullPlans:parts.flatMap(p=>p.cullPlans || []) };
+}
+async function lsFetch(farm){
+  const key = `lsData:${farm}`;
+  {
+    const c = await psAll(()=>sb.from("cows").select("id,pen,status,birth_date,last_calving,lactation_num,sex,farm_id").eq("farm_id", farm).eq("active", true).order("id"));
     const e = await psAll(()=>sb.from("cow_events").select("cow_id,event_date,event_type,result,weight_kg,category,cows!inner(farm_id)").eq("cows.farm_id", farm)
       .gte("event_date", addDays(today(), -600)).in("event_type", ["service","calving","ultrasound","preg_check","repro_exam","embryo_loss","abortion","weight"]).order("event_date"));
     const lc = await sb.from("lacto_program").select("cow_id").eq("farm_id", farm).eq("active", true);   // vacas hoy en el programa de Lactotropina (módulo 💉, ya no el Excel)
     const pl = await sb.from("cow_plans").select("cow_id,due_date,note,created_at,plan_type").eq("farm_id", farm).in("plan_type", PL_CK_TYPES).eq("status", "pending");
     const rs = await sb.from("treatments_cow").select("cow_id,start_date").eq("farm_id", farm).eq("protocol", "Ovsynch").like("notes", "%resincro%").gte("start_date", addDays(today(), -60));
     const dp = await sb.from("cow_plans").select("cow_id,due_date,note").eq("farm_id", farm).eq("plan_type", "secado").eq("status", "pending");   // secados programados
+    const cp = await sb.from("cow_plans").select("cow_id,due_date,note").eq("farm_id", farm).eq("plan_type", "descarte").eq("status", "pending");   // descartes programados (lista Descarte / venta)
     if (!c.error && !e.error){ jset(key, { farm, at:Date.now(), cows:c.data, ev:e.data.map(x=>[x.cow_id, x.event_date, x.event_type, noSex(x.result), x.weight_kg, x.category]),
       lacto: lc.error ? [] : lc.data, plans: pl.error ? [] : pl.data.map(x=>[x.cow_id, x.due_date, x.note, x.created_at.slice(0, 10), x.plan_type]),
-      rs: rs.error ? [] : rs.data.map(x=>[x.cow_id, x.start_date]), dryPlans: dp.error ? [] : dp.data.map(x=>[x.cow_id, x.due_date, x.note]) }); }
+      rs: rs.error ? [] : rs.data.map(x=>[x.cow_id, x.start_date]), dryPlans: dp.error ? [] : dp.data.map(x=>[x.cow_id, x.due_date, x.note]),
+      cullPlans: cp.error ? [] : cp.data.map(x=>[x.cow_id, x.due_date, x.note]) }); }
   }
-  lsData = jget(key, null);
 }
 // cada vaca: días en leche, servicios de esta lactancia, preñez, parto esperado y secado
 function lsCompute(){
@@ -6559,7 +6578,8 @@ function lsCompute(){
     const calv = ev.filter(e=>e.t==="calving").pop(), C = calv?.d || c.last_calving || null;
     const after = ev.filter(e=>!C || e.d > C), svs = after.filter(e=>e.t==="service"), sv = svs[svs.length - 1];
     const st = c.status || "", preg = /(^|\/)PR(\/|$)/.test(st), lac = /(^|\/)Lac/.test(st);
-    const exp = preg && sv ? addDays(sv.d, cGest(lsState.farm)) : null, dry = exp ? addDays(exp, -cDry(lsState.farm)) : null;
+    const cf = c.farm_id ?? lsState.farm;   // con las dos fincas, cada vaca con la configuración de la suya
+    const exp = preg && sv ? addDays(sv.d, cGest(cf)) : null, dry = exp ? addDays(exp, -cDry(cf)) : null;
     const w = ev.filter(e=>e.t==="weight" && e.w).pop();
     // chequeo: el mismo motor del módulo Chequeo, para la fecha escogida
     let ck = ckClassify({ ...c, bd:c.birth_date, lc:c.last_calving }, ev, lsState.ckDate || D);
@@ -6578,7 +6598,10 @@ function lsCompute(){
     // secado programado (Ingreso rápido / hoja de vida): sale en "Para secar" con su fecha, aunque no le toque por fecha de preñez
     const dp = (lsData?.dryPlans || []).filter(p=>p[0]===c.id).sort((a, b)=>a[1].localeCompare(b[1]))[0];
     const dried = /^HO/i.test(c.pen || "") || /Horra|Seca/i.test(st);
-    return { c, C, ck, doubt, rs, dryPlan: dp && !dried ? { due:dp[1], note:dp[2] } : null, dried, lacto: lsLactoSet().has(c.id), del: C ? days(C, D) : null, svs, sv, preg, lac, exp, dry, gest: preg && sv ? days(sv.d, D) : null,
+    // descarte: programado (chequeo con resultado DESCARTE, 🚪 Descarte u hoja de vida) o estado "Desc." de Interherd
+    const cp = (lsData?.cullPlans || []).filter(p=>p[0]===c.id).sort((a, b)=>a[1].localeCompare(b[1]))[0];
+    const cull = cp || /(^|\/)Desc\.?(\/|$)/i.test(st) ? { due:cp?.[1] || null, note:cp?.[2] || "" } : null;
+    return { c, C, ck, doubt, rs, cull, dryPlan: dp && !dried ? { due:dp[1], note:dp[2] } : null, dried, lacto: lsLactoSet().has(c.id), del: C ? days(C, D) : null, svs, sv, preg, lac, exp, dry, gest: preg && sv ? days(sv.d, D) : null,
       ageM: c.birth_date ? days(c.birth_date, D)/30.44 : null, w: w ? +w.w : null, heifer: !(c.lactation_num > 0) && !C };
   });
 }
@@ -6667,10 +6690,12 @@ function lsPick(all, k){
     sinserv: x=>x.lac && !x.preg && !x.svs.length && x.del > 60,
     repet: x=>!x.preg && x.svs.length >= 3,
     novillas: x=>x.heifer && !x.svs.length && !x.preg && x.ageM >= 16 && (x.w==null || x.w >= 380),
-    abiertas: x=>x.lac && !x.preg && x.del > 150 }[k];
+    abiertas: x=>x.lac && !x.preg && x.del > 150,
+    descarte: x=>!!x.cull }[k];
   const sortBy = { resincro:(a,b)=>byNum(a.c.pen||"", b.c.pen||"") || byNum(a.c.id, b.c.id), chequeo:(a,b)=>byNum(a.c.pen||"", b.c.pen||"") || CKO.indexOf(a.ck.cat) - CKO.indexOf(b.ck.cat) || byNum(a.c.id, b.c.id),
     secar:(a,b)=>(a.dryPlan?.due || a.dry || "").localeCompare(b.dryPlan?.due || b.dry || ""), parto:(a,b)=>a.exp.localeCompare(b.exp), sinserv:(a,b)=>b.del - a.del,
-    repet:(a,b)=>b.svs.length - a.svs.length, novillas:(a,b)=>b.ageM - a.ageM, abiertas:(a,b)=>b.del - a.del }[k];
+    repet:(a,b)=>b.svs.length - a.svs.length, novillas:(a,b)=>b.ageM - a.ageM, abiertas:(a,b)=>b.del - a.del,
+    descarte:(a,b)=>(a.cull.due || "9").localeCompare(b.cull.due || "9") || byNum(a.c.pen||"", b.c.pen||"") || byNum(a.c.id, b.c.id) }[k];
   return all.filter(f).sort(sortBy);
 }
 function lsDetail(x, k){
@@ -6689,6 +6714,9 @@ function lsDetail(x, k){
   if (k==="repet") return `${x.svs.length} servicios · último ${fmt(x.sv.d)}${x.del!=null ? ` · ${x.del} d de parida` : ""}`;
   if (k==="novillas") return `${Math.floor(x.ageM)} meses${x.w ? ` · ${x.w} kg` : " · sin peso"}`;
   if (k==="abiertas") return `${x.del} d de parida · ${x.svs.length} servicio${x.svs.length===1?"":"s"}`;
+  if (k==="descarte") return (x.cull.due ? `<b style="color:var(--s4)">🚪 venta ${fmt(x.cull.due)}</b> (${dd(x.cull.due)})` : `<b>🚪 en descarte</b>`)
+    + (x.cull.note ? ` · ${esc(x.cull.note.replace(/\s*\(examen \d+\)/, ""))}` : "")
+    + ` · ${x.preg ? `preñada${x.gest!=null ? " " + x.gest + " d" : ""}` : "vacía"}${x.del!=null && x.lac ? ` · ${x.del} d de parida` : x.dried ? " · seca" : ""}`;
   return "";
 }
 // resincro: primer Gestar del OVS2 a las marcadas (un tratamiento "Ovsynch" día 0 por vaca: descuenta del inventario ese día)
@@ -6700,7 +6728,7 @@ async function lsResincro(){
   await hsCatalog(); const code = hsCatGet().supplies.find(m=>m.code==="GESTAR") ? "GESTAR" : OVS_GNRH[0];
   if (!confirm(`Gestar ${RS_DOSE} mL el ${fmt(G)} a ${todo.length} vaca${todo.length===1 ? "" : "s"} (día 0 del OVS2)?${skip ? `\n${skip} ya lo tenían y no se repiten.` : ""}\n\n${todo.map(x=>x.c.id).join(", ")}`)) return;
   const uid = () => crypto.randomUUID ? crypto.randomUUID() : String(Date.now()) + Math.random();
-  const tx = todo.map(x=>({ client_id:uid(), farm_id:s.farm, cow_id:x.c.id, start_date:G, diagnosis:"Ovsynch", protocol:"Ovsynch",
+  const tx = todo.map(x=>({ client_id:uid(), farm_id:x.c.farm_id ?? s.farm, cow_id:x.c.id, start_date:G, diagnosis:"Ovsynch", protocol:"Ovsynch",
     prescribed_by: isAdmin ? "Juan (veterinario)" : "Chequeo", notes:`Día 0 del OVS2 (resincro, IA Ovsynch ${fmt(x.rs.sv)})` }));
   const { data:t, error } = await sb.from("treatments_cow").insert(tx).select("id");
   if (error || !t?.length) return toast("No se pudo registrar: " + (error?.message || "sin permiso"));
@@ -6713,11 +6741,11 @@ let lsTxOpen = false, lsTxRows = null;
 async function lsTxLoad(){
   const box = $("lsTx"); if (!box) return;
   if (!navigator.onLine){ box.innerHTML = `<div class="empty">Necesitas señal.</div>`; return; }
-  const farm = lsState.farm, t0 = today();
+  const farms = lsFarmIds(), t0 = today();
   const [tx, pl] = await Promise.all([
-    sb.from("treatments_cow").select("id,cow_id,start_date,diagnosis,protocol,notes,treatment_items(supply_code,dose,unit)").eq("farm_id", farm)
+    sb.from("treatments_cow").select("id,cow_id,start_date,diagnosis,protocol,notes,treatment_items(supply_code,dose,unit)").in("farm_id", farms)
       .or("protocol.like.Chequeo*,protocol.eq.Ovsynch").gte("start_date", t0).lte("start_date", addDays(t0, 30)).order("start_date"),
-    sb.from("cow_plans").select("cow_id,due_date,note").eq("farm_id", farm).eq("plan_type", "inseminar").eq("status", "pending").gte("due_date", t0).lte("due_date", addDays(t0, 30))]);
+    sb.from("cow_plans").select("cow_id,due_date,note").in("farm_id", farms).eq("plan_type", "inseminar").eq("status", "pending").gte("due_date", t0).lte("due_date", addDays(t0, 30))]);
   if (tx.error){ box.innerHTML = `<div class="empty">${esc(tx.error.message)}</div>`; return; }
   await hsCatalog();
   const pen = Object.fromEntries((lsData?.cows || []).map(c=>[c.id, c.pen])), sup = c => hsSupply(c)?.name || c;
@@ -6740,7 +6768,7 @@ async function lsTxLoad(){
 async function lsTxPdf(){
   if (!lsTxRows?.length) return;
   let JsPDF; try{ JsPDF = await lsLoadJsPdf(); }catch(e){ return toast("Se necesita señal la primera vez para armar el PDF"); }
-  const farm = jget("mkFarms", []).find(f=>f.id===lsState.farm), fname = farm ? farmLabel(farm) : "";
+  const fname = lsFarmName();
   const doc = new JsPDF({ unit:"mm", format:"a4" }), M = 12; let y = M + 4;
   doc.setFont("helvetica", "bold"); doc.setFontSize(14); doc.setTextColor(30, 110, 100);
   doc.text(`TRATAMIENTOS PENDIENTES DEL CHEQUEO · ${fname} · ${fmt(today())}`, 105, y, { align:"center" }); y += 8;
@@ -6921,7 +6949,9 @@ function renderListas(){
   const pens = [...new Set(rows0.map(x=>x.c.pen||"—"))].sort(byNum), rows = lsView(all);
   const chips = (opts, cur, attr) => `<div class="chips sm ckpan" style="padding:0;margin-top:6px"><div class="chips sm">${opts.map(([v,t])=>`<button class="${cur===v?"on":""}" ${attr}="${esc(v)}">${t}</button>`).join("")}</div></div>`;
   const age = Math.round((Date.now() - lsData.at)/6e4);
-  $("lsBody").innerHTML = `<div class="card">${chips(farms.map(f=>[String(f.id), esc(farmLabel(f))]), String(s.farm), "data-lsf")}
+  // fincas: cada botón se prende o se apaga (una o las dos; igual que el Generador de listas). s.farm 0 = las dos
+  const farmChips = `<div class="chips sm ckpan" style="padding:0;margin-top:6px"><div class="chips sm">${farms.map(f=>`<button class="${s.farm===0 || s.farm===f.id ? "on" : ""}" data-lsf="${f.id}">${esc(farmLabel(f))}</button>`).join("")}</div></div>`;
+  $("lsBody").innerHTML = `<div class="card">${farmChips}
       <div class="sub" style="margin-top:6px">Datos de hace ${age < 60 ? age + " min" : Math.round(age/60) + " h"} · <button class="lnk" id="lsReload">actualizar</button></div></div>
     <div class="rpk" style="margin-bottom:14px">${LS_LISTS.map(([k,t])=>`<div data-lsl="${k}" style="cursor:pointer;${s.list===k ? "outline:2px solid var(--accent)" : ""}"><b>${counts[k]}</b><span>${t}</span></div>`).join("")}</div>
     <div class="card"><div style="display:flex;justify-content:space-between;align-items:center;gap:8px"><b>💊 Tratamientos pendientes del chequeo</b>
@@ -6949,7 +6979,13 @@ function renderListas(){
 }
 $("lsBody").addEventListener("click", async e=>{
   const t = e.target, q = a => t.closest(`[${a}]`)?.getAttribute(a), s = lsState;
-  if (q("data-lsf")){ s.farm = +q("data-lsf"); s.pen = ""; s.sel = new Set(); jset("lsLast", { farm:s.farm }); await lsLoad(); return renderListas(); }
+  if (q("data-lsf")!=null){
+    // prender / apagar la finca tocada; al menos una queda prendida
+    const id = +q("data-lsf"), all = lsFarmList().map(f=>f.id);
+    let sel = s.farm===0 ? all : [s.farm]; sel = sel.includes(id) ? sel.filter(x=>x!==id) : [...sel, id];
+    if (!sel.length) return;
+    const nf = sel.length >= all.length && all.length > 1 ? 0 : sel[0]; if (nf===s.farm) return;
+    s.farm = nf; s.pen = ""; s.sel = new Set(); jset("lsLast", { farm:s.farm }); await lsLoad(); return renderListas(); }
   if (q("data-lsl")){ s.list = q("data-lsl"); s.pen = ""; s.sel = new Set(); return renderListas(); }
   if (q("data-lso")){ s.ord = q("data-lso"); return renderListas(); }
   if (q("data-lsp")!=null){ s.pen = q("data-lsp"); return renderListas(); }
@@ -6963,8 +6999,7 @@ $("lsBody").addEventListener("click", async e=>{
   if (q("data-cow")){ e.preventDefault(); openCow(q("data-cow")); return; }
   if (t.id==="lsShare"){
     const L = LS_LISTS.find(l=>l[0]===s.list), rows = lsView(lsCompute());
-    const farm = (jget("mkFarms", []).find(f=>f.id===s.farm));
-    const txt = `${L[1].replace(/^\S+\s/, "")} · ${farm ? farmLabel(farm) : ""} · ${fmt(today())}\n` +
+    const txt = `${L[1].replace(/^\S+\s/, "")} · ${lsFarmName()} · ${fmt(today())}\n` +
       rows.map(x=>`${x.c.id} (${x.c.pen||""}) ${lsDetail(x, s.list).replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim()}`).join("\n");
     try{ if (navigator.share) await navigator.share({ text:txt }); else { await navigator.clipboard.writeText(txt); toast("Lista copiada: pégala en WhatsApp"); } }catch(err){}
     return;
@@ -6974,7 +7009,10 @@ $("lsBody").addEventListener("click", async e=>{
   if (t.id==="lsRq"){
     const L = LS_LISTS.find(l=>l[0]===s.list), ids = [...s.sel];
     if (!ids.length) return toast("Marca las vacas primero");
-    rq = { type:L[3], farm:s.farm, pen:"", q:"", sel:new Set(ids), date:today(), d:{} };
+    // Ingreso rápido trabaja con una finca: con "Ambas" las marcadas tienen que ser de la misma
+    const fs = [...new Set(ids.map(id=>(lsData?.cows || []).find(c=>c.id===id)?.farm_id ?? s.farm))];
+    if (fs.length > 1) return toast("Marcaste vacas de las dos fincas: haz una finca a la vez");
+    rq = { type:L[3], farm:fs[0] || s.farm, pen:"", q:"", sel:new Set(ids), date:today(), d:{} };
     location.hash = "rapido"; window.scrollTo({top:0});
   }
 });
