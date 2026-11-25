@@ -3847,9 +3847,12 @@ const EV_TYPES = [["","Todos"],["ia","Inseminación (celo)"],["ov","Ovsynch (IAT
 const evType = c => /toro/i.test(c || "") && !/insem/i.test(c || "") ? "toro" : /ovsynch/i.test(c || "") ? "ov" : "ia";
 let evState = null, evCache = {};
 function evInit(){
+  if (!jget("mkFarms", []).length && navigator.onLine && !evInit.tried){ evInit.tried = true; return prodFarms().catch(()=>{}).then(evInit); }   // primero las fincas del usuario
   evState ||= { farm:String(jget("evFarm", "")), from:addDays(today(), -365), to:today(), type:"", minS:10 };
-  const s = evState, box = $("rpEval");
-  box.innerHTML = `<div class="card"><div class="sheet" style="padding:0;background:none;max-height:none">${seg("evF", [["","Ambas fincas"],["1","El Recodo"],["7","La Isla"]], s.farm)}</div>
+  const s = evState, box = $("rpEval"), ft = farmTg();   // fincas del usuario (Mykau: El Recodo y La Isla; clientes: las suyas)
+  const fOpts = ft.length > 1 ? [["", ft.length===2 ? "Ambas fincas" : "Todas las fincas"], ...ft] : ft;
+  if (!fOpts.some(o=>o[0]===s.farm)) s.farm = fOpts[0][0];
+  box.innerHTML = `<div class="card"><div class="sheet" style="padding:0;background:none;max-height:none">${seg("evF", fOpts, s.farm)}</div>
     <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:8px">
       <div><div class="sub">Servicios / partos desde</div><input type="date" id="evFrom" value="${s.from}" max="${today()}" style="min-width:0"></div>
       <div><div class="sub">Hasta</div><input type="date" id="evTo" value="${s.to}" max="${today()}" style="min-width:0"></div></div>
