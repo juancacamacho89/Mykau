@@ -1415,7 +1415,10 @@ const cvKindOf = (evs, dt) => { const e = (evs || []).find(x=>x.event_type==="ca
 const STATUS = [
   [/^PR$/,         "Preñada",   "--s0"],
   [/^Ser$/,        "Servida",   "--s2"],
-  [/^(Nc|Palp-|Ca)$/, "Vacía",  "--s4"],
+  // Vacía = salió vacía en el chequeo (antes Palp- de Interherd) · Nc = parió y no ha tenido calor / no servida (Juan 25/11/2026)
+  [/^(Vacía|Palp-)$/, "Vacía",  "--s4"],
+  [/^Nc$/,         "Nc",        "--s4"],
+  [/^Ca$/,         "Calor",     "--s4"],
   [/^Desc\.?$/,    "Descarte",  "--s5"],
   [/^Lac$/,        "En leche",  "--milk"],
   [/^Horra$/,      "Horra",     "--muted"],
@@ -1480,7 +1483,7 @@ function renderCow(d){
   const curSv = cur?.services[cur.services.length-1];
   const curPr = cur?.fertile || curSv;
   // un servicio hecho en la app todavía no cambia el estado de Interherd: se muestra como Servida
-  const status = curSv?.source==="app" ? String(c.status||"").replace(/(^|\/)(Nc|Palp-|Ca)(?=\/|$)/, "$1Ser") : c.status;
+  const status = curSv?.source==="app" ? String(c.status||"").replace(/(^|\/)(Nc|Palp-|Vacía|Ca)(?=\/|$)/, "$1Ser") : c.status;
   // leche proyectada de la lactancia actual (igual que en Chequeo): 305 d y total hasta el secado esperado (si está preñada)
   const dryDate = /(^|\/)PR(\/|$)/.test(c.status||"") && curPr && lastCalv ? addDays(curPr.event_date, cGest(c.farm_id) - cDry(c.farm_id)) : null;
   const p305 = del!=null ? ck305({ milk:milk.map(m=>[m.test_date, +m.total_kg]) }, lastCalv, today(), dryDate ? days(lastCalv, dryDate) : null) : null;
@@ -1499,7 +1502,7 @@ function renderCow(d){
       </div>
       <div style="min-width:0">
         <h2>${esc(c.id)}${d.lacto ? ` <span class="tag" title="En el programa de lactotropina${d.lacto.entered_on ? " desde el " + fmt(d.lacto.entered_on) : ""}" style="background:#ffe699;color:#333;vertical-align:middle">💉 lacto</span>` : ""}</h2>
-        <div style="margin:4px 0" ${c.active && /(^|\/)Desc\.?(\/|$)/.test(c.status || "") && plCan() ? `data-uncull="${esc(c.id)}" title="Tocar para quitar el descarte"` : ""}>${c.active ? statusPill(canSee("vacas_repro") ? status : String(status||"").split("/").filter(x=>!/^(PR|Ser|Nc|Palp-|Ca)$/.test(x)).join("/"), curSv?.event_date, curPr?.event_date) : `<span class="pill" style="background:${css("--muted")}">Fuera del hato</span>`}${c.active && /(^|\/)Desc\.?(\/|$)/.test(c.status || "") && plCan() ? ` <button class="lnk" data-uncullbtn>quitar descarte</button>` : ""}${
+        <div style="margin:4px 0" ${c.active && /(^|\/)Desc\.?(\/|$)/.test(c.status || "") && plCan() ? `data-uncull="${esc(c.id)}" title="Tocar para quitar el descarte"` : ""}>${c.active ? statusPill(canSee("vacas_repro") ? status : String(status||"").split("/").filter(x=>!/^(PR|Ser|Nc|Palp-|Vacía|Ca)$/.test(x)).join("/"), curSv?.event_date, curPr?.event_date) : `<span class="pill" style="background:${css("--muted")}">Fuera del hato</span>`}${c.active && /(^|\/)Desc\.?(\/|$)/.test(c.status || "") && plCan() ? ` <button class="lnk" data-uncullbtn>quitar descarte</button>` : ""}${
           (()=>{ const lq = canSee("vacas_salud") ? lostQuarters(d.mast||[]) : []; return lq.length ? `<span class="pill" style="background:${css("--s5")}" title="Cuarto perdido">⚠️ ${lq.map(q=>q.k.toUpperCase()).join(", ")} perdido${lq.length>1?"s":""}</span>` : ""; })()}</div>
         <div class="sub">${!canSee("vacas_datos") ? "" : [(g=>g ? `<button class="lnk" data-penhist="${esc(c.id)}" title="Ver el historial de grupos" style="color:inherit;font-weight:inherit">${g} <span style="color:var(--accent)">▾</span></button>` : g)(newPen ? (String(newPen).endsWith(c.pen||"~") ? `Grupo <b>${esc(c.pen)}</b> ⏳` : `Grupo ${esc(c.pen||"—")} → <b>${esc(newPen)}</b> ⏳`) : c.pen&&`Grupo ${esc(c.pen)}`), c.herd&&`Hato ${esc(c.herd)}`, esc(c.breed||""), esc(c.sex||"")].filter(Boolean).join(" · ")}</div>
       </div>
