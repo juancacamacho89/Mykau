@@ -1082,13 +1082,35 @@ async function initConfig(){
   await cfLoad(); cfRender();
 }
 async function cfLoad(){
-  const [f, l, st] = await Promise.all([sb.from("farms").select("id,name,client,active").order("id"),
-    sb.from("farm_lists").select("id,farm_id,kind,value,sort").order("sort"), sb.from("farm_settings").select("farm_id,settings")]);
+  const [f, l, st, ss, bb, tk, hd] = await Promise.all([sb.from("farms").select("id,name,client,active").order("id"),
+    sb.from("farm_lists").select("id,farm_id,kind,value,sort").order("sort"), sb.from("farm_settings").select("farm_id,settings"),
+    sb.from("semen_stock").select("tank,bull_code,straws"), psAll(()=>sb.from("bulls").select("code,name,sexed,breed")),
+    sb.from("semen_tanks").select("code,name,sort").eq("active", true).order("sort"), psAll(()=>sb.from("bull_daughters").select("bull,avg_iv,with_data"))]);
   cf.farms = f.data || []; cf.lists = l.data || [];
+  // inventario de pajillas por termo (para escoger los toros de cada servicio)
+  cf.stock = (ss.data || []).filter(x=>+x.straws > 0); cf.semTanks = tk.data || [];
+  cf.bullInfo = Object.fromEntries((bb.data || []).map(b=>[b.code, b])); cf.dau = Object.fromEntries((hd?.data || []).map(x=>[x.bull, x]));
   cf.set = Object.fromEntries((st.data || []).map(r=>[r.farm_id, r.settings || {}]));
   if (!cf.farm || !cf.farms.some(x=>x.id===cf.farm)) cf.farm = (cf.farms.find(x=>x.id===1) || cf.farms[0])?.id;
   cf.draft = JSON.parse(JSON.stringify(cfgMerge(CFG_DEF, cf.set[cf.farm] || {})));   // copia: no tocar los valores por defecto
   if (!cf.draft.tanks) cf.draft.tanks = [...(RN_TANKS[cf.farm] || [])];
+}
+// ── inventario de pajillas en Configuración → Toros por servicio ──
+const cfStockTxt = code => (cf.stock || []).filter(x=>x.bull_code===code).sort((a, b)=>b.straws - a.straws).map(x=>`${esc(x.tank)} ${x.straws}`).join(" · ");
+function cfStockHtml(B){
+  const st = cf.stock || []; if (!st.length) return `<div class="sub" style="margin-top:10px">No hay pajillas registradas en los termos (Toros y semen → Ingreso).</div>`;
+  const inTable = new Set((B.bulls || []).map(b=>b.code)), gyr = new Set(B.gyr || []);
+  const tanks = [...new Set([...(cf.semTanks || []).map(t=>t.code), ...st.map(x=>x.tank)])].filter(t=>st.some(x=>x.tank===t));
+  const tName = t => (cf.semTanks || []).find(x=>x.code===t)?.name || t;
+  return `<div style="margin-top:14px"><b>🧊 Pajillas en los termos</b>
+    <div class="sub">Toca ＋ para agregar el toro a la tabla de arriba. ♀ = sexado. 📈 = cómo producen sus hijas (100 % = promedio).</div>
+    ${tanks.map(t=>{ const rows = st.filter(x=>x.tank===t).sort((a, b)=>(cf.bullInfo?.[b.bull_code]?.sexed ? 1 : 0) - (cf.bullInfo?.[a.bull_code]?.sexed ? 1 : 0) || b.straws - a.straws);
+      return `<div style="margin-top:8px"><b>${esc(tName(t))}</b> <span class="sub">· ${rows.reduce((a, x)=>a + +x.straws, 0)} pajillas</span>
+        <table class="ivt" style="font-size:13px;margin-top:2px">${rows.map(x=>{ const b = cf.bullInfo?.[x.bull_code] || {}, h = cf.dau?.[x.bull_code];
+          return `<tr><td><b>${esc(x.bull_code)}</b> ${esc(b.name || "")}${b.sexed ? ` <span class="tag">♀ sexado</span>` : ""}${gyr.has(x.bull_code) ? ` <span class="tag">Gyr</span>` : ""}
+            ${h?.with_data ? `<div class="sub">📈 ${h.with_data} hijas · ${Math.round(+h.avg_iv)} %</div>` : ""}</td>
+            <td style="text-align:right"><b>${x.straws}</b></td>
+            <td style="text-align:right">${inTable.has(x.bull_code) ? `<span class="sub">en la tabla</span>` : gyr.has(x.bull_code) ? "" : `<button class="lnk" data-cfbaddc="${esc(x.bull_code)}">＋</button>`}</td></tr>`; }).join("")}</table></div>`; }).join("")}</div>`;
 }
 function cfRender(){
   const F = cf.farms.find(x=>x.id===cf.farm) || {}, d = cf.draft, R = d.racion, P = d.repro;
@@ -1149,11 +1171,13 @@ function cfRender(){
       <label>Toros Gyr (después de las oportunidades, y para las vacas "Gyr siempre")</label>
       <input data-cfgyr value="${esc((B.gyr || []).join(", "))}" placeholder="102, 103" style="text-transform:uppercase">
       <div style="overflow:auto;margin-top:10px"><table style="font-size:14px;width:100%"><tr><th style="text-align:left">Toro Holstein</th>${SV.map(n=>`<th>${n===6 ? "6º+" : n + "º"}</th>`).join("")}<th></th></tr>
-        ${(B.bulls || []).map((b, i)=>`<tr><td><input data-cfbb="${i}" value="${esc(b.code || "")}" placeholder="Código" style="width:80px;min-width:0;padding:6px;text-transform:uppercase"></td>
+        ${(B.bulls || []).map((b, i)=>`<tr><td><input data-cfbb="${i}" value="${esc(b.code || "")}" placeholder="Código" style="width:80px;min-width:0;padding:6px;text-transform:uppercase">
+            ${b.code ? `<div class="sub" style="white-space:normal">${esc(cf.bullInfo?.[b.code]?.name || "")}${cf.bullInfo?.[b.code]?.sexed ? " ♀" : ""}<br>${cfStockTxt(b.code) || "sin pajillas"}</div>` : ""}</td>
           ${SV.map(n=>`<td style="text-align:center"><input type="checkbox" data-cfbs="${i}|${n}" ${(b.sv || []).includes(n) ? "checked" : ""} style="width:20px;height:20px"></td>`).join("")}
           <td><button class="lnk" data-cfbdel="${i}" style="color:var(--s4)">✕</button></td></tr>`).join("") || `<tr><td colspan="8" class="sub">Ningún toro todavía</td></tr>`}</table></div>
       <button class="lnk" data-cfbadd style="margin-top:6px">＋ agregar toro</button>
-      <div class="sub" style="margin-top:6px">Ej.: 163 en 1º · 159 en 2º y 3º · 161 en 1º y 2º. "6º+" vale para el sexto servicio y los siguientes.</div>`; })())}
+      <div class="sub" style="margin-top:6px">Ej.: 163 en 1º · 159 en 2º y 3º · 161 en 1º y 2º. "6º+" vale para el sexto servicio y los siguientes.</div>
+      ${cfStockHtml(B)}`; })())}
     ${sec("chequeo", `<svg viewBox="0 0 24 24" width="20" height="20" style="vertical-align:-4px" aria-hidden="true"><path d="M6 3h7a1 1 0 0 1 1 1v8.5l2.6 2.6A6 6 0 0 1 18 18.6V20a1 1 0 0 1-1 1H8a1 1 0 0 1-1-1v-1.4a6 6 0 0 1 1.4-3.5L5 11.7V4a1 1 0 0 1 1-1z" fill="#6fd3f2" stroke="#1b7fa8" stroke-width="1.2"/><path d="M8.5 19.5c2.5-1.2 5.5-1.2 8 0" stroke="#1b7fa8" stroke-width="1.4" fill="none"/><path d="M7.5 6h4M7.5 8.5h4" stroke="#1b7fa8" stroke-width="1.2"/></svg> Chequeo reproductivo`, (()=>{ const C = d.checkup;
       const lst = (k, t, hint) => `<div style="margin-top:12px"><b>${t}</b>${hint ? `<div class="sub">${hint}</div>` : ""}
         <div class="list" style="margin-top:4px">${(C[k] || []).map((v, i)=>`<span class="chip">${esc(v)} <button class="lnk" data-cfckdel="${k}|${i}" style="color:var(--s4)">✕</button></span>`).join("")}</div>
@@ -1232,6 +1256,8 @@ $("cfBody").addEventListener("click", async e=>{
   const ckd = q("data-cfckdel"); if (ckd){ const [k, i] = ckd.split("|"); d.checkup[k].splice(+i, 1); return cfRender(); }
   const cka = q("data-cfckadd"); if (cka){ const v = $("cfBody").querySelector(`[data-cfckin="${cka}"]`).value.trim(); if (!v) return;
     d.checkup[cka] = [...(d.checkup[cka] || []), v]; return cfRender(); }
+  if (q("data-cfbaddc")){ const B = (d.breed ||= JSON.parse(JSON.stringify(CFG_DEF.breed))), code = q("data-cfbaddc");
+    if (!(B.bulls || []).some(b=>b.code===code)) B.bulls = [...(B.bulls || []), { code, sv:[] }]; toast(`${code} agregado: marca en qué servicios va y toca Guardar`); return cfRender(); }
   if (t.closest("[data-cfbadd]")){ const B = (d.breed ||= JSON.parse(JSON.stringify(CFG_DEF.breed))); B.bulls = [...(B.bulls || []), { code:"", sv:[] }]; return cfRender(); }
   if (q("data-cfbdel")!=null){ d.breed.bulls.splice(+q("data-cfbdel"), 1); return cfRender(); }
   if (t.closest("[data-cftankadd]")){ d.tanks = [...(d.tanks || []), `Tanque ${(d.tanks || []).length + 1}`]; return cfRender(); }
@@ -1674,7 +1700,7 @@ function lacHtml(s, open, kids, bulls, proj){
     if (e.event_type==="service") det = `Toro ${bullTxt(e.bull, bulls)}${e.details?.straws > 1 ? ` · ${e.details.straws} pajillas` : ""}${e.category?" · "+esc(e.category):""}${e.operator?" · "+esc(e.operator):""}${e===s.fertile?' <span class="ok">✓ preñó</span>':""}`;
     else if (e.event_type==="preg_check" || e.event_type==="ultrasound")   // con la etapa (ECO2, DP5, DPSEC…) si la trae
       det = `${/^(ECO|DP)/.test(e.category||"") ? `<b>${esc(e.category)}</b> ` : ""}${esc(e.result||"")}${e.days_value?` · ${e.days_value} d`:""}`;
-    else det = esc([e.result, e.category].filter(Boolean).join(" · "));
+    else det = esc([e.result, e.event_type==="repro_exam" && /^EXREP$/i.test(e.category || "") ? null : e.category].filter(Boolean).join(" · "));   // "Examen reproductivo" ya dice que es EXREP
     if (e.comments) det += ` <span class="sub">${esc(e.comments)}</span>`;
     if (e.source==="app") det += pendTag(e); else det += ihDel(e);
     return `<tr${swAttr(e)}><td>${fmt(e.event_date)}</td><td class="ev">${EV[e.event_type]||esc(e.event_type)}</td><td>${det}</td></tr>`;
@@ -3354,7 +3380,7 @@ async function loadRegistros(){
     (data||[]).forEach(e=>add({ kind:"vacas", icon:"🐄", when:e.created_at, date:e.event_date, farm:e.farm_id, who:e.created_by, cow:e.cow_id,
       id:e.event_id, etype:e.event_type,
       title:EV[e.event_type] || e.event_type,
-      detail:([e.bull && "Toro " + e.bull, noSex(e.result), e.category, e.operator, e.comments].filter(Boolean).join(" · ")
+      detail:([e.bull && "Toro " + e.bull, noSex(e.result), e.event_type==="repro_exam" && /^EXREP$/i.test(e.category || "") ? null : e.category, e.operator, e.comments].filter(Boolean).join(" · ")
         + (e.event_type==="calving" ? calvingTxt(e).replace(/&amp;/g, "&").replace(/&quot;/g, '"') : "")).replace(/^ · /, ""),
       status:e.status, raw:{ bull:e.bull, result:noSex(e.result), category:e.category, operator:e.operator, comments:e.comments, details:e.details } }));
   })());
