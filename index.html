@@ -782,8 +782,11 @@ let isAdmin = adminNow();
 const isMain = () => ADMIN_PROFILES.includes(myProfile);
 // cambiar o borrar una foto que ya existe: solo Admin Principal y Gerente (los demás con permiso solo suben la primera)
 const photoBoss = () => isMain() || myProfile==="Gerente";
+// ven el sexo del feto (Cargada Hembra/Macho en DPR, DP5, DPSEC): Admin Principal y los perfiles de gerentes
+// (Gerente, Gerencia PPAL, Gerente finca · Juan 25/11/2026). Escogerlo en el chequeo sigue siendo solo del Admin Principal.
+const seeSex = () => isMain() || /^Geren/i.test(myProfile || "");
 // "Cargada Hembra/Macho" → "Cargada" para los demás perfiles
-const noSex = r => r == null || isMain() ? r : String(r).replace(/^(cargad[ao])\s+(hembra|macho)\b/i, "$1");
+const noSex = r => r == null || seeSex() ? r : String(r).replace(/^(cargad[ao])\s+(hembra|macho)\b/i, "$1");
 async function loadRole(){
   if (!navigator.onLine) return;
   const email = (await sb.auth.getUser().catch(()=>({data:{}}))).data?.user?.email?.toLowerCase();
@@ -1388,13 +1391,16 @@ async function loadCow(id){
     .eq("cow_id", id).gte("start_date", since).order("start_date", { ascending:false }).limit(100);
   if (seq !== cowSeq) return;
   if (tx.data) tx.data = tx.data.filter(t=>t.protocol!=="Ovsynch");   // el Ovsynch no es un tratamiento: sale como resultado del chequeo
+  // 💉 en el programa de lactotropina (Juan 25/11/2026): solo Juan lee el programa; Mykau Clientes no lo tiene
+  const lcp = isMain() && !window.MKC ? await sb.from("lacto_program").select("active,entered_on").eq("cow_id", id).eq("active", true).maybeSingle() : { data:null };
+  if (seq !== cowSeq) return;
   const events = (ev.data || []).map(e=>({ ...e, result:noSex(e.result) }));
   const codes = [...new Set([c.sire, c.maternal_grandsire, ...events.map(e=>e.bull)].filter(Boolean))];
   const { data:bulls } = codes.length ? await sb.from("bulls").select("code,name").in("code", codes) : {data:[]};
   if (seq !== cowSeq) return;
   addRecent(id);
   renderCow({ cow:c, events, milk:milk.data||[], conc:conc.data||[], mast:mast.data||[], kids:kids.data||[], calf:calf.data,
-              photoUrl:photo.data?.signedUrl, bulls:Object.fromEntries((bulls||[]).map(b=>[b.code,b.name])), tx:tx.data || [] });
+              photoUrl:photo.data?.signedUrl, bulls:Object.fromEntries((bulls||[]).map(b=>[b.code,b.name])), tx:tx.data || [], lacto:lcp.data || null });
 }
 
 const EV = { weight:"Peso", service:"Servicio", calving:"Parto", preg_check:"Diag. preñez", ultrasound:"Ecografía",
@@ -1492,7 +1498,7 @@ function renderCow(d){
         ${photoUrl && photoBoss() ? `<button class="phdel" id="photoDel" title="Borrar foto">🗑</button>` : ""}
       </div>
       <div style="min-width:0">
-        <h2>${esc(c.id)}</h2>
+        <h2>${esc(c.id)}${d.lacto ? ` <span title="En el programa de lactotropina${d.lacto.entered_on ? " desde el " + fmt(d.lacto.entered_on) : ""}" style="font-size:.7em;vertical-align:middle;background:#7b3fa0;color:#fff;border-radius:10px;padding:2px 8px">💉 Lacto</span>` : ""}</h2>
         <div style="margin:4px 0" ${c.active && /(^|\/)Desc\.?(\/|$)/.test(c.status || "") && plCan() ? `data-uncull="${esc(c.id)}" title="Tocar para quitar el descarte"` : ""}>${c.active ? statusPill(canSee("vacas_repro") ? status : String(status||"").split("/").filter(x=>!/^(PR|Ser|Nc|Palp-|Ca)$/.test(x)).join("/"), curSv?.event_date, curPr?.event_date) : `<span class="pill" style="background:${css("--muted")}">Fuera del hato</span>`}${c.active && /(^|\/)Desc\.?(\/|$)/.test(c.status || "") && plCan() ? ` <button class="lnk" data-uncullbtn>quitar descarte</button>` : ""}${
           (()=>{ const lq = canSee("vacas_salud") ? lostQuarters(d.mast||[]) : []; return lq.length ? `<span class="pill" style="background:${css("--s5")}" title="Cuarto perdido">⚠️ ${lq.map(q=>q.k.toUpperCase()).join(", ")} perdido${lq.length>1?"s":""}</span>` : ""; })()}</div>
         <div class="sub">${!canSee("vacas_datos") ? "" : [(g=>g ? `<button class="lnk" data-penhist="${esc(c.id)}" title="Ver el historial de grupos" style="color:inherit;font-weight:inherit">${g} <span style="color:var(--accent)">▾</span></button>` : g)(newPen ? (String(newPen).endsWith(c.pen||"~") ? `Grupo <b>${esc(c.pen)}</b> ⏳` : `Grupo ${esc(c.pen||"—")} → <b>${esc(newPen)}</b> ⏳`) : c.pen&&`Grupo ${esc(c.pen)}`), c.herd&&`Hato ${esc(c.herd)}`, esc(c.breed||""), esc(c.sex||"")].filter(Boolean).join(" · ")}</div>
@@ -5912,6 +5918,8 @@ const LS_LISTS = [
   ["repet", "🔁 Repetidoras", "Informativa · 3 o más servicios en esta lactancia sin quedar preñadas", "service"],
   ["novillas", "🐂 Novillas para servir", "Informativa · 16 meses o más y 380 kg o más, sin servicio", "service"],
   ["abiertas", "⚠️ Abiertas largas", "Informativa · más de 150 días de paridas y vacías", ""]];
+// Mykau Clientes: ningún cliente hace resincro (Juan 25/11/2026) → sin la lista OVS2
+if (window.MKC) LS_LISTS.splice(LS_LISTS.findIndex(l=>l[0]==="resincro"), 1);
 let lsData = null, lsState = { farm:null, list:"chequeo", pen:"", sel:new Set(), ckDate:null, ord:"num", q:"" };
 // lo que se ve de la lista: lote, búsqueda (uno o varios números) y orden (por número por defecto)
 function lsRowsHtml(rows){
@@ -6920,7 +6928,7 @@ function renderListas(){
       ${s.list==="chequeo" && all.some(x=>x.doubt.length) ? `<div class="warn" style="margin-top:8px">⚠️ Servicios dudosos (terneras de menos de 12 meses con servicio; no entran al chequeo). Corrígelos en Interherd:
         ${all.filter(x=>x.doubt.length).map(x=>`<b>${esc(x.c.id)}</b> (${Math.floor(x.ageM)} m · servicio ${x.doubt.map(e=>fmt(e.d)).join(", ")})`).join(" · ")}</div>` : ""}
       ${s.list==="resincro" ? `<div class="row" style="align-items:center;margin-top:8px"><span class="sub" style="flex:none">Día del Gestar</span><input type="date" id="lsRsDate" value="${s.rsDate || today()}"></div>
-        <div class="sub" style="margin-top:4px">Sale con ${RS_DAYS} días de la IA del Ovsynch (± ${RS_WIN}). Las que repitieron o ya tienen diagnóstico no salen. Gestar ${RS_DOSE} mL: se registra como día 0 del OVS2 y descuenta del inventario.</div>` : ""}
+        <div class="sub" style="margin-top:4px">Sale con ${RS_DAYS} días de la IA del Ovsynch (± ${RS_WIN}). Las que repitieron o ya tienen diagnóstico no salen. Gestar ${RS_DOSE} mL: <b>se registra solo</b> a los 25 días de la IA del Ovsynch (5:30 a. m.) y descuenta del inventario. Si no hubo Ovsynch, no hay OVS2 y no se descuenta nada. El botón queda para una vaca que falte.</div>` : ""}
       ${s.list==="chequeo" ? `<div class="row" style="align-items:center;margin-top:8px"><span class="sub" style="flex:none">Fecha del chequeo</span><input type="date" id="lsCkDate" value="${s.ckDate}"></div>
         <div class="list">${["EXREP","ECO1","ECO2","REPETIR","DPR","DP5","DPSEC"].map(k=>{ const n = rows.filter(x=>x.ck.cat===k).length; return n ? `<span class="chip"><span class="ckcat" style="background:var(${CK_COLOR[k]})">${esc(ckName(k, lsState.farm))}</span>${n}</span>` : ""; }).join("")}</div>` : ""}
       ${pens.length > 1 ? chips([["", "Todos los lotes"], ...pens.map(p=>[p, esc(p)])], s.pen, "data-lsp") : ""}
@@ -7132,6 +7140,8 @@ const MT_TX = [
   { k:"neo", t:"Neoclordelyn", code:"NEOCLOR", im:true, n:4, txt:(q, n)=>`${n} JERINGAS DE NEOCLORDELYN POR ${mtQTxt(q)}` },
   { k:"ril", t:"Rilexine NP", code:"RIL200", im:true, n:4, txt:(q, n)=>`${n} JERINGAS DE RILEXINE NP POR ${mtQTxt(q)}` },
   { k:"pezonil", t:"Pezonil", code:"PEZONIL", im:true, n:4, txt:(q, n)=>`${n} JERINGAS DE PEZONIL POR ${mtQTxt(q)}` },
+  // Ciprolac vaca seca (Juan 25/11/2026, novilla 1615): 1 jeringa por cuarto
+  { k:"ciprosec", t:"Ciprolac vaca seca", code:"CIPROSEC", im:true, n:1, txt:(q, n)=>`${n} JERINGA${n===1 ? "" : "S"} DE CIPROLAC VACA SECA POR ${mtQTxt(q)}` },
   { k:"veterflu", t:"Veterflucina 25 mL", code:"VETERFLU", im:true, dose:25, n:4, txt:(q, n)=>`25 CM DE VETERFLUCINA POR ${mtQTxt(q)} POR ${n} DOSIS` },
   { k:"unitral", t:"Unitral 25 mL", code:"UNITRAL", dose:25, n:2, txt:(q, n)=>`25 CM DE UNITRAL POR ${n} DOSIS` },
   { k:"amoxisol", t:"Amoxisol 25 mL", code:"AMOXISOL", dose:25, n:2, txt:(q, n)=>`25 CM DE AMOXISOL POR ${n} DOSIS` },
@@ -7249,6 +7259,8 @@ async function mtShow(){
 const mtCows = () => mt.pens[mt.farm] || [];
 // vaca seca o que no está en ordeño (ej. del horro): se puede anotar, pero avisa
 const mtDry = c => !!c && (!/Lac/.test(c.status || "") || /^HO/i.test(c.pen || ""));
+// novilla (nunca ha parido): ni lactando, ni seca, ni horra → el aviso dice "novilla", no "seca" (Juan 25/11/2026, 1615)
+const mtNov = c => !!c && !/Lac|Sec|Horr|Desc/i.test(c.status || "") && !/^HO/i.test(c.pen || "");
 function mtRender(){
   const rev = mt.mode==="rev"; mt.kind = rev ? "R" : "C";
   const lots = [...new Set(mtCows().filter(c=>/Lac/.test(c.status || "")).map(c=>c.pen || "—"))].sort(byNum);
@@ -7409,8 +7421,8 @@ async function mtOpen(id){
   id = String(id || "").trim().toUpperCase(); if (!id) return;
   const c = mtCows().find(x=>x.id===id);
   if (!c && !confirm(`La vaca ${id} no está activa en esta finca. ¿Anotarla igual?`)) return;
-  if (c && mtDry(c) && !mtDraft().rows[id] && !confirm(`⚠️ La vaca ${id} está SECA (${[c.status, c.pen && "grupo " + c.pen].filter(Boolean).join(" · ")}).
-¿Registrarle mastitis igual?`)) return;
+  if (c && mtDry(c) && !mtDraft().rows[id] && !confirm(`⚠️ La ${mtNov(c) ? "novilla" : "vaca"} ${id} ${mtNov(c) ? "no está en ordeño" : "está SECA"} (${[c.status, c.pen && "grupo " + c.pen].filter(Boolean).join(" · ")}).
+¿Registrarle mastitis igual? (toca Aceptar)`)) return;
   mt.cur = id; mt.hist[id] ||= null; mtRender();
   if (navigator.onLine && mt.hist[id]==null){
     const { data } = await sb.from("cow_mastitis").select("*").eq("cow_id", id).order("check_date");
@@ -7435,7 +7447,7 @@ function mtCowHtml(id){
       <a class="lnk" href="#mastitis/${encodeURIComponent(id)}">historial por lactancia →</a></details>` : `<div class="sub" style="margin-top:8px">Sin chequeos anteriores</div>`;
   return `<div class="hscard" style="margin-top:8px"><div style="display:flex;justify-content:space-between;align-items:center">
       <div><b style="font-size:22px">${esc(id)}</b> <span class="sub">${esc(c?.pen || "")}</span> ${c ? statusPill(c.status) : ""}</div><button class="lnk" data-mtclose="1">cerrar</button></div>
-    ${mtDry(c) ? `<div class="lost">⚠️ Esta vaca está <b>seca</b> (no está en ordeño${c.pen ? ", grupo " + esc(c.pen) : ""}). Se registra igual.</div>` : ""}
+    ${mtDry(c) ? `<div class="lost">⚠️ ${mtNov(c) ? "Esta es una <b>novilla</b>" : "Esta vaca está <b>seca</b>"} (no está en ordeño${c.pen ? ", grupo " + esc(c.pen) : ""}). Se registra igual.</div>` : ""}
     ${h ? lostHtml(lostQuarters(h)) : ""}
     <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px 14px;margin-top:8px">${MT_Q.map(qBox).join("")}</div>
     <input id="mtObs" placeholder="Observación (opcional)" value="${esc(r.obs || "")}" style="margin-top:10px">
@@ -10549,7 +10561,10 @@ async function ckDownload(){
     // Gestar del resincro (día 0 del OVS2) de los últimos 20 días
     const rsq = await sb.from("treatments_cow").select("cow_id,start_date").eq("farm_id", farm).eq("protocol", "Ovsynch").like("notes", "%resincro%").gte("start_date", addDays(today(), -20));
     const rs = Object.fromEntries((rsq.data || []).map(x=>[x.cow_id, x.start_date]));
-    const pack = { at:Date.now(), cows: cows.map(c=>[c.id, c.pen, c.status, c.birth_date, c.last_calving, c.lactation_num, c.sex]), ev, milk, plans, rs };
+    // vacas en el programa de lactotropina (💉 LACTO en Buscar · solo Juan lee el programa; Clientes no lo tiene)
+    const lcq = isMain() && !window.MKC ? await sb.from("lacto_program").select("cow_id").eq("active", true) : { data:[] };
+    const lacto = (lcq.data || []).map(x=>x.cow_id).filter(x=>ids.has(x));
+    const pack = { at:Date.now(), cows: cows.map(c=>[c.id, c.pen, c.status, c.birth_date, c.last_calving, c.lactation_num, c.sex]), ev, milk, plans, rs, lacto };
     jset(`ckData:${farm}`, pack); jset("ckLast", { farm });
     toast(`Lista descargada: ${cows.length} vacas`);
   }catch(err){ toast("No se pudo descargar: " + (err.message||err)); }
@@ -10565,7 +10580,20 @@ function ckLoadData(farm){
   const ckRp9 = new Set(["service","calving","ultrasound","preg_check","repro_exam","embryo_loss","abortion"]);
   cows.forEach(c=>{ const m9 = c.bd ? addDays(c.bd, 270) : "";
     c.ev = (evBy[c.id]||[]).filter(e=>!c.bd || (e.d >= c.bd && !(ckRp9.has(e.t) && e.d < m9))).sort((a,b)=>a.d.localeCompare(b.d)); });
-  return { at:p.at, cows, plans:p.plans || [], rs:p.rs || {} };
+  return { at:p.at, cows, plans:p.plans || [], rs:p.rs || {}, lacto:new Set(p.lacto || []) };
+}
+// 💉 LACTO: la vaca está en el programa de lactotropina (para decidir chequeo + lacto)
+const ckLcTag = (id, big) => ckData?.lacto?.has(id) ? `<span class="ckcat" style="background:#7b3fa0${big ? ";font-size:18px;padding:4px 10px" : ""}">💉 LACTO</span>` : "";
+// últimas 6 vacas registradas en este chequeo (Buscar): la más reciente arriba; tocar una la abre
+function ckRecentHtml(){
+  const xs = Object.entries(ckRes || {}).filter(([, r])=>r.res && r.at).sort((a, b)=>b[1].at - a[1].at).slice(0, 6);
+  if (!xs.length) return "";
+  const ks = new Map(ckList().map(x=>[x.c.id, x.k])), catOf = (id, r) => { const k = ks.get(id); return r.cat || (k ? (k.cat==="REPETIR" ? k.stage : k.cat) : ""); };
+  const hm = t => new Date(t).toLocaleTimeString("es-CO", { hour:"numeric", minute:"2-digit" });
+  return `<div style="margin-top:12px"><b>🕒 Últimas registradas</b>
+    <table class="ivt" style="font-size:14px;margin-top:4px"><tr><th>Vaca</th><th>Examen</th><th>Resultado</th><th>Hora</th></tr>
+    ${xs.map(([id, r])=>`<tr data-pick="${esc(id)}" style="cursor:pointer"><td><b>${esc(id)}</b> ${ckLcTag(id)}</td><td>${catOf(id, r) ? esc(ckName(catOf(id, r), ckData?.farm)) : ""}</td>
+      <td style="white-space:normal">${esc(r.res)}${r.up ? ` <span class="sub">✓ subida</span>` : ""}</td><td class="sub">${hm(r.at)}</td></tr>`).join("")}</table></div>`;
 }
 
 function ckShow(){
@@ -10707,6 +10735,7 @@ function ckRenderPad(){
     <div class="sub" style="margin-top:4px">Escribe el número y toca la vaca (Enter abre la primera). Con letras: cambia el teclado del celular.</div>
     <div class="cksug" id="ckSug">${ckSugHtml(list, doneN)}</div>
     <div class="mkbar" style="position:static"><div>${fmt(ckD())}</div><button class="btn" id="ckUp" style="width:auto">Subir resultados</button></div>
+    ${ckRecentHtml()}
   </div>`;
   const q = $("ckQ"); q.focus(); q.setSelectionRange(q.value.length, q.value.length);
 }
@@ -10716,7 +10745,7 @@ function ckSugHtml(list, doneN){
   const sug = q ? ckData.cows.filter(c=>c.id.startsWith(q) || c.id.replace(/^0+/, "").startsWith(q))
       .sort((a,b)=> (b.id===q) - (a.id===q) || (inList.has(b.id) - inList.has(a.id)) || byNum(a.id, b.id)).slice(0, 8) : [];
   return sug.map(c=>{ const k = inList.get(c.id), r = ckRes[c.id];
-      return `<button data-pick="${esc(c.id)}"><b>${esc(c.id)}</b> ${k ? `<span class="ckcat" style="background:${css(CK_COLOR[k.cat]||"--muted")}">${k.cat==="REPETIR"?"REP":esc(ckName(k.cat, ckData?.farm))}</span>` : `<span class="sub">no le toca</span>`}${r?.res ? " ✓" : ""}</button>`; }).join("")
+      return `<button data-pick="${esc(c.id)}"><b>${esc(c.id)}</b> ${k ? `<span class="ckcat" style="background:${css(CK_COLOR[k.cat]||"--muted")}">${k.cat==="REPETIR"?"REP":esc(ckName(k.cat, ckData?.farm))}</span>` : `<span class="sub">no le toca</span>`} ${ckLcTag(c.id)}${r?.res ? " ✓" : ""}</button>`; }).join("")
     || (q ? `<span class="sub">Ninguna vaca activa con ese número</span>` : `<span class="sub">${list.length - doneN} vacas pendientes en este chequeo</span>`);
 }
 // novilla en EXREP (Juan 25/11/2026): siempre su edad y último peso; si no cumple edad o peso, aviso
@@ -10745,6 +10774,7 @@ function ckCard(id, list){
     <div style="display:flex;justify-content:space-between;align-items:center">
       <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap"><a href="#vaca/${encodeURIComponent(id)}" title="Abrir la hoja de vida" style="font-size:34px;font-weight:800;color:var(--ink);text-decoration:underline;text-decoration-color:var(--accent);text-underline-offset:5px">${esc(id)}</a>
         ${item || cat ? `<span class="ckcat" style="background:${css(CK_COLOR[item?.k.cat || cat]||"--muted")};font-size:22px;padding:4px 12px">${item ? (item.k.cat==="REPETIR" ? "REPETIR " + esc(ckName(item.k.stage, ckData?.farm)) : esc(ckName(item.k.cat, ckData?.farm))) : esc(ckName(cat, ckData?.farm))}</span>` : ""}
+        ${ckLcTag(id, true)}
         <div><span class="sub">${esc(c.pen||"")}</span> ${statusPill(c.status)}</div></div>
       <button class="lnk" data-ckback>Otra vaca</button></div>
     <div class="sub" style="margin-top:2px">Toca el número para abrir la hoja de vida (ej. registrar un servicio que faltó). Al volver, descarga la lista de nuevo para que lo tenga en cuenta.</div>
@@ -10868,14 +10898,14 @@ function ckPanel(c, k, r){
 // Tratamientos del chequeo con protocolo predeterminado (Juan, 11/11/2026). La primera dosis va el día del chequeo
 // (el baño se puede dejar pendiente); cada aplicación queda en Salud con su fecha y se descuenta del inventario ese día.
 //   PGF2: 2 mL, 1 o 2 días · Cefalexina / Ceftiofur: 15 mL × 4 días · Penicilina: 1 o 2 frascos
-//   Vitaminas: 3 veces día de por medio, 15 mL vacas / 10 mL novillas · Baño: agua destilada 30 mL + oxitetraciclina 20 mL, 1–3 baños
+//   Vitaminas: 3 veces día de por medio, 10 mL vacas y novillas (Oversel, Juan 25/11/2026; antes 15 mL vacas) · Baño: agua destilada 30 mL + oxitetraciclina 20 mL, 1–3 baños
 const CK_TX = {
   "PGF2":        { codes:["CLOPROST","PROSTAL"], dose:2, n:1, ns:[1,2], every:1, route:"IM" },
   "Cefalexina":  { codes:["CEFALEX"], dose:15, n:4, ns:[1,2,3,4,5], every:1, route:"IM" },
   "Ceftiofur":   { codes:["CEFTIOF"], dose:15, n:4, ns:[1,2,3,4,5], every:1, route:"IM" },
   "Penicilina":  { codes:["PENTRIL","BENZETA","GANAPEN"], dose:1, doses:[1,2], n:1, ns:[1], every:1, route:"IM" },
   "Antibiótico": { cats:["Antibiótico"], dose:null, n:1, ns:[1,2,3,4,5], every:1, route:"IM" },
-  "Vitaminas":   { cats:["Vitamina / mineral","Vitamina / suplemento"], prefer:"OVERSEL", dose:15, heiferDose:10, n:3, ns:[1,2,3], every:2, route:"IM" },
+  "Vitaminas":   { cats:["Vitamina / mineral","Vitamina / suplemento"], prefer:"OVERSEL", dose:10, heiferDose:10, n:3, ns:[1,2,3], every:2, route:"IM" },
   "Baño":        { codes:["OXITETRA"], dose:20, water:{ codes:["AGUAD500","AGUAD1L"], ml:30 }, n:1, ns:[1,2,3], every:1, everies:[1,2], askNow:true, route:"Intrauterina" },
   // Otro (Juan 25/11/2026): cualquier producto del inventario, o un nombre escrito si no está (queda solo como comentario)
   "Otro":        { all:true, dose:null, n:1, ns:[1,2,3,4,5], every:1, everies:[1,2], route:"IM", routes:["IM","SC","IV","Oral","Intrauterina","Tópica"] } };
@@ -10918,7 +10948,7 @@ function ckTxHtml(v, r){
       ${d.ns.length > 1 ? sel("n", d.ns.map(n=>[n, k==="Baño" ? `${n} baño${n===1 ? "" : "s"}` : `${n} ${n===1 ? "vez" : "veces"}`]), x.n) : ""}
       ${d.everies ? sel("every", d.everies.map(n=>[n, n===1 ? "cada día" : "día de por medio"]), x.every) : ""}
       ${d.askNow ? `<label style="display:flex;gap:6px;align-items:center;margin:0;font-weight:400"><input type="checkbox" data-cktx="${esc(k)}" data-k="now" ${x.now ? "checked" : ""} style="width:20px;height:20px">Se hace hoy</label>` : ""}</div>
-    <div class="sub" style="margin-top:4px">${ckTxPlanTxt(k, x)}${k==="Vitaminas" ? ` · ${r.heifer ? "novilla: 10 mL" : "vaca: 15 mL"}` : ""}</div>
+    <div class="sub" style="margin-top:4px">${ckTxPlanTxt(k, x)}${k==="Vitaminas" ? ` · ${r.heifer ? "novilla" : "vaca"}: ${CK_TX.Vitaminas[r.heifer ? "heiferDose" : "dose"]} mL` : ""}</div>
     ${!x.code || !(x.dose > 0) ? `<div class="sub" style="color:var(--s3)">Sin producto${x.code ? " y dosis" : ""}: queda solo como comentario (no descuenta del inventario)</div>` : ""}</div>`;
 }
 // las aplicaciones del chequeo agrupadas por día: [{ off, keys, items:[{code,dose,unit,route}], txt:[...] }]
@@ -11064,6 +11094,7 @@ $("ckBody").addEventListener("click", e=>{
   if (ext){ const v = ext.dataset.ext; r.extras = (r.extras || []).some(x=>ckSameTx(x, v)) ? r.extras.filter(x=>!ckSameTx(x, v)) : [...(r.extras || []), v]; ckSave(); ckRender(); return; }
   if (save){
     r.res = ckResTxt(r); if (!r.res) return;
+    r.at = Date.now();   // para la tabla "Últimas registradas" de Buscar
     ckSave(); ckNext(id); return;
   }
   // tocar el comentario, la ficha o la historia reproductiva (desplegable) no cierra la vaca
