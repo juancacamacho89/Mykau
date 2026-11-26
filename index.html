@@ -7161,6 +7161,10 @@ async function lsRpLoad(){
   (tx.data || []).filter(t=>t.start_date===D && t.protocol!=="Ovsynch").forEach(t=>{ const g = tag[t.cow_id] ||= {};
     if (/Vitaminas/.test(t.protocol)) g.vit = true; if (/Baño/.test(t.protocol)) g.bano = true; });
   lsRp.tag = tag;
+  // 💉 resincro (OVS2): Gestar del miércoles siguiente a este chequeo, por grupo de Ovsynch (Juan 26/11/2026)
+  lsRp.rs = null;
+  if (!window.MKC){ const G = addDays(D, 7), r = await sb.rpc("ovs2_cohort", { p_g:G });
+    lsRp.rs = { G, rows:(r.data || []).filter(x=>x.farm_id===farm).sort((a, b)=>(b.ok - a.ok) || byNum(a.pen || "", b.pen || "") || byNum(a.cow_id, b.cow_id)), err:r.error?.message }; }
   lsRpRender();
 }
 const lsRpView = () => (lsRp.rows || []).filter(r=>(!lsRp.f || lsRp.tag[r.id]?.[lsRp.f]) && (!lsRp.pen || r.pen===lsRp.pen) && (!lsRp.ev || r.ev===lsRp.ev));
@@ -7183,6 +7187,19 @@ function lsRpRender(){
           ${Object.keys(st.items).map(k=>{ const [n, dose, u] = k.split("|"); return `<b style="font-size:14px">${esc(n)} ${(+dose).toLocaleString("es-CO")} ${esc(u)}</b><div class="sub">${(+dose * mine.length).toLocaleString("es-CO")} ${esc(u)} en total</div>`; }).join("")}</div>`).join("")}
         ${P.ia ? `<div style="border:1px solid var(--accent);border-radius:10px;padding:7px 9px;background:var(--soft)"><div class="sub">Día 10 · ${fd(P.ia)}</div><b style="font-size:14px;color:var(--accent)">Inseminar</b><div class="sub">${mine.length} vacas</div></div>` : ""}</div>
       <div class="list" style="margin-top:8px">${mine.map(c=>`<button class="chip" data-cow="${esc(c)}"><b>${esc(c)}</b></button>`).join("")}</div></div>`; }).join("");
+  // 💉 lista de lo que hay que inyectar: Gestar del OVS2 (día 0 del resincro)
+  const rsHtml = (()=>{ const R = lsRp.rs; if (!R || (!R.rows.length && !R.err)) return "";
+    const ins = R.rows.filter(x=>x.ok), out = R.rows.filter(x=>!x.ok), d0 = R.rows[0]?.d0;
+    const byPen = {}; ins.forEach(x=>(byPen[x.pen || "—"] ||= []).push(x));
+    return `<div class="hscard" style="margin-top:10px;border:2px solid var(--accent)"><div style="display:flex;justify-content:space-between;align-items:baseline;gap:8px;flex-wrap:wrap">
+        <b style="font-size:16px">💉 Resincro (OVS2) · inyectar ${fd(R.G)}</b><span class="sub">${ins.length} vaca${ins.length===1 ? "" : "s"} · Gestar ${RS_DOSE} mL · total ${(ins.length * RS_DOSE).toLocaleString("es-CO")} mL</span></div>
+      <div class="sub" style="margin-top:4px">Ovsynch del ${d0 ? fmt(d0) : "—"} (IA día 10: ${d0 ? fmt(addDays(d0, 10)) : "—"}). Entran todas las inseminadas hasta el día 10, también las que se inseminaron antes. Solo salen las inseminadas después del día 10 o con diagnóstico.</div>
+      ${R.err ? `<div class="warn" style="margin-top:6px">${esc(R.err)}</div>` : ""}
+      ${Object.keys(byPen).sort(byNum).map(pn=>`<div style="margin-top:8px"><b>${esc(LS_PEN_N[pn] || pn)}</b> <span class="sub">(${byPen[pn].length})</span>
+        <div class="list" style="margin-top:4px">${byPen[pn].map(x=>`<button class="chip" data-cow="${esc(x.cow_id)}" title="IA ${fmt(x.ia)}"><b>${esc(x.cow_id)}</b>${x.early ? ` <span class="sub">IA ${fmt(x.ia).slice(0, 5)}</span>` : ""}${x.done ? " ✓" : ""}</button>`).join("")}</div></div>`).join("")}
+      <div class="sub" style="margin-top:6px">IA dd/mm = se inseminó antes del día 10 · ✓ = el Gestar ya quedó registrado (se registra solo el ${fd(R.G)} a las 5:30 a. m.)</div>
+      ${out.length ? `<details style="margin-top:6px"><summary class="sub">No entran (${out.length})</summary>${out.map(x=>`<div class="sub"><b>${esc(x.cow_id)}</b> · ${esc(x.motivo || "")}</div>`).join("")}</details>` : ""}
+      <button class="btn ghost" id="lsRsShare" style="margin-top:8px">📤 Compartir lista</button></div>`; })();
   const evs = LS_RP_EV.filter(e=>rows.some(r=>r.ev===e));
   const ds = [...new Set([lsRp.date, ...(lsRp.dates || [])])].sort().reverse();
   const dl = d => new Date(d + "T12:00").toLocaleDateString("es-CO", { weekday:"short", day:"numeric", month:"short", year:"numeric" });
@@ -7195,6 +7212,7 @@ function lsRpRender(){
     <div class="sub" style="margin-top:4px">Tratamiento</div>
     <div class="chips sm ckpan" style="padding:0"><div class="chips sm">${LS_RP_F.map(([k, t])=>chip("data-lsrpf", k, lsRp.f, `${t} (${nCow(k)})`)).join("")}</div></div>
     ${all.length ? `<div class="rpk" style="margin-top:10px">${kpi(cows.size, "vacas revisadas")}${kpi(preg, "preñadas (ECO+ y cargadas)")}${kpi([...cows].filter(c=>lsRp.ovs[c]).length, "sincronizadas")}${kpi([...cows].filter(c=>lsRp.tx[c]).length, "con tratamiento")}</div>` : ""}
+    ${rsHtml}
     ${protos}
     ${evs.map(e=>{ const rs = rows.filter(r=>r.ev===e).sort((a, b)=>byNum(a.id, b.id));
       return `<div class="ckpen" style="margin-top:12px">${e} <span class="sub">(${rs.length})</span></div>
@@ -11436,6 +11454,9 @@ function ckSave(){ jset(ckKey(ckFarmSel(), ckD()), ckRes); }
 $("ckBody").addEventListener("click", e=>{
   if (e.target.closest("#lsRp")){ const t = e.target, q = a => t.closest(`[${a}]`)?.getAttribute(a);
     if (q("data-lsrpf")!=null){ lsRp.f = q("data-lsrpf"); return lsRpRender(); }
+    if (e.target.id==="lsRsShare" && lsRp.rs){ const R = lsRp.rs, ins = R.rows.filter(x=>x.ok), byPen = {}; ins.forEach(x=>(byPen[x.pen || "—"] ||= []).push(x.cow_id));
+      const txt = `Resincro (OVS2) · Gestar ${RS_DOSE} mL · ${fmt(R.G)} · ${ins.length} vacas\n` + Object.keys(byPen).sort(byNum).map(pn=>`${LS_PEN_N[pn] || pn}: ${byPen[pn].join(", ")}`).join("\n");
+      (navigator.share ? navigator.share({ text:txt }) : navigator.clipboard.writeText(txt).then(()=>toast("Copiado: pégalo en WhatsApp"))).catch(()=>{}); return; }
     if (q("data-lsrpp")!=null){ lsRp.pen = q("data-lsrpp"); lsRp.ev = ""; return lsRpRender(); }
     if (q("data-lsrpe")!=null){ const v = q("data-lsrpe"); lsRp.ev = lsRp.ev===v ? "" : v; return lsRpRender(); }
     if (t.id==="lsRpPdf") return lsRpPdf();
