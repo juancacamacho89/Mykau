@@ -625,6 +625,7 @@ details.lac td{padding:6px 8px}
         <div class="dw-head"><img src="logo.png" alt=""><div><b>Mykau</b><span id="dwWho"></span></div></div>
         <div class="dw-list">
           <a class="dw-item" href="#config" data-drawer-go data-only="main"><span class="dw-ic">⚙️</span>Configuración<i>›</i></a>
+          <a class="dw-item hidden" href="#config" data-drawer-go data-only="racion"><span class="dw-ic">🌾</span>Ración de concentrado<i>›</i></a>
           <a class="dw-item" href="#config" data-drawer-go data-only="main" data-dw-newfarm><span class="dw-ic">🏡</span>Nueva finca<i>›</i></a>
           <a class="dw-item" href="#usuarios" data-drawer-go><span class="dw-ic">👥</span>Usuarios y permisos<i>›</i></a>
           <a class="dw-item" href="#finanzas" data-drawer-go data-only="main" data-dw-bn><span class="dw-ic">💵</span>Bonificaciones<i>›</i></a>
@@ -750,7 +751,12 @@ const canSee = k => can(k) !== "N", canDo = k => can(k) === "R";
 const CFG_DEF = {
   repro:{ gest:282, dry:60, vwp:50, heiferMonths:16, heiferKg:380, heiferMonths2:19, heiferKg2:360 },
   racion:{ minL:12, std:[15.9, 19.9, 23.9, 27.9, 31.9], first:[15, 19, 23, 27, 31], kg:[2, 4, 6, 8, 10, 12],
-           dimDays:100, dimKg:8, dry0:20, dryLowDays:40, dryLowL:16, caps:[[21, 30, 4], [31, 40, 6]], drop:25, dropStrong:30, maxDown:2 },
+           dimDays:100, dimKg:8, dry0:20, dryLowDays:40, dryLowL:16, caps:[[21, 30, 4], [31, 40, 6]], drop:25, dropStrong:30, maxDown:2,
+           // ración por días de parida (vacía = no se usa; entonces manda "mínimo al inicio de la lactancia")
+           //   cada fila: hasta X días → kg (2 o más partos) · kg1 (1er parto; vacío = 1er parto va por producción)
+           early:[], earlyMode:"min",      // "min": los kg por días son un mínimo · "fix": son fijos aunque por litros le toque más
+           minKg:0,                        // por debajo del mínimo de litros (ej. 2 kg = "sin collar")
+           names:null, hex:null },         // collar de cada fila de la tabla (vacío = colores de siempre)
   tanks:null,
   calves:{ auto:true, start:"" },
   checkup:{ every:14,
@@ -832,6 +838,8 @@ const adminNow = () => ADMIN_PROFILES.includes(myProfile) || perms.registros_tod
 let isAdmin = adminNow();
 // administrador principal: SOLO por nombre de perfil (corrige/borra todo y ve el sexo en el DPR)
 const isMain = () => ADMIN_PROFILES.includes(myProfile);
+// Mykau Clientes: quien guarda la ración (no Juan) entra a ☰ Configuración solo a la parte de ración de sus fincas
+const cfgRacionOnly = () => !!window.MKC && !isMain() && canDo("racion_registrar");
 // cambiar o borrar una foto que ya existe: solo Admin Principal y Gerente (los demás con permiso solo suben la primera)
 const photoBoss = () => isMain() || myProfile==="Gerente";
 // ven el sexo del feto (Cargada Hembra/Macho en DPR, DP5, DPSEC): Admin Principal y los perfiles de gerentes
@@ -879,6 +887,9 @@ document.querySelectorAll(".logout").forEach(b=>b.addEventListener("click", asyn
 function setTab(tab){
   $("menuBtn")?.classList.toggle("hidden", !usMgr());
   document.querySelectorAll('#drawer [data-only="main"]').forEach(a=>a.classList.toggle("hidden", !isMain()));
+  document.querySelectorAll('#drawer [data-only="racion"]').forEach(a=>a.classList.toggle("hidden", !cfgRacionOnly()));
+  if (cfgRacionOnly()) $("menuBtn")?.classList.remove("hidden");
+  document.querySelectorAll('#drawer [href="#usuarios"]').forEach(a=>a.classList.toggle("hidden", !usMgr()));
   $("tabInicio").classList.toggle("hidden", tab!=="inicio");
   if (tab==="inicio") renderHome();
   $("tabVacas").classList.toggle("hidden", tab!=="vacas");
@@ -942,7 +953,7 @@ function route(){
   if (h.startsWith("reporte")) { setTab("reporte"); return; }
   if (h.startsWith("registros")) { setTab("registros"); return; }
   if (h.startsWith("usuarios")) { if (!usMgr()){ location.hash = ""; return; } setTab("usuarios"); return; }
-  if (h.startsWith("config")) { if (!isMain()){ location.hash = ""; return; } setTab("config"); return; }
+  if (h.startsWith("config")) { if (!isMain() && !cfgRacionOnly()){ location.hash = ""; return; } setTab("config"); return; }
   if (h.startsWith("chequeo")) { setTab("chequeo"); return; }
   if (h.startsWith("calidad")) { rptTab = "calidad"; location.hash = "reporte"; return; }   // Calidad ahora está en Reportes
   if (h.startsWith("salud")) { setTab("salud"); return; }
@@ -1091,7 +1102,7 @@ const CF_LISTS = [["herd", "Código del hato (Interherd)", "Ej. RC, ISLA"], ["gr
   ["calving_group", "Lotes de ordeño", "Los que se pesan y salen en Leche diaria y Suplementación"], ["inseminator", "Inseminadores", ""]];
 let cf = { farm:null, farms:[], lists:[], set:{}, draft:null, newFarm:false };
 async function initConfig(){
-  if (!isMain()){ $("cfBody").innerHTML = `<div class="card"><div class="empty">Solo el administrador principal.</div></div>`; return; }
+  if (!isMain() && !cfgRacionOnly()){ $("cfBody").innerHTML = `<div class="card"><div class="empty">Solo el administrador principal.</div></div>`; return; }
   if (!navigator.onLine){ $("cfBody").innerHTML = `<div class="card"><div class="empty">La configuración necesita señal.</div></div>`; return; }
   await cfLoad(); cfRender();
 }
@@ -1105,6 +1116,18 @@ async function cfLoad(){
   if (!cf.draft.tanks) cf.draft.tanks = [...(RN_TANKS[cf.farm] || [])];
 }
 function cfRender(){
+  cfRenderAll();
+  if (!cfgRacionOnly()) return;
+  // solo ración: la finca (si tiene varias), la sección de ración abierta y el botón de guardar
+  const B = $("cfBody"), keep = B.querySelector('details[data-cfsec="racion"]'), save = B.querySelector("[data-cfsave]");
+  if (!keep || !save) return;
+  keep.open = true;
+  B.innerHTML = cf.farms.length > 1 ? `<div class="card"><b>Finca</b><div class="chips sm" style="margin-top:6px">${cf.farms.map(x=>
+    `<button class="${x.id===cf.farm ? "on" : ""}" data-cffarm="${x.id}">${esc(x.name)}</button>`).join("")}</div></div>` : "";
+  B.appendChild(keep);
+  const card = document.createElement("div"); card.className = "card"; card.appendChild(save); B.appendChild(card);
+}
+function cfRenderAll(){
   const F = cf.farms.find(x=>x.id===cf.farm) || {}, d = cf.draft, R = d.racion, P = d.repro;
   const num = (path, v, w) => `<input type="number" inputmode="decimal" step="any" data-cfn="${path}" value="${v ?? ""}" style="width:${w || 80}px;min-width:0;padding:6px">`;
   const clients = [...new Set(cf.farms.map(x=>x.client || "Sin cliente"))].sort();
@@ -1117,9 +1140,18 @@ function cfRender(){
     return `<div style="margin-top:10px"><b>${title}</b>${hint ? `<div class="sub">${hint}</div>` : ""}
       <div class="list" style="margin-top:4px">${xs.map(x=>`<span class="chip">${esc(x.value)} <button class="lnk" data-cfldel="${x.id}" style="color:var(--s4)">✕</button></span>`).join("") || `<span class="sub">—</span>`}</div>
       <div class="row" style="gap:6px;margin-top:6px"><input data-cfladd="${kind}" placeholder="Agregar…" style="flex:1;text-transform:uppercase"><button class="btn ghost" data-cfladdb="${kind}" style="width:auto">＋</button></div></div>`; };
-  const kgs = R.kg, rows = kgs.map((kg, i)=>i < kgs.length - 1
-    ? `<tr><td>hasta ${num(`racion.std.${i}`, R.std[i], 70)} L</td><td>${num(`racion.first.${i}`, R.first[i], 70)} L</td><td>${num(`racion.kg.${i}`, kg, 60)} kg</td></tr>`
-    : `<tr><td colspan="2">más litros</td><td>${num(`racion.kg.${i}`, kg, 60)} kg</td></tr>`).join("");
+  if (!R.names) R.names = R.kg.map(k=>RC_COLOR[k]?.[0] || "");
+  if (!R.hex) R.hex = R.kg.map(k=>RC_COLOR[k]?.[1] || "#eeeeee");
+  if (!R.early) R.early = [];
+  const txt = (path, v, w) => `<input data-cft="${path}" value="${esc(v ?? "")}" placeholder="collar" style="width:${w || 80}px;min-width:0;padding:6px;text-transform:uppercase">`;
+  const col = (path, v) => `<input type="color" data-cft="${path}" value="${esc(v || "#eeeeee")}" style="width:34px;height:30px;padding:0;border:0;background:none">`;
+  const kgs = R.kg, rows = kgs.map((kg, i)=>`<tr>${i < kgs.length - 1
+    ? `<td>hasta ${num(`racion.std.${i}`, R.std[i], 62)} L</td><td>${num(`racion.first.${i}`, R.first[i], 62)} L</td>`
+    : `<td colspan="2">más litros</td>`}<td style="white-space:nowrap">${num(`racion.kg.${i}`, kg, 52)} kg</td>
+      <td style="white-space:nowrap">${col(`racion.hex.${i}`, R.hex[i])} ${txt(`racion.names.${i}`, R.names[i], 108)}</td></tr>`).join("");
+  const erows = R.early.map((x, i)=>`<tr><td style="white-space:nowrap">hasta ${num(`racion.early.${i}.to`, x.to, 55)} días</td>
+      <td style="white-space:nowrap">${num(`racion.early.${i}.kg`, x.kg, 52)} kg</td><td style="white-space:nowrap">${num(`racion.early.${i}.kg1`, x.kg1, 52)} kg</td>
+      <td><button class="lnk" data-cfeadel="${i}" style="color:var(--s4)">✕</button></td></tr>`).join("");
   $("cfBody").innerHTML = `
     <div class="card"><b>Finca</b>
       <div class="chips sm ckpan" style="padding:0;margin-top:6px"><div class="chips sm">${clients.map(cl=>`<span class="sub" style="width:100%;margin-top:4px">${esc(cl)}</span>${cf.farms.filter(x=>(x.client || "Sin cliente")===cl)
@@ -1168,11 +1200,19 @@ function cfRender(){
         ${lst("negEco", "Qué hacer si la ECO sale negativa", "")}${lst("negDp", "Qué hacer si sale vacía", "")}
         ${listBox(["exrep_result", "Resultados del EXREP", "INR, OVSYN, SUCIA, METRITIS… (se guardan al tocar ＋ o ✕)"])}`; })())}
     ${sec("racion", "🌾 Ración de concentrado", `<b>Tabla por litros</b><div class="sub">Litros del último pesaje (ajustado) → kg de concentrado. Primer parto con su propia columna.</div>
-      <div style="margin-top:6px">Menos de ${num("racion.minL", R.minL, 60)} L → 0 kg</div>
-      <table style="font-size:13px;width:100%;margin-top:6px"><tr><th>Estándar</th><th>1er parto</th><th>Concentrado</th></tr>${rows}</table>
+      <div style="margin-top:6px">Menos de ${num("racion.minL", R.minL, 60)} L → ${num("racion.minKg", R.minKg ?? 0, 52)} kg
+        ${+R.minKg > 0 ? `${col("racion.minHex", R.minHex || "#ffffff")} ${txt("racion.minName", R.minName || "", 118)}` : ""}</div>
+      <table style="font-size:13px;width:100%;margin-top:6px"><tr><th>Estándar</th><th>1er parto</th><th>Concentrado</th><th>Collar</th></tr>${rows}</table>
+      <div class="sub" style="margin-top:4px">Los litros pueden quedar vacíos: entonces no se calcula por producción hasta llenarlos. Columna de 1er parto vacía = usa la estándar.</div>
       <div class="row" style="gap:8px;margin-top:6px"><button class="lnk" data-cfkgadd>＋ fila</button>${kgs.length > 2 ? `<button class="lnk" data-cfkgdel style="color:var(--s4)">− quitar la última fila</button>` : ""}</div>
-      <b style="display:block;margin-top:12px">Mínimo al inicio de la lactancia</b>
-      <div>Menos de ${num("racion.dimDays", R.dimDays, 60)} días en leche: mínimo ${num("racion.dimKg", R.dimKg, 60)} kg</div>
+      <b style="display:block;margin-top:12px">Ración por días de parida</b>
+      <div class="sub">Al inicio de la lactancia la ración va por días. Después del último día, por producción. Columna de 1er parto vacía = la vaca de 1er parto va por producción desde el parto.</div>
+      ${R.early.length ? `<table style="font-size:13px;width:100%;margin-top:6px"><tr><th>Días</th><th>2 o más partos</th><th>1er parto</th><th></th></tr>${erows}</table>
+        <div style="margin-top:6px;display:flex;gap:12px;flex-wrap:wrap">
+          <label style="display:flex;gap:6px;align-items:center;color:var(--ink)"><input type="radio" name="cfEarlyMode" data-cfemode="min" ${R.earlyMode!=="fix" ? "checked" : ""} style="width:18px;height:18px"> Es un mínimo (si por litros le toca más, recibe más)</label>
+          <label style="display:flex;gap:6px;align-items:center;color:var(--ink)"><input type="radio" name="cfEarlyMode" data-cfemode="fix" ${R.earlyMode==="fix" ? "checked" : ""} style="width:18px;height:18px"> Es fija</label></div>`
+        : `<div style="margin-top:6px">Menos de ${num("racion.dimDays", R.dimDays, 60)} días en leche: mínimo ${num("racion.dimKg", R.dimKg, 60)} kg</div>`}
+      <button class="lnk" data-cfeadd style="margin-top:4px">＋ fila por días</button>
       <b style="display:block;margin-top:12px">Cerca del secado</b>
       <div>Faltando ${num("racion.dry0", R.dry0, 60)} días o menos: 0 kg</div>
       <div style="margin-top:4px">Faltando ${num("racion.dryLowDays", R.dryLowDays, 60)} días o menos y menos de ${num("racion.dryLowL", R.dryLowL, 60)} L: 0 kg</div>
@@ -1190,7 +1230,9 @@ function cfRender(){
 const cfSetPath = (o, path, v) => { const k = path.split("."); let x = o; k.slice(0, -1).forEach(p=>{ x = x[p]; }); x[k[k.length - 1]] = v; };
 $("cfBody").addEventListener("change", e=>{
   const t = e.target;
-  if (t.dataset.cfn){ cfSetPath(cf.draft, t.dataset.cfn, t.value==="" ? null : +t.value); return; }
+  if (t.dataset.cfn){ cfSetPath(cf.draft, t.dataset.cfn, t.value==="" ? null : +t.value); if (t.dataset.cfn==="racion.minKg") cfRender(); return; }
+  if (t.dataset.cft){ cfSetPath(cf.draft, t.dataset.cft, t.type==="color" ? t.value : t.value.trim().toUpperCase()); return; }
+  if (t.dataset.cfemode){ cf.draft.racion.earlyMode = t.dataset.cfemode; return; }
   if (t.dataset.cftank!=null){ cf.draft.tanks[+t.dataset.cftank] = t.value.trim(); return; }
   if (t.matches("[data-cfcalfauto]")){ cf.draft.calves = { ...(cf.draft.calves || {}), auto:t.checked }; return cfRender(); }
   if (t.dataset.cfst!=null){ cf.draft.checkup.stages[+t.dataset.cfst].on = t.checked; return; }
@@ -1226,8 +1268,11 @@ $("cfBody").addEventListener("click", async e=>{
     d.checkup[cka] = [...(d.checkup[cka] || []), v]; return cfRender(); }
   if (t.closest("[data-cftankadd]")){ d.tanks = [...(d.tanks || []), `Tanque ${(d.tanks || []).length + 1}`]; return cfRender(); }
   if (q("data-cftankdel")!=null){ d.tanks.splice(+q("data-cftankdel"), 1); return cfRender(); }
-  if (t.closest("[data-cfkgadd]")){ const R = d.racion; R.kg.push(+R.kg[R.kg.length - 1] + 2); R.std.push(null); R.first.push(null); return cfRender(); }
-  if (t.closest("[data-cfkgdel]")){ const R = d.racion; R.kg.pop(); R.std.splice(R.kg.length - 1); R.first.splice(R.kg.length - 1); return cfRender(); }
+  if (t.closest("[data-cfkgadd]")){ const R = d.racion; R.kg.push(+R.kg[R.kg.length - 1] + 2); R.std.push(null); R.first.push(null); R.names?.push(""); R.hex?.push("#eeeeee"); return cfRender(); }
+  if (t.closest("[data-cfkgdel]")){ const R = d.racion; R.kg.pop(); R.std.splice(R.kg.length - 1); R.first.splice(R.kg.length - 1); R.names?.splice(R.kg.length); R.hex?.splice(R.kg.length); return cfRender(); }
+  if (t.closest("[data-cfeadd]")){ const E = d.racion.early ||= [], last = E[E.length - 1];
+    E.push(last ? { to:+last.to + 15, kg:last.kg, kg1:last.kg1 } : { to:15, kg:8, kg1:null }); return cfRender(); }
+  if (q("data-cfeadel")!=null){ d.racion.early.splice(+q("data-cfeadel"), 1); return cfRender(); }
   if (t.closest("[data-cfcapadd]")){ d.racion.caps = [...(d.racion.caps || []), [41, 50, 8]]; return cfRender(); }
   if (q("data-cfcapdel")!=null){ d.racion.caps.splice(+q("data-cfcapdel"), 1); return cfRender(); }
   if (t.closest("[data-cfreset]")){ if (!confirm("¿Volver a los valores por defecto? (se aplica al guardar)")) return;
@@ -1236,7 +1281,10 @@ $("cfBody").addEventListener("click", async e=>{
     if (!cf.draft.tanks) cf.draft.tanks = []; toast("Copiado: revisa y toca Guardar"); return cfRender(); }
   if (t.closest("[data-cfsave]")){
     const R = d.racion, n = R.kg.length - 1;
-    if (R.std.slice(0, n).some(x=>x==null) || R.first.slice(0, n).some(x=>x==null)) return toast("Completa los litros de la tabla de ración");
+    const part = a => { const v = a.slice(0, n), k = v.filter(x=>x!=null && x!=="").length; return k > 0 && k < v.length; };
+    if (part(R.std) || part(R.first)) return toast("Completa los litros de la tabla de ración (o deja la columna toda vacía)");
+    if ((R.early || []).some(x=>x.to==null || x.kg==null)) return toast("Completa los días y los kg de la ración por días");
+    R.early = (R.early || []).slice().sort((a, b)=>+a.to - +b.to);
     const settings = { repro:d.repro, checkup:d.checkup, calves:{ auto:d.calves?.auto!==false, start:d.calves?.start || "" }, racion:{ ...R, std:R.std.slice(0, n), first:R.first.slice(0, n) }, tanks:(d.tanks || []).filter(Boolean) };
     const { error } = await sb.from("farm_settings").upsert({ farm_id:cf.farm, settings, updated_at:new Date().toISOString() }, { onConflict:"farm_id" });
     if (error) return toast(/row-level|permission/i.test(error.message) ? "Sin permiso (falta correr SQL/configuracion.sql)" : "No se pudo guardar: " + error.message);
@@ -4518,6 +4566,9 @@ async function rqLoadDry(){
     const o = d.sv[e.cow_id]; if (!o || e.event_date >= o.d) d.sv[e.cow_id] = { d:e.event_date, b:e.bull }; });
   rqDryD = d; return true;
 }
+// "Para secar": cuántos días hacia adelante se miran (Juan, 26/11/2026: ver las que están a 45–60 días para decidir con tiempo)
+const RQ_DRY_WIN = [14, 30, 45, 60];
+const rqDryWin = () => +(store.get("rqDryWin") || 60);
 // datos de cada vaca para el secado
 function rqDryInfo(c){
   const D = rqDryD || { plans:{}, milk:{}, sv:{} }, ms = D.milk[c.id] || [], last = ms[ms.length - 1];
@@ -4527,8 +4578,11 @@ function rqDryInfo(c){
   const lastKg = tot(last);
   const dd = D.dried?.[c.id], driedOff = (dd && (!c.last_calving || dd > c.last_calving)) || /^HO/i.test(c.pen || "") || /(^|\/)Horra/i.test(c.status || "");
   const low = !driedOff && lastKg!=null && lastKg < (rq.lowKg || 13);
-  const due = !!(!driedOff && preg && /(^|\/)Lac/.test(c.status || "") && dry && dry <= addDays(today(), 14));
-  return { ms:ms.slice(-2), last, lastKg, low, preg, sv, dry, due, driedOff, driedOn:dd, gest: preg && sv ? days(sv.d, today()) : null, plan:D.plans[c.id], tot };
+  const lac = !driedOff && preg && /(^|\/)Lac/.test(c.status || "") && !!dry;
+  const due = !!(lac && dry <= addDays(today(), 14));                 // ya toca (14 días o menos): en rojo y para marcar
+  const soon = !!(lac && dry <= addDays(today(), rqDryWin()));        // dentro de la ventana escogida (hasta 60 días)
+  return { ms:ms.slice(-2), last, lastKg, low, preg, sv, dry, due, soon, toDry: dry ? days(today(), dry) : null, driedOff, driedOn:dd,
+    gest: preg && sv ? days(sv.d, today()) : null, plan:D.plans[c.id], tot };
 }
 const rqDel = c => c.last_calving ? days(c.last_calving, today()) : null;
 // Inseminación tipo Ovsynch: las vacas que el chequeo dejó programadas para inseminar (Ovsynch día 10 · OVS2 día 3)
@@ -4574,11 +4628,13 @@ function renderRapido0(){
         <textarea id="rqPaste" rows="3" style="width:100%;margin-top:6px;font:inherit;padding:8px;border-radius:10px;border:1px solid var(--line);background:var(--bg);color:var(--ink)" placeholder="1076 1044 863 ..."></textarea>
         <button class="btn ghost" id="rqPasteGo" style="margin-top:6px">Marcar esos números</button><div class="sub" id="rqPasteMsg"></div></details>
       ${rq.type==="dry_off" ? (()=>{ const np = rqCows.filter(c=>!rqDryInfo(c).driedOff && (rqDryD?.plans[c.id] || rqDryInfo(c).due)).length, pl = rqCanPlan();
-        return `<div class="chips sm ckpan" style="padding:0;margin-top:6px"><div class="chips sm">${[["","Todas"],["lac","En leche"],["prog",`🌙 Para secar (${np})`], ...(pl ? [["low","Bajitas"]] : [])].map(([k,t])=>`<button class="${(rq.dryF||"")===k ? "on" : ""}" data-rqdf="${k}">${t}</button>`).join("")}</div></div>
+        const nw = rqCows.filter(rqDryProg).length;
+        return `<div class="chips sm ckpan" style="padding:0;margin-top:6px"><div class="chips sm">${[["","Todas"],["lac","En leche"],["prog",`🌙 Para secar (${nw})`], ...(pl ? [["low","Bajitas"]] : [])].map(([k,t])=>`<button class="${(rq.dryF||"")===k ? "on" : ""}" data-rqdf="${k}">${t}</button>`).join("")}</div></div>
           ${pl ? `<div class="chips sm ckpan" style="padding:0;margin-top:6px"><div class="chips sm"><span class="sub" style="align-self:center">Ordenar:</span>${[["","Por número"],["milk","Por última leche (menor primero)"]].map(([k,t])=>`<button class="${(rq.dryOrd||"")===k ? "on" : ""}" data-rqdo="${k}">${t}</button>`).join("")}</div></div>` : ""}
           ${pl ? `<div class="row" style="align-items:center;gap:6px;margin-top:6px"><span class="sub" style="flex:none">Bajita: menos de</span><select id="rqLowKg" style="flex:0 0 90px">${[8,10,12,13,14,16].map(k=>`<option value="${k}" ${(rq.lowKg||13)===k ? "selected" : ""}>${k} kg</option>`).join("")}</select><span class="sub" style="flex:none">en el último pesaje</span></div>` : ""}
+          ${rq.dryF==="prog" ? `<div class="chips sm ckpan" style="padding:0;margin-top:6px"><div class="chips sm"><span class="sub" style="align-self:center">Secado en los próximos:</span>${RQ_DRY_WIN.map(w=>`<button class="${rqDryWin()===w ? "on" : ""}" data-rqdw="${w}">${w} días</button>`).join("")}</div></div>` : ""}
           ${np ? `<button class="btn ghost" data-rqmarkplan="1" style="margin-top:6px">🌙 Marcar ${np===1 ? "la que toca secar" : "las " + np + " para secar"}</button>` : ""}
-          <div class="sub" style="margin-top:4px">Para secar = las programadas y las preñadas con secado esperado en los próximos 14 días (o ya pasado), como en Listas de trabajo.</div>
+          <div class="sub" style="margin-top:4px">Para secar = las programadas y las preñadas en leche con secado esperado en los próximos ${rqDryWin()} días (o ya pasado), de la que se seca primero a la última. En rojo las de 14 días o menos; el botón 🌙 marca solo esas.</div>
           ${pl ? `<div class="sub" style="margin-top:4px">En rojo: para secar y bajitas. Toca el número para ver preñez y secado esperado.</div>` : ""}`; })() : ""}
       ${rqOvsOn() ? (()=>{ const n = Object.keys(rqOvs?.plans || {}).filter(id=>rqCows.some(c=>c.id===id)).length;
         return `<div class="hscard" style="margin-top:6px"><b>💉 Ovsynch / OVS2: ${n} vaca${n===1 ? "" : "s"} para inseminar</b> <span class="sub">(programadas en el chequeo hasta el ${fmt(rq.date)})</span>
@@ -4681,12 +4737,15 @@ const rqShown = () => { const tk = rqTokens(), dry = rq.type==="dry_off";
   const L = rqShown0(tk, dry);
   // secado: ordenar por la última leche (las más bajitas primero; sin pesaje al final)
   if (dry && rq.dryOrd==="milk"){ const kg = c => rqDryInfo(c).lastKg ?? 1e9; return L.sort((a, b)=>kg(a) - kg(b) || byNum(a.id, b.id)); }
+  if (dry && rq.dryF==="prog" && !rq.dryOrd){ const k = c => { const x = rqDryInfo(c); return x.plan?.due || x.dry || "9999"; };
+    return L.sort((a, b)=>k(a).localeCompare(k(b)) || byNum(a.id, b.id)); }
   if (dry) return L.sort((a, b)=>byNum(a.id, b.id));   // secado "por número": de menor a mayor
   return L; };
+const rqDryProg = c => { const x = rqDryInfo(c); return !x.driedOff && (!!x.plan || x.due || x.soon); };
 const rqShown0 = (tk, dry) => { 
   return rqCows.filter(c=>(!rq.pen || (c.pen||"—")===rq.pen) && (!tk.length || (tk.length > 1 ? tk.includes(c.id) : c.id.includes(tk[0])))
     && (!(rqOvsOn() && rq.ovsF) || !!rqOvs?.plans[c.id])
-    && (!dry || !rq.dryF || (rq.dryF==="prog" ? (!rqDryInfo(c).driedOff && (!!rqDryD?.plans[c.id] || rqDryInfo(c).due)) : rq.dryF==="low" ? rqDryInfo(c).low : rq.dryF==="lac" ? /(^|\/)Lac/.test(c.status || "") : true))); };
+    && (!dry || !rq.dryF || (rq.dryF==="prog" ? rqDryProg(c) : rq.dryF==="low" ? rqDryInfo(c).low : rq.dryF==="lac" ? /(^|\/)Lac/.test(c.status || "") : true))); };
 function rqListHtml(shown){
   const tk = rqTokens(), miss = tk.length > 1 ? tk.filter(t=>!shown.some(c=>c.id===t)) : [];
   const head = tk.length > 1 ? `<div class="row" style="align-items:center;gap:8px;padding:8px 2px;border-bottom:1px solid var(--line)">
@@ -4834,6 +4893,7 @@ $("rqBody").addEventListener("click", async e=>{
     return; }
   if (q("data-rqdf")!=null){ rqRead(); rq.dryF = q("data-rqdf"); return renderRapido(); }
   if (q("data-rqdo")!=null){ rqRead(); rq.dryOrd = q("data-rqdo"); return renderRapido(); }
+  if (q("data-rqdw")!=null){ rqRead(); store.set("rqDryWin", q("data-rqdw")); return renderRapido(); }
   if (q("data-rqmarkplan")){ rqRead(); rqCows.filter(c=>!rqDryInfo(c).driedOff && (rqDryD?.plans[c.id] || rqDryInfo(c).due)).forEach(c=>rq.sel.add(c.id)); rq.dryF = "prog"; return renderRapido(); }
   if (q("data-rqcow")){ e.preventDefault(); rq.dryOpen = rq.dryOpen===q("data-rqcow") ? null : q("data-rqcow"); $("rqList").innerHTML = rqListHtml(rqShown()); return; }
   if (t.id==="rqPlanGo") return rqPlanDry();
@@ -5336,18 +5396,37 @@ function trWire(){
 //   → caída ≥ 25 % vs. promedio de las 3 anteriores: se mantiene la previa → DIM < 100: mínimo 8
 //   → no baja más de 2 kg de una vez (si no hay tope de secado) → pares de 0 a 12.
 const RC_COLOR = { 12:["MORADO","#c9a3d7"], 10:["GRIS","#bfbfbf"], 8:["VERDE","#7bd67b"], 6:["ROJO","#f3a5a5"], 4:["AZUL","#7cc6f2"], 2:["AMARILLO","#f5e38a"], 0:["0","#ffffff"] };
+// collar de una ración: el que la finca puso en ☰ Configuración → Ración (si no, los colores de siempre)
+function rcColor(kg, f){
+  const R = fcfg(f).racion, i = (R.kg || []).findIndex(x=>+x===+kg);
+  if (i >= 0 && R.names?.[i]) return [R.names[i], R.hex?.[i] || "#eeeeee"];
+  if (+kg===+R.minKg && +kg > 0 && R.minName) return [R.minName, R.minHex || "#ffffff"];
+  return RC_COLOR[kg] || [String(kg), "#eeeeee"];
+}
 const rcPar = v => { v = Math.max(0, Math.min(12, +v || 0)); return [0,2,4,6,8,10,12].reduce((a,b)=>Math.abs(b - v) < Math.abs(a - v) ? b : a, 0); };
 // los números salen de Configuración → Ración de cada finca (por defecto los de Inversiones Camacho)
 function rcTabla(l, first, f){
   const R = fcfg(f).racion;
-  if (l==null || isNaN(l) || l < +R.minL) return 0;
-  const lim = first ? R.first : R.std, kg = R.kg;
+  const filled = a => (a || []).some(x=>x!=null && x!=="");
+  if (!filled(R.std) && !filled(R.first)) return null;           // faltan los rangos de litros: no se calcula por producción
+  if (l==null || isNaN(l) || l < +R.minL) return +R.minKg || 0;
+  const lim = first && filled(R.first) ? R.first : R.std, kg = R.kg;
   const i = lim.findIndex(x=>x!=null && x!=="" && l <= +x);
   return i >= 0 ? +kg[i] : +kg[kg.length - 1];
 }
-function rcReglas(base, litros, prev, dim, dps, caida, f){
+// fila de la ración por días que le toca a la vaca (null si no hay tabla por días, ya pasó o su columna está vacía)
+function rcEarly(dim, first, f){
   const R = fcfg(f).racion;
+  if (dim==null || !(R.early || []).length) return null;
+  const row = R.early.find(x=>x && x.to!=null && x.to!=="" && dim <= +x.to);
+  if (!row) return null;
+  const kg = first ? row.kg1 : row.kg;
+  return kg==null || kg==="" ? null : { kg:+kg, to:+row.to, fix:R.earlyMode==="fix" };
+}
+function rcReglas(base, litros, prev, dim, dps, caida, f, first){
+  const R = fcfg(f).racion, E = rcEarly(dim, first, f);
   let rac = base, motivo = "Tabla por litros", tipo = "SIN", cap = null;
+  if (base==null){ rac = E ? E.kg : prev ?? (+R.minKg || 0); motivo = E ? `Hasta ${E.to} días de parida: ${E.kg} kg` : "⚠ faltan los litros de cada collar (☰ Configuración → Ración)"; }
   if (dps!=null){
     if (dps <= +R.dry0) return { rac:0, tipo, motivo:`≤${R.dry0} días al secado: 0 kg` };
     if (dps <= +R.dryLowDays && litros!=null && litros < +R.dryLowL) return { rac:0, tipo, motivo:`Litros <${R.dryLowL} y ≤${R.dryLowDays} días al secado: 0 kg` };
@@ -5360,8 +5439,11 @@ function rcReglas(base, litros, prev, dim, dps, caida, f){
       if (cap!=null && rac > cap){ rac = cap; motivo += ` (limitado por secado a ${cap} kg)`; } }
     else motivo = `Caída ${tipo.toLowerCase()} (${caida.toFixed(1)}%), sin previa: usar tabla`;
   }
-  if (dim!=null && dim < +R.dimDays && rac < +R.dimKg){ rac = +R.dimKg; motivo = `DIM <${R.dimDays} días: mínimo ${R.dimKg} kg`;
+  if (E){ if (E.fix || rac < E.kg){ rac = E.kg; motivo = `Hasta ${E.to} días de parida: ${E.fix ? "" : "mínimo "}${E.kg} kg`; }
     if (cap!=null && rac > cap){ rac = cap; motivo += ` (limitado por secado a ${cap} kg)`; } }
+  else if (!(R.early || []).length && dim!=null && dim < +R.dimDays && rac < +R.dimKg){ rac = +R.dimKg; motivo = `DIM <${R.dimDays} días: mínimo ${R.dimKg} kg`;
+    if (cap!=null && rac > cap){ rac = cap; motivo += ` (limitado por secado a ${cap} kg)`; } }
+  if (E?.fix) return { rac:rcPar(rac), tipo, motivo };   // fija por días: no la cambian las caídas ni la bajada máxima
   if (prev!=null && cap==null && rac < prev - +R.maxDown){ rac = prev - +R.maxDown; motivo += ` (limitado: máx. bajada ${R.maxDown} kg vs previa ${prev} kg)`; }
   return { rac:rcPar(rac), tipo, motivo };
 }
@@ -5416,6 +5498,13 @@ async function rcLoad(){
     dryPlans:dp.error ? [] : (dp.data || []).map(x=>[x.cow_id, x.due_date]) };
   try{ jset(`rcData:${farm}`, rcData); }catch(err){}
 }
+// recién parida sin pesaje: la ración por días (o el mínimo al inicio de la lactancia); si no, la previa
+function rcNoMilk(dim, first, prev, f){
+  const R = fcfg(f).racion, E = rcEarly(dim, first, f);
+  if (E) return { rac:rcPar(E.kg), tipo:"SIN", motivo:`Recién parida, sin pesaje todavía: ${E.kg} kg (hasta ${E.to} días)` };
+  if (!(R.early || []).length && dim!=null && dim < +R.dimDays) return { rac:rcPar(R.dimKg), tipo:"SIN", motivo:`Recién parida, sin pesaje todavía: ${R.dimKg} kg (DIM <${R.dimDays})` };
+  return { rac:prev ?? 0, tipo:"SIN", motivo:"Sin pesaje en 75 días: se deja la previa" };
+}
 // cada vaca en ordeño de los lotes de producción: litros ajustados, caída, DIM, secado, previa → ración
 function rcCompute(){
   const d = rcData, pens = (jget("mkFarms", []).find(f=>f.id===d.farm)?.pens) || [];
@@ -5448,9 +5537,8 @@ function rcCompute(){
     const r = vig
       ? { rac:cur ? rcPar(cur.kg) : 0, tipo:"", noRac:!cur, motivo: cur ? `ración del ${fmt(cur.d)}${rcOwn(cur.src) ? "" : " (Interherd)"}` : "⚠ sin ración guardada: márcala y ponle los kg" }
       : litros==null
-      ? (dim!=null && dim < 100 ? { rac:8, tipo:"SIN", motivo:"Recién parida, sin pesaje todavía: 8 kg (DIM <100)" }
-                                : { rac:prev ?? 0, tipo:"SIN", motivo:"Sin pesaje en 75 días: se deja la previa" })
-      : rcReglas(base, litros, prev, dim, dps, caida, d.farm);
+      ? rcNoMilk(dim, first, prev, d.farm)
+      : rcReglas(base, litros, prev, dim, dps, caida, d.farm, first);
     const fin = rcState.edit[c.id] ?? r.rac;
     return { c, cur, litros, adj:last?.adj, fecha:last?.d, prom, caida, dim, dps, dry, first, prev, prevFrom:prevRec, base, ...r, fin, manual: rcState.edit[c.id]!=null,
       cambio: prev==null || rcPar(prev)!==fin };
@@ -5536,7 +5624,7 @@ function renderRacion(){
       ${rows.map(x=>`<tr data-rcid="${esc(x.c.id)}" data-fin="${x.fin}" style="${s.sel.has(x.c.id) ? "background:rgba(124,198,242,.25)" : x.tipo==="FUERTE" ? "background:rgba(248,203,173,.35)" : x.tipo==="MODERADA" ? "background:rgba(255,242,204,.35)" : ""}">
         <td><input type="checkbox" data-rcsel ${s.sel.has(x.c.id) ? "checked" : ""} style="width:20px;height:20px"></td>
         <td><button class="lnk" data-cow="${esc(x.c.id)}">${esc(x.c.id)}</button><div class="sub">${esc(x.c.pen)}${x.first ? " · 1er parto" : ""}</div></td>
-        <td style="white-space:nowrap"><b style="display:inline-block;min-width:26px;text-align:center;font-size:15px;border-radius:6px;padding:1px 4px;background:${RC_COLOR[x.fin][1]};color:#222">${x.fin}</b> <span class="sub">${RC_COLOR[x.fin][0]}</span>${x.cambio ? " ●" : ""}</td>
+        <td style="white-space:nowrap"><b style="display:inline-block;min-width:26px;text-align:center;font-size:15px;border-radius:6px;padding:1px 4px;background:${rcColor(x.fin, rcData.farm)[1]};color:#222">${x.fin}</b> <span class="sub">${esc(rcColor(x.fin, rcData.farm)[0])}</span>${x.cambio ? " ●" : ""}</td>
         <td>${x.prev ?? "—"}</td>
         <td>${x.litros!=null ? x.litros.toFixed(1) : "—"}${x.litros!=null && !x.adj ? `<div class="sub">sin ajustar</div>` : ""}</td>
         <td>${x.prom!=null ? x.prom.toFixed(1) : "—"}</td><td>${x.caida!=null ? x.caida.toFixed(0) + "%" : "—"}</td>
@@ -5558,7 +5646,7 @@ async function rcPdf(onlyChanges){
     doc.setFont("helvetica", "bold"); doc.setFontSize(15); doc.setTextColor(0);
     doc.text(`${onlyChanges ? "CAMBIOS DE COLLAR" : "SUPLEMENTACION"} ${LS_PEN_NAME[p] || p} - ${fmt(rcState.mode==="vig" && rcState.asOf ? rcState.asOf : today())}`, 105, M + 6, { align:"center" });
     sub.forEach((x, i)=>{
-      const b = Math.floor(i/per), j = i % per, x0 = M + b*CW, y0 = M + 12 + j*RH, [name, h] = RC_COLOR[x.fin];
+      const b = Math.floor(i/per), j = i % per, x0 = M + b*CW, y0 = M + 12 + j*RH, [name, h] = rcColor(x.fin, rcData.farm);
       doc.setDrawColor(0); doc.setLineWidth(0.2);
       doc.rect(x0, y0, W[0], RH); doc.rect(x0 + W[0], y0, W[1], RH);
       doc.setFillColor(...hex(h)); doc.rect(x0 + W[0] + W[1], y0, W[2], RH, "FD");
