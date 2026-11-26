@@ -766,48 +766,55 @@ const fcfg = f => cfgMerge(CFG_DEF, cfgRows[f] || {});
 const cGest = f => 282, cDry = f => +fcfg(f).repro.dry, cVwp = f => +fcfg(f).repro.vwp, cHm = f => +fcfg(f).repro.heiferMonths, cHkg = f => +fcfg(f).repro.heiferKg;
 // novilla lista para servicio (Juan 25/11/2026): 16 meses y 380 kg, o ya con 19 meses o más le basta 360 kg
 const cHm2 = f => +fcfg(f).repro.heiferMonths2, cHkg2 = f => +fcfg(f).repro.heiferKg2;
-// ── Toro sugerido (Juan 25/11/2026) ──
+// ── Toro sugerido (Juan 25–26/11/2026) ──
 // Los toros de cada servicio se marcan POR TERMO en Toros y semen (al ingresar o trasladar pajillas a un termo que no sea el
 // PRINCIPAL la app pregunta en qué servicios va: tabla semen_tank_rules). Reglas generales en breeding_rules (oportunidades,
 // toros Gyr, novillas). cls: clase de la vaca en el Generador (cow_plans "toro"): "BUENA", "GYR", un código fijo o nada (normal).
-// Termo = el del grupo de la vaca (R1, JCAL, NI…); si ese termo no tiene pajillas ni reglas, el PRINCIPAL.
+// Termo = el del grupo de la vaca (R1, JCAL, NI…). NUNCA el PRINCIPAL: si en el termo del grupo no hay pajillas del toro que le
+// toca, se avisa (falta un traslado o hay un problema con el inventario) y no se sugiere nada.
+// Devuelve { bull, why, straws, tank } o, si no se puede sugerir, { bull:null, warn:true, why:"aviso" }; null = sin reglas (como siempre).
 let sugCache = null;
 async function sugCtx(force){
   if (!force && sugCache && Date.now() - sugCache.at < 120000) return sugCache;
-  const [st, sx, tr, br] = await Promise.all([sb.from("semen_stock").select("tank,bull_code,straws"), sb.from("bulls").select("code").eq("sexed", true),
-    sb.from("semen_tank_rules").select("tank,bull_code,services"), sb.from("breeding_rules").select("*").eq("id", 1).maybeSingle()]);
-  return sugCache = { at:Date.now(), stock:st.data || [], sexed:new Set((sx.data || []).map(x=>x.code)),
+  const [st, sx, tr, br, tk] = await Promise.all([sb.from("semen_stock").select("tank,bull_code,straws"), sb.from("bulls").select("code").eq("sexed", true),
+    sb.from("semen_tank_rules").select("tank,bull_code,services"), sb.from("breeding_rules").select("*").eq("id", 1).maybeSingle(),
+    sb.from("semen_tanks").select("code").eq("active", true)]);
+  return sugCache = { at:Date.now(), stock:st.data || [], sexed:new Set((sx.data || []).map(x=>x.code)), tanks:(tk.data || []).map(x=>x.code),
     R:{ gyr:["102","103"], chance_buena:5, chance_normal:3, heifer_sexed:true, ...(br.data || {}), rules:tr.data || [] } };
 }
-const tankOf = (pen, ctx) => { const tk = String(pen || "").toUpperCase().replace(/\s/g, ""), c = ctx || {};
-  return (c.stock || []).some(x=>x.tank===tk) || (c.R?.rules || []).some(x=>x.tank===tk) ? tk : "PRINCIPAL"; };
+const tankOf = pen => String(pen || "").toUpperCase().replace(/\s/g, "");
 function bullSuggest(pen, nSv, heifer, cls, ctx){
   if (cls && cls!=="BUENA" && cls!=="GYR") return { bull:cls, why:"toro fijo asignado", straws:null };
-  const rows = ctx?.stock || [], sx = ctx?.sexed || new Set(), R = ctx?.R || {}, tank = tankOf(pen, ctx);
+  const rows = ctx?.stock || [], sx = ctx?.sexed || new Set(), R = ctx?.R || {}, tank = tankOf(pen);
+  const warn = why => ({ bull:null, warn:true, why, tank });
+  if (!(ctx?.tanks || []).includes(tank)) return warn(`el grupo ${pen || "—"} no tiene termo`);
   const inT = c => rows.filter(x=>x.tank===tank && x.bull_code===c).reduce((a, x)=>a + +x.straws, 0);
-  const all = c => rows.filter(x=>x.bull_code===c).reduce((a, x)=>a + +x.straws, 0);
-  const best = cs => cs.slice().sort((a, b)=>inT(b) - inT(a) || all(b) - all(a))[0];
+  const best = cs => cs.filter(c=>inT(c) > 0).sort((a, b)=>inT(b) - inT(a))[0];
+  const fix = "falta un traslado o revisar el inventario";
+  if (!rows.some(x=>x.tank===tank && +x.straws > 0)) return warn(`el termo ${tank} no tiene pajillas: ${fix}`);
   // novillas: 1º servicio con sexado y después convencional, el que haya en el termo; nunca Gyr
   if (heifer && R.heifer_sexed!==false){
     const here = [...new Set(rows.filter(x=>x.tank===tank && +x.straws > 0).map(x=>x.bull_code))];
     const sxd = here.filter(c=>sx.has(c)), conv = here.filter(c=>!sx.has(c) && !(R.gyr || []).includes(c));
-    const pool = nSv===1 && sxd.length ? sxd : conv;
-    if (!pool.length) return null;
-    const bull = best(pool);
-    return { bull, why: nSv===1 ? (sxd.length ? "novilla · 1º servicio sexado" : "novilla · 1º servicio (no hay sexado en el termo)") : `novilla · ${nSv}º servicio convencional`, straws:inT(bull), tank, noStock:false };
+    if (nSv===1 && !sxd.length && !conv.length) return warn(`no hay pajillas para novillas en ${tank}: ${fix}`);
+    if (nSv > 1 && !conv.length) return warn(`no hay convencional en ${tank}: ${fix}`);
+    const bull = best(nSv===1 && sxd.length ? sxd : conv);
+    return { bull, why: nSv===1 ? (sxd.length ? "novilla · 1º servicio sexado" : "novilla · 1º servicio (no hay sexado en el termo)") : `novilla · ${nSv}º servicio convencional`, straws:inT(bull), tank };
   }
   const lim = cls==="BUENA" ? +R.chance_buena || 5 : +R.chance_normal || 3;
   const gyr = cls==="GYR" || nSv > lim;
-  let cands = gyr ? (R.gyr || []) : [];
-  if (!gyr){   // toros del termo marcados para ese servicio y con pajillas; si ninguno, los del último servicio marcado
-    const tr = (R.rules || []).filter(x=>x.tank===tank && inT(x.bull_code) > 0);
-    if (!tr.length) return null;
-    for (let k = Math.min(nSv, 5); !cands.length && k >= 1; k--) cands = tr.filter(x=>(x.services || []).includes(k)).map(x=>x.bull_code);
-  }
-  if (!cands.length) return null;
-  const bull = best(cands);
   const why = cls==="GYR" ? "Gyr siempre" : gyr ? `${nSv}º servicio · ya pasó las ${lim} oportunidades` : `${nSv}º servicio${cls==="BUENA" ? " · ⭐ buena" : ""}`;
-  return { bull, why, straws:inT(bull), tank, noStock: inT(bull) <= 0 };
+  if (gyr){
+    const bull = best(R.gyr || []);
+    return bull ? { bull, why, straws:inT(bull), tank } : warn(`le toca Gyr (${why}) y no hay ${(R.gyr || []).join(" ni ")} en ${tank}: ${fix}`);
+  }
+  const tr = (R.rules || []).filter(x=>x.tank===tank);
+  if (!tr.length && !cls) return null;   // el termo todavía no tiene toros por servicio: se insemina como siempre
+  if (!tr.length) return warn(`el termo ${tank} no tiene toros por servicio (Toros y semen → 🐂 Servicios)`);
+  // toros del termo marcados para ese servicio y con pajillas; si ninguno, los del último servicio marcado
+  let bull = null;
+  for (let k = Math.min(nSv, 5); !bull && k >= 1; k--) bull = best(tr.filter(x=>(x.services || []).includes(k)).map(x=>x.bull_code));
+  return bull ? { bull, why, straws:inT(bull), tank } : warn(`no hay toro con pajillas para el ${nSv}º servicio en ${tank}: ${fix}`);
 }
 // número del próximo servicio: servicios (fechas) después del último parto; novillas: después de nacer
 const nextSvN = (dates, lc, bd) => (dates || []).filter(d=>d > (lc || bd || "0")).length + 1;
@@ -4728,7 +4735,8 @@ function rqPerBullHtml(){
   const used = {}; cows.forEach(c=>{ const b = (d.bw||{})[c.id] || d.bull || "—"; used[b] = (used[b]||0) + +((d.sw||{})[c.id] || d.straws || 1); });
   return `<div class="sub" style="margin:4px 0">Pajillas: ${Object.entries(used).map(([b,n])=>`<b>${esc(b)}</b> ${n}`).join(" · ")}</div>
     <div style="max-height:40vh;overflow:auto;border-top:1px solid var(--line)">${cows.map(c=>`<div class="row" style="align-items:center;gap:8px;padding:6px 2px;border-bottom:1px solid var(--line)">
-      <b style="min-width:62px">${esc(c.id)}${sgs[c.id] ? `<div class="sub" style="font-weight:700;${((d.bw||{})[c.id] || d.bull)!==sgs[c.id].bull ? "color:var(--s4)" : ""}">🐂 sugerido ${esc(sgs[c.id].bull)} · ${esc(sgs[c.id].why)}${sgs[c.id].noStock ? " · sin pajillas en el termo" : ""}</div>` : ""}</b><select data-rqbw="${esc(c.id)}" style="flex:1;min-width:0;padding:8px">${opts((d.bw||{})[c.id] || "")}</select>
+      <b style="min-width:62px">${esc(c.id)}${sgs[c.id]?.bull ? `<div class="sub" style="font-weight:700;${((d.bw||{})[c.id] || d.bull)!==sgs[c.id].bull ? "color:var(--s4)" : ""}">🐂 sugerido ${esc(sgs[c.id].bull)} · ${esc(sgs[c.id].why)}</div>`
+        : sgs[c.id]?.warn ? `<div class="sub" style="font-weight:700;color:var(--s4);white-space:normal">⚠ ${esc(sgs[c.id].why)}</div>` : ""}</b><select data-rqbw="${esc(c.id)}" style="flex:1;min-width:0;padding:8px">${opts((d.bw||{})[c.id] || "")}</select>
       <select data-rqsw="${esc(c.id)}" style="width:auto;padding:8px" title="Pajillas">${[1,2,3].map(n=>`<option value="${n}" ${((d.sw||{})[c.id] || d.straws || 1)==n ? "selected" : ""}>${n} paj.</option>`).join("")}</select></div>`).join("")}</div>`;
 }
 function rqForm(f){
@@ -6442,7 +6450,7 @@ const GN_COLS = [
   ["mpadre","Prom. hijas del padre (%)", r=>r.m?.sire_avg, false], ["mrev","🔎 Para revisar", r=>r.m?.review, false], ["mmadre","Madre vs hato (%)", r=>r.m?.dam_iv, false],
   ["ivida","Leche vida vs hato (%)", r=>r.iv, false], ["ivpct","Percentil leche vida", r=>r.ivPct, false],
   ["llactv","Leche lact. vida (kg)", r=>r.llv, false], ["l305v","Leche 305 d vida (kg)", r=>r.l305v, false],
-  ["toroa","Clase / toro asignado", r=>gnClsTxt(r.toro?.bull), false], ["torosug","Toro sugerido", r=>r.sug ? `${r.sug.bull} (${r.sug.why})` : null, false],
+  ["toroa","Clase / toro asignado", r=>gnClsTxt(r.toro?.bull), false], ["torosug","Toro sugerido", r=>!r.sug ? null : r.sug.bull ? `${r.sug.bull} (${r.sug.why})` : `⚠ ${r.sug.why}`, false],
   ["p305","Producción 305 d (kg)", r=>r.p305?.kg305, true], ["plact","Leche lactancia actual (kg)", r=>r.p305?.sofar, false],
   ["racion","Concentrado (kg/día)", r=>r.conc, false],
   ["upeso","Último peso (kg)", r=>r.w?.weight_kg, false], ["fpeso","Fecha último peso", r=>r.w?.event_date, false, "d"],
@@ -8570,7 +8578,8 @@ async function openReg(type, ev){
   }
   const lastBull = sg?.bull || store.get("ultimoToro"+c.farm_id), lastOp = store.get("ultimoOperador"+c.farm_id);
   const warns = [];
-  if (sg?.bull) warns.push(`🐂 Toro sugerido: <b>${esc(sg.bull)}</b> (${esc(sg.why)}${sg.noStock ? " · sin pajillas en el termo" : sg.straws ? ` · ${sg.straws} pajillas en el termo` : ""}).`);
+  if (sg?.bull) warns.push(`🐂 Toro sugerido: <b>${esc(sg.bull)}</b> (${esc(sg.why)}${sg.straws ? ` · ${sg.straws} pajillas en el termo ${esc(sg.tank || "")}` : ""}).`);
+  else if (sg?.warn) warns.push(`🐂 Sin toro sugerido: ${esc(sg.why)}.`);
   if (sg?.bull && !o.bulls.some(b=>b.code===sg.bull)) o = { ...o, bulls:[{ code:sg.bull, name:"sugerido" }, ...o.bulls] };   // que se pueda escoger aunque no esté en la lista
   if (/(^|\/)PR(\/|$)/.test(c.status||"")) warns.push(`Figura <b>preñada</b>${cur?.fertile?` (servicio del ${fmt(cur.fertile.event_date)})`:""}.`);
   if (lastSv) { const n = days(lastSv.event_date, today()); if (n < 18) warns.push(`Tiene un servicio hace <b>${n} d</b> (${fmt(lastSv.event_date)}).`); }
@@ -8909,10 +8918,11 @@ async function cowMeritCard(d){
   const svd = (d.events || []).filter(e=>e.event_type==="service" && (!c.birth_date || e.event_date >= c.birth_date)).map(e=>e.event_date);
   const nSv = nextSvN(svd, c.last_calving, c.birth_date);
   const sg = c.active && !preg ? bullSuggest(c.pen, nSv, !(c.lactation_num > 0), cls, ctx) : null;
-  const tk = tankOf(c.pen, ctx), noRules = !(ctx.R.rules || []).some(x=>x.tank===tk);
+  const tk = tankOf(c.pen), noRules = !(ctx.R.rules || []).some(x=>x.tank===tk);
   const x = m.data, hs = dau.data || [];
   const sugHtml = c.active && !preg ? `<div style="margin-top:8px;padding:8px;border-radius:10px;background:var(--card2, rgba(0,0,0,.04))">🐂 <b>Próximo servicio (${nSv}º)</b>: ${sg?.bull
-      ? `toro sugerido <b>${esc(sg.bull)}</b> · ${esc(sg.why)}${sg.noStock ? " · sin pajillas en el termo" : sg.straws ? ` · ${sg.straws} pajillas en el termo ${esc(sg.tank || "")}` : ""}`
+      ? `toro sugerido <b>${esc(sg.bull)}</b> · ${esc(sg.why)}${sg.straws ? ` · ${sg.straws} pajillas en el termo ${esc(sg.tank || "")}` : ""}`
+      : sg?.warn ? `<span style="color:var(--s4);font-weight:700">⚠ ${esc(sg.why)}</span>`
       : noRules && !c.lactation_num ? "sin sexado ni convencional con pajillas en el termo" : noRules ? `<span class="sub">el termo ${esc(tk)} no tiene toros por servicio (Toros y semen → 🐂 Servicios)</span>` : "sin toro permitido con pajillas"}
       ${cls ? `<div class="sub">Clase asignada: ${esc(gnClsTxt(cls))}</div>` : ""}</div>` : "";
   if (!x && !hs.length && !sugHtml) { box.innerHTML = ""; return; }
