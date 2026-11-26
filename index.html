@@ -7120,6 +7120,25 @@ function lsPick(all, k){
     descarte:(a,b)=>(a.cull.due || "9").localeCompare(b.cull.due || "9") || byNum(a.c.pen||"", b.c.pen||"") || byNum(a.c.id, b.c.id) }[k];
   return all.filter(f).sort(sortBy);
 }
+// Para secar: cuartos (pezones) perdidos de cada vaca, de los chequeos de mastitis (igual que Ingreso rápido → Secado)
+let lsLost = {};
+async function lsLoadLost(ids){
+  const need = [...new Set(ids)].filter(id=>!(id in lsLost)); if (!need.length || !navigator.onLine) return false;
+  const born = Object.fromEntries((lsData?.cows || []).map(c=>[c.id, c.birth_date]));
+  for (let i = 0; i < need.length; i += 150){
+    const part = need.slice(i, i + 150);
+    const { data, error } = await sb.from("cow_mastitis").select("cow_id,check_date,ai,ad,pi,pd").in("cow_id", part).order("check_date");
+    if (error) return false;
+    part.forEach(id=>{ lsLost[id] = lostQuarters((data || []).filter(m=>m.cow_id===id && (!born[id] || m.check_date >= born[id]))); });
+  }
+  return true;
+}
+// avisos de secado: venta/descarte y pezones perdidos (en rojo, como en Ingreso rápido)
+function lsDryWarn(x){
+  const w = [x.cull ? (x.cull.due ? `🚪 venta ${fmt(x.cull.due)}` : "🚪 descarte") : "",
+    ...(lsLost[x.c.id] || []).map(q=>`${q.k.toUpperCase()} perdido${q.recovered ? " (volvió a dar " + q.recovered[q.k] + " el " + fmt(q.recovered.check_date) + ": revisar)" : ""}`)].filter(Boolean);
+  return w.length ? ` · <b style="color:var(--s4)">⚠️ ${esc(w.join(", "))}</b>` : (x.c.id in lsLost ? "" : ` · <span class="sub">revisando pezones…</span>`);
+}
 function lsDetail(x, k){
   const D = today(), dd = d => { const n = days(D, d); return n < 0 ? `<b style="color:var(--s4)">hace ${-n} d</b>` : n === 0 ? "<b>hoy</b>" : `en ${n} d`; };
   if (k==="chequeo"){ const q = x.ck;
@@ -7130,7 +7149,7 @@ function lsDetail(x, k){
   if (k==="resincro") return `Ovsynch del ${fmt(x.rs.d0)} · IA ${fmt(x.rs.sv)}${x.rs.early ? ` <b style="color:var(--s3)">antes del día 10</b>` : ""} · <b>${x.rs.d} d</b> el ${fmt(lsRsCo?.G || lsState.rsDate || today())}`
     + (x.rs.done ? ` · <span class="ok">✓ Gestar puesto ${fmt(x.rs.done)}</span>` : "");
   if (k==="secar") return (x.dryPlan ? `<b style="color:var(--s4)">🌙 programada ${fmt(x.dryPlan.due)}</b> (${dd(x.dryPlan.due)})${x.dryPlan.note ? " · " + esc(x.dryPlan.note) : ""}` : `secar ${fmt(x.dry)} (${dd(x.dry)})`)
-    + (x.preg && x.gest!=null ? ` · ${x.gest} d preñada · parto ${fmt(x.exp)}` : x.preg ? "" : " · vacía");
+    + (x.preg && x.gest!=null ? ` · ${x.gest} d preñada · parto ${fmt(x.exp)}` : x.preg ? "" : " · vacía") + lsDryWarn(x);
   if (k==="parto") return `parto ${fmt(x.exp)} (${dd(x.exp)}) · ${x.gest} d preñada`;
   if (k==="sinserv") return `${x.del} d de parida · sin servicio`;
   if (k==="repet") return `${x.svs.length} servicios · último ${fmt(x.sv.d)}${x.del!=null ? ` · ${x.del} d de parida` : ""}`;
@@ -7387,6 +7406,7 @@ function renderListas(){
   const all = lsCompute(), counts = Object.fromEntries(LS_LISTS.map(([k])=>[k, lsPick(all, k).length]));
   const L = LS_LISTS.find(l=>l[0]===s.list), rows0 = lsPick(all, s.list);
   const pens = [...new Set(rows0.map(x=>x.c.pen||"—"))].sort(byNum), rows = lsView(all);
+  if (s.list==="secar") setTimeout(()=>lsLoadLost(rows0.map(x=>x.c.id)).then(ok=>{ if (ok && lsState.list==="secar") renderListas(); }), 0);
   const chips = (opts, cur, attr) => `<div class="chips sm ckpan" style="padding:0;margin-top:6px"><div class="chips sm">${opts.map(([v,t])=>`<button class="${cur===v?"on":""}" ${attr}="${esc(v)}">${t}</button>`).join("")}</div></div>`;
   const age = Math.round((Date.now() - lsData.at)/6e4);
   // fincas: cada botón se prende o se apaga (una o las dos; igual que el Generador de listas). s.farm 0 = las dos
@@ -9070,7 +9090,8 @@ async function cowMeritCard(d){
     ${x?.merit!=null ? `<div style="display:flex;gap:10px;align-items:baseline;flex-wrap:wrap;margin-top:6px">
         <span style="font-size:28px;font-weight:800;${ivColor(x.merit)}">${ivTxt(x.merit)}</span>
         <span>${cls2 ? `<b>${cls2}</b> · ` : ""}${x.pct!=null ? `percentil ${x.pct} de ${x.heifer ? "las novillas" : "las vacas"} de la finca` : ""}</span></div>
-      <div class="sub">Índice de clasificación (100 % = promedio) · base: ${esc(x.basis || "")}</div>` : `<div class="sub" style="margin-top:4px">Sin índice todavía.</div>`}
+      <div class="sub">Índice de clasificación (100 % = promedio) · base: ${esc(x.basis || "")}</div>
+      ${x.cur_iv!=null ? `<div class="sub">Propio: <b style="${ivColor(x.iv)}">${ivTxt(x.iv)}</b> · lactancia actual <b>${ivTxt(x.cur_iv)}</b> (${(+x.kg305).toLocaleString("es-CO")} L proyectados a 305 d vs. ${x.nlac > 1 ? "vacas de 2 o más partos" : "vacas de 1er parto"} de la finca)${x.iv_ih!=null ? ` · Interherd lactancias anteriores ${ivTxt(x.iv_ih)}` : ""}</div>` : ""}` : `<div class="sub" style="margin-top:4px">Sin índice todavía.</div>`}
     ${sugHtml}
     ${x?.review ? `<div class="warn" style="margin-top:8px">🔎 <b>Para revisar:</b> ${esc(x.review)}. Mira sus hijas abajo antes de decidir su clase.</div>` : ""}
     <table class="ivt" style="font-size:13px;margin-top:8px">
