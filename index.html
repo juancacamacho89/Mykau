@@ -7133,6 +7133,13 @@ async function lsLoadLost(ids){
   }
   return true;
 }
+// jeringas de secado de las vacas de la lista: 4 − pezones que siguen perdidos; venta/descarte 0 (igual que Ingreso rápido)
+const lsSyr = x => x.cull || /^Desc/i.test(x.c.status || "") ? 0 : 4 - (lsLost[x.c.id] || []).filter(q=>!q.recovered).length;
+function lsSyrHtml(rows){
+  const tot = rows.reduce((a, x)=>a + lsSyr(x), 0), loading = rows.some(x=>!(x.c.id in lsLost));
+  const less = rows.filter(x=>lsSyr(x) < 4).length;
+  return `<div style="margin:4px 0 2px;font-size:16px">💉 <b>${tot} jeringas</b>${loading ? ` <span class="sub">(revisando pezones…)</span>` : ""}${less ? ` <span class="sub">· ${less} vaca${less===1 ? "" : "s"} con menos de 4 (pezón perdido o venta)</span>` : ""}</div>`;
+}
 // avisos de secado: venta/descarte y pezones perdidos (en rojo, como en Ingreso rápido)
 function lsDryWarn(x){
   const w = [x.cull ? (x.cull.due ? `🚪 venta ${fmt(x.cull.due)}` : "🚪 descarte") : "",
@@ -7417,7 +7424,7 @@ function renderListas(){
     <div class="card"><div style="display:flex;justify-content:space-between;align-items:center;gap:8px"><b>💊 Tratamientos pendientes del chequeo</b>
         <button class="btn ghost" id="lsTxBtn" style="width:auto;padding:6px 12px">${lsTxOpen ? "Ocultar" : "Ver resumen"}</button></div>
       <div id="lsTx">${lsTxOpen ? `<div class="sub" style="margin-top:6px">Cargando…</div>` : `<div class="sub">Lo que falta por aplicar (antibiótico, vitaminas, PGF2, baño, Ovsynch) e inseminar, por día y vaca, con lo que hay que tener a mano.</div>`}</div></div>
-    <div class="card"><b>${L[1]} (${rows.length})</b><div class="sub">${L[2]}</div>
+    <div class="card"><b>${L[1]} (${rows.length})</b>${s.list==="secar" ? lsSyrHtml(rows) : ""}<div class="sub">${L[2]}</div>
       ${s.list==="chequeo" && all.some(x=>x.doubt.length) ? `<div class="warn" style="margin-top:8px">⚠️ Servicios dudosos (terneras de menos de 12 meses con servicio; no entran al chequeo). Corrígelos en Interherd:
         ${all.filter(x=>x.doubt.length).map(x=>`<b>${esc(x.c.id)}</b> (${Math.floor(x.ageM)} m · servicio ${x.doubt.map(e=>fmt(e.d)).join(", ")})`).join(" · ")}</div>` : ""}
       ${s.list==="resincro" ? `<div class="row" style="align-items:center;margin-top:8px"><span class="sub" style="flex:none">Día del Gestar</span><input type="date" id="lsRsDate" value="${lsRsCo?.G || s.rsDate || today()}"></div>
