@@ -6075,7 +6075,7 @@ const LS_GEST = 282, LS_DRY = 60, LS_DPSEC = 220;
 const RS_DAYS = 25, RS_WIN = 3, RS_DOSE = 3;   // como Interherd: parto = servicio + 282 d · secado = parto − 60 · DPSEC = servicio + 220
 const LS_LISTS = [
   ["chequeo", "🩺 Para chequeo", "Las que entran al chequeo reproductivo de esa fecha (mismo cálculo del módulo Chequeo): para marcarlas el día antes", ""],
-  ["resincro", "💉 OVS2", "Inseminadas a tiempo fijo (Ovsynch) hace 25 días que no han repetido ni tienen diagnóstico: primer Gestar del OVS2, 7 días antes del chequeo", "resincro"],
+  ["resincro", "💉 OVS2", "Resincro por grupo de Ovsynch: todas las inseminadas hasta el día 10 (también las inseminadas antes); salen las inseminadas después del día 10 o con diagnóstico. El OVS2 no se resincroniza. Primer Gestar del OVS2, 7 días antes del chequeo", "resincro"],
   ["secar", "🌙 Para secar", "Las programadas para secar (con su fecha) y las preñadas en lactancia con secado en los próximos 14 días (o ya pasado)", "dry_off"],
   ["parto", "🐄 Próximas a parto", "Parto esperado en los próximos 21 días (o ya pasado)", ""],
   ["sinserv", "⏳ Sin servir", "Informativa · en lactancia, vacías, más de 60 días de paridas y sin servicio (anestro)", "service"],
@@ -6852,6 +6852,21 @@ async function lsLoad(force){
     cows:parts.flatMap(p=>(p.cows || []).map(c=>({ ...c, farm_id:c.farm_id ?? p.farm }))), ev:parts.flatMap(p=>p.ev || []),
     lacto:parts.flatMap(p=>p.lacto || []), plans:parts.flatMap(p=>p.plans || []), rs:parts.flatMap(p=>p.rs || []), dryPlans:parts.flatMap(p=>p.dryPlans || []),
     cullPlans:parts.flatMap(p=>p.cullPlans || []) };
+  await lsRsLoad();
+}
+// grupo de resincro del día del Gestar (Listas → OVS2): por defecto el miércoles siguiente al último chequeo (o el de después)
+let lsRsCo = null;
+async function lsRsLoad(){
+  if (window.MKC || !navigator.onLine){ lsRsCo = null; return; }
+  if (!lsState.rsDate){
+    const n = {}; (lsData?.ev || []).forEach(([, d, t])=>{ if (t==="repro_exam" || t==="ultrasound" || t==="preg_check") n[d] = (n[d] || 0) + 1; });
+    const C = Object.keys(n).filter(d=>n[d] >= 10 && d <= today()).sort().pop();
+    lsState.rsDate = C ? (addDays(C, 7) >= addDays(today(), -3) ? addDays(C, 7) : addDays(C, 21)) : today();
+  }
+  const G = lsState.rsDate, ids = lsFarmIds();
+  const { data } = await sb.rpc("ovs2_cohort", { p_g:G });
+  lsRsCo = { G, map:Object.fromEntries((data || []).filter(x=>x.ok && ids.includes(x.farm_id)).map(x=>[x.cow_id, x])),
+    out:(data || []).filter(x=>!x.ok && ids.includes(x.farm_id)) };
 }
 async function lsFetch(farm){
   const key = `lsData:${farm}`;
@@ -6892,11 +6907,9 @@ function lsCompute(){
         ck = { cat, prog:pl[1], note:pl[2], heifer:!(c.lactation_num > 0) && !C, del: C ? days(C, lsState.ckDate || D) : null, ...(sv0 ? { sv:sv0, g:days(sv0.d, lsState.ckDate || D) } : {}) }; } }
     const ageM0 = c.birth_date ? days(c.birth_date, D)/30.44 : null;
     const doubt = !C && ageM0!=null && ageM0 < 12 ? svs.filter(e=>e.d >= c.birth_date) : [];   // servicio a una ternera: error de datos
-    // resincro: último servicio a tiempo fijo (Ovsynch), ~25 días antes del día del Gestar, sin otro servicio ni diagnóstico después
-    const G = lsState.rsDate || today();
-    const svG = svs.filter(e=>e.d <= G).pop();   // el servicio que había el día del Gestar
-    const rsDays = svG && /ovsynch/i.test(svG.c || "") && !(svG && ev.some(e=>e.d > svG.d && e.d <= G && ["ultrasound","preg_check","embryo_loss","abortion"].includes(e.t))) ? days(svG.d, G) : null;
-    const rs = rsDays!=null && Math.abs(rsDays - RS_DAYS) <= RS_WIN ? { d:rsDays, sv:svG.d, done:(lsData?.rs || []).find(([id, d])=>id===c.id && d > svG.d)?.[1] || null } : null;
+    // resincro por grupo de Ovsynch (ovs2_cohort, Juan 26/11/2026): inseminadas hasta el día 10, también antes; el OVS2 no se resincroniza
+    const co = lsRsCo?.map?.[c.id];
+    const rs = co ? { d:days(co.ia, lsRsCo.G), sv:co.ia, early:co.early, d0:co.d0, done:co.done } : null;
     // secado programado (Ingreso rápido / hoja de vida): sale en "Para secar" con su fecha, aunque no le toque por fecha de preñez
     const dp = (lsData?.dryPlans || []).filter(p=>p[0]===c.id).sort((a, b)=>a[1].localeCompare(b[1]))[0];
     const dried = /^HO/i.test(c.pen || "") || /Horra|Seca/i.test(st);
@@ -7007,7 +7020,7 @@ function lsDetail(x, k){
       + (q.prog ? `programado ${fmt(q.prog)}${q.note ? " · " + esc(q.note) : ""} · ` : "")
       + (q.cat==="EXREP" ? (q.heifer ? `novilla ${Math.floor(x.ageM||0)} m${x.w ? " · " + x.w + " kg" : ""}` : `${q.del} d de parida${q.ready===false ? " (antes de 50 d)" : ""}`) + (q.last?.r ? ` · últ. ${q.last.r}` : "")
          : q.g!=null ? `${q.g} d de servida (${fmt(q.sv.d)})` : ""); }
-  if (k==="resincro") return `IA Ovsynch ${fmt(x.rs.sv)} · <b>${x.rs.d} d</b> el ${fmt(lsState.rsDate || today())}${x.rs.d!==RS_DAYS ? ` <span style="color:var(--s3)">(lo ideal: ${RS_DAYS} d)</span>` : ""}`
+  if (k==="resincro") return `Ovsynch del ${fmt(x.rs.d0)} · IA ${fmt(x.rs.sv)}${x.rs.early ? ` <b style="color:var(--s3)">antes del día 10</b>` : ""} · <b>${x.rs.d} d</b> el ${fmt(lsRsCo?.G || lsState.rsDate || today())}`
     + (x.rs.done ? ` · <span class="ok">✓ Gestar puesto ${fmt(x.rs.done)}</span>` : "");
   if (k==="secar") return (x.dryPlan ? `<b style="color:var(--s4)">🌙 programada ${fmt(x.dryPlan.due)}</b> (${dd(x.dryPlan.due)})${x.dryPlan.note ? " · " + esc(x.dryPlan.note) : ""}` : `secar ${fmt(x.dry)} (${dd(x.dry)})`)
     + (x.preg && x.gest!=null ? ` · ${x.gest} d preñada · parto ${fmt(x.exp)}` : x.preg ? "" : " · vacía");
@@ -7023,7 +7036,7 @@ function lsDetail(x, k){
 }
 // resincro: primer Gestar del OVS2 a las marcadas (un tratamiento "Ovsynch" día 0 por vaca: descuenta del inventario ese día)
 async function lsResincro(){
-  const s = lsState, G = s.rsDate || today(), rows = lsView(lsCompute()).filter(x=>s.sel.has(x.c.id));
+  const s = lsState, G = lsRsCo?.G || s.rsDate || today(), rows = lsView(lsCompute()).filter(x=>s.sel.has(x.c.id));
   const todo = rows.filter(x=>!x.rs.done), skip = rows.length - todo.length;
   if (!todo.length) return toast(rows.length ? "Esas vacas ya tienen el Gestar del OVS2" : "Marca las vacas primero");
   if (!navigator.onLine) return toast("Necesitas señal para registrar el Gestar");
@@ -7031,7 +7044,7 @@ async function lsResincro(){
   if (!confirm(`Gestar ${RS_DOSE} mL el ${fmt(G)} a ${todo.length} vaca${todo.length===1 ? "" : "s"} (día 0 del OVS2)?${skip ? `\n${skip} ya lo tenían y no se repiten.` : ""}\n\n${todo.map(x=>x.c.id).join(", ")}`)) return;
   const uid = () => crypto.randomUUID ? crypto.randomUUID() : String(Date.now()) + Math.random();
   const tx = todo.map(x=>({ client_id:uid(), farm_id:x.c.farm_id ?? s.farm, cow_id:x.c.id, start_date:G, diagnosis:"Ovsynch", protocol:"Ovsynch",
-    prescribed_by: isAdmin ? "Juan (veterinario)" : "Chequeo", notes:`Día 0 del OVS2 (resincro, IA Ovsynch ${fmt(x.rs.sv)})` }));
+    prescribed_by: isAdmin ? "Juan (veterinario)" : "Chequeo", notes:`Día 0 del OVS2 (resincro, Ovsynch del ${fmt(x.rs.d0)}, IA ${fmt(x.rs.sv)})` }));
   const { data:t, error } = await sb.from("treatments_cow").insert(tx).select("id");
   if (error || !t?.length) return toast("No se pudo registrar: " + (error?.message || "sin permiso"));
   const e2 = (await sb.from("treatment_items").insert(t.map(x=>({ treatment_id:x.id, supply_code:code, dose:RS_DOSE, unit:"mL", route:"IM", every_hours:24, days:1 })))).error;
@@ -7280,8 +7293,8 @@ function renderListas(){
     <div class="card"><b>${L[1]} (${rows.length})</b><div class="sub">${L[2]}</div>
       ${s.list==="chequeo" && all.some(x=>x.doubt.length) ? `<div class="warn" style="margin-top:8px">⚠️ Servicios dudosos (terneras de menos de 12 meses con servicio; no entran al chequeo). Corrígelos en Interherd:
         ${all.filter(x=>x.doubt.length).map(x=>`<b>${esc(x.c.id)}</b> (${Math.floor(x.ageM)} m · servicio ${x.doubt.map(e=>fmt(e.d)).join(", ")})`).join(" · ")}</div>` : ""}
-      ${s.list==="resincro" ? `<div class="row" style="align-items:center;margin-top:8px"><span class="sub" style="flex:none">Día del Gestar</span><input type="date" id="lsRsDate" value="${s.rsDate || today()}"></div>
-        <div class="sub" style="margin-top:4px">Sale con ${RS_DAYS} días de la IA del Ovsynch (± ${RS_WIN}). Las que repitieron o ya tienen diagnóstico no salen. Gestar ${RS_DOSE} mL: <b>se registra solo</b> a los 25 días de la IA del Ovsynch (5:30 a. m.) y descuenta del inventario. Si no hubo Ovsynch, no hay OVS2 y no se descuenta nada. El botón queda para una vaca que falte.</div>` : ""}
+      ${s.list==="resincro" ? `<div class="row" style="align-items:center;margin-top:8px"><span class="sub" style="flex:none">Día del Gestar</span><input type="date" id="lsRsDate" value="${lsRsCo?.G || s.rsDate || today()}"></div>
+        <div class="sub" style="margin-top:4px">Grupo del Ovsynch que empezó 35 días antes: todas las inseminadas hasta el día 10, también las inseminadas antes. No salen las inseminadas después del día 10, con diagnóstico o del OVS2${lsRsCo?.out?.length ? ` (${lsRsCo.out.map(x=>x.cow_id).join(", ")})` : ""}. Gestar ${RS_DOSE} mL: <b>se registra solo</b> a los 25 días de la IA del Ovsynch (5:30 a. m.) y descuenta del inventario. Si no hubo Ovsynch, no hay OVS2 y no se descuenta nada. El botón queda para una vaca que falte.</div>` : ""}
       ${s.list==="chequeo" ? `<div class="row" style="align-items:center;margin-top:8px"><span class="sub" style="flex:none">Fecha del chequeo</span><input type="date" id="lsCkDate" value="${s.ckDate}"></div>
         <div class="list">${["EXREP","ECO1","ECO2","REPETIR","DPR","DP5","DPSEC"].map(k=>{ const n = rows.filter(x=>x.ck.cat===k).length; return n ? `<span class="chip"><span class="ckcat" style="background:var(${CK_COLOR[k]})">${esc(ckName(k, lsState.farm))}</span>${n}</span>` : ""; }).join("")}</div>` : ""}
       ${pens.length > 1 ? chips([["", "Todos los lotes"], ...pens.map(p=>[p, esc(p)])], s.pen, "data-lsp") : ""}
@@ -7340,7 +7353,7 @@ $("lsBody").addEventListener("click", async e=>{
 $("lsBody").addEventListener("input", e=>{ if (e.target.id!=="lsQ") return; lsState.q = e.target.value; $("lsRows").innerHTML = lsRowsHtml(lsView(lsCompute())); });
 $("lsBody").addEventListener("change", e=>{
   if (e.target.id==="lsCkDate"){ lsState.ckDate = e.target.value || addDays(today(), 1); return renderListas(); }
-  if (e.target.id==="lsRsDate"){ lsState.rsDate = e.target.value || today(); lsState.sel = new Set(); return renderListas(); }
+  if (e.target.id==="lsRsDate"){ lsState.rsDate = e.target.value || today(); lsState.sel = new Set(); lsRsLoad().then(renderListas); return; }
   const c = e.target.closest("[data-lsc]"); if (!c) return;
   c.checked ? lsState.sel.add(c.dataset.lsc) : lsState.sel.delete(c.dataset.lsc);
   $("lsCount").textContent = `${[...document.querySelectorAll("[data-lsc]")].filter(x=>x.checked).length} marcadas`;
