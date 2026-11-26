@@ -1481,7 +1481,7 @@ async function loadCow(id){
   const [ev, milk, kids, calf, photo, conc, mast] = await Promise.all([
     sb.from("cow_events").select("id,event_date,event_type,result,bull,operator,category,days_value,weight_kg,body_condition,comments,source,sync_status,created_by,details")
       .eq("cow_id", id).gte("event_date", since).order("event_date").order("id"),
-    sb.from("cow_milk").select("test_date,total_kg").eq("cow_id", id).gte("test_date", since).not("total_kg","is",null).order("test_date"),
+    sb.from("cow_milk").select("test_date,total_kg,adjusted_kg").eq("cow_id", id).gte("test_date", since).not("total_kg","is",null).order("test_date"),
     sb.from("cows").select("id,birth_date,sex,active,exit_type").eq("dam", id).gt("birth_date", since).order("birth_date"),
     c.calf_animal_id ? sb.from("animals").select("calf_id,farm_id,ultrasound_exams(exam_date,score,treatments(drugs(name)))")
       .eq("id", c.calf_animal_id).maybeSingle() : Promise.resolve({data:null}),
@@ -1502,7 +1502,8 @@ async function loadCow(id){
   const { data:bulls } = codes.length ? await sb.from("bulls").select("code,name").in("code", codes) : {data:[]};
   if (seq !== cowSeq) return;
   addRecent(id);
-  renderCow({ cow:c, events, milk:milk.data||[], conc:conc.data||[], mast:mast.data||[], kids:kids.data||[], calf:calf.data,
+  // leche AJUSTADA al total del tanque (Leche diaria) cuando la hay: la misma de Suplementación, lactancias y 305 días
+  renderCow({ cow:c, events, milk:(milk.data||[]).map(m=>({ ...m, raw_kg:m.total_kg, total_kg:m.adjusted_kg ?? m.total_kg })), conc:conc.data||[], mast:mast.data||[], kids:kids.data||[], calf:calf.data,
               photoUrl:photo.data?.signedUrl, bulls:Object.fromEntries((bulls||[]).map(b=>[b.code,b.name])), tx:tx.data || [], lacto:lcp.data || null });
 }
 
@@ -1617,7 +1618,7 @@ function renderCow(d){
       ${canSee("vacas_datos") ? `<div class="kpi"><b>${age(c.birth_date)}</b><span>Edad · nació ${fmt(c.birth_date)}</span></div>
       <div class="kpi"><b>${c.lactation_num!=null || appCv ? lacNum(c, events) : "—"}</b><span>Partos</span></div>
       <div class="kpi"><b>${del!=null ? del+" d" : fmt(lastCalv)}</b><span>${del!=null ? "En leche · " + (cvKindOf(d.events, lastCalv) || "parto") + " " + fmt(lastCalv) : "Último parto"}</span></div>` : ""}
-      ${canSee("vacas_leche") ? `<div class="kpi"><b>${lastMilk ? (+lastMilk.total_kg).toFixed(1)+" kg" : "—"}</b><span>Última leche${lastMilk?" · "+fmt(lastMilk.test_date):""}</span></div>` : ""}
+      ${canSee("vacas_leche") ? `<div class="kpi"><b>${lastMilk ? (+lastMilk.total_kg).toFixed(1)+" kg" : "—"}</b><span>Última leche${lastMilk?" · "+fmt(lastMilk.test_date):""}${lastMilk && lastMilk.adjusted_kg!=null && +lastMilk.adjusted_kg!==+lastMilk.raw_kg ? ` · ajustada (pesó ${(+lastMilk.raw_kg).toFixed(1)})` : ""}</span></div>` : ""}
       ${canSee("vacas_leche") && p305 ? `<div class="kpi"><b>${p305.kg305.toLocaleString("es-CO")} kg</b><span>305 d proyectada${p305.early ? " · estimado (antes del pico)" : ""}</span></div>
       <div class="kpi"><b>${p305.lact ? p305.lact.toLocaleString("es-CO") + " kg" : "—"}</b><span>Lactancia total${p305.lact ? ` · secado ~${fmt(dryDate)} (${p305.dryDel} d)` : " · sin fecha de secado (no preñada)"}</span></div>` : ""}
     </div>` : ""}
@@ -4557,11 +4558,11 @@ async function rqLoadDry(){
   const f = rq.farm, plan = rqCanPlan();
   const [pl, mk, sv] = await Promise.all([
     sb.from("cow_plans").select("id,cow_id,due_date,note").eq("farm_id", f).eq("plan_type", "secado").eq("status", "pending"),
-    plan ? psAll(()=>sb.from("cow_milk").select("id,cow_id,test_date,am_kg,pm_kg,total_kg,cows!inner(farm_id)").eq("cows.farm_id", f).gte("test_date", addDays(today(), -15)).order("id")) : { data:[] },
+    plan ? psAll(()=>sb.from("cow_milk").select("id,cow_id,test_date,am_kg,pm_kg,total_kg,adjusted_kg,cows!inner(farm_id)").eq("cows.farm_id", f).gte("test_date", addDays(today(), -15)).order("id")) : { data:[] },
     psAll(()=>sb.from("cow_events").select("id,cow_id,event_date,event_type,bull,cows!inner(farm_id)").eq("cows.farm_id", f).in("event_type", ["service","dry_off"]).gte("event_date", addDays(today(), -330)).order("id"))]);
   const d = { farm:f, plans:{}, milk:{}, sv:{}, dried:{} };
   (pl.data || []).forEach(x=>{ const o = d.plans[x.cow_id]; if (!o || x.due_date < o.due) d.plans[x.cow_id] = { id:x.id, due:x.due_date, note:x.note }; });
-  (mk.data || []).sort((a, b)=>a.test_date.localeCompare(b.test_date)).forEach(m=>(d.milk[m.cow_id] ||= []).push([m.test_date, m.am_kg, m.pm_kg, m.total_kg]));
+  (mk.data || []).sort((a, b)=>a.test_date.localeCompare(b.test_date)).forEach(m=>(d.milk[m.cow_id] ||= []).push([m.test_date, m.am_kg, m.pm_kg, m.adjusted_kg ?? m.total_kg, m.total_kg]));
   (sv.data || []).forEach(e=>{ if (e.event_type==="dry_off"){ if (!d.dried[e.cow_id] || e.event_date > d.dried[e.cow_id]) d.dried[e.cow_id] = e.event_date; return; }
     const o = d.sv[e.cow_id]; if (!o || e.event_date >= o.d) d.sv[e.cow_id] = { d:e.event_date, b:e.bull }; });
   rqDryD = d; return true;
@@ -4760,7 +4761,7 @@ function rqListHtml(shown){
 function rqDryRow(c){
   const x = rqDryInfo(c), plan = rqCanPlan(), red = !x.driedOff && (!!x.plan || x.due || (plan && x.low));
   const n = v => v==null ? "—" : String(+v).replace(".", ",");
-  const pes = plan ? (x.ms.length ? x.ms.map(m=>`<span style="white-space:nowrap">${fmt(m[0]).slice(0, 5)}: ${n(m[1])}/${n(m[2])} = <b>${n(x.tot(m))}</b></span>`).join(" · ") : `<span>sin pesaje en 15 días</span>`) : "";
+  const pes = plan ? (x.ms.length ? x.ms.map(m=>`<span style="white-space:nowrap">${fmt(m[0]).slice(0, 5)}: ${n(m[1])}/${n(m[2])} = <b>${n(x.tot(m))}</b>${m[4]!=null && +m[4]!==+m[3] ? " aj." : ""}</span>`).join(" · ") : `<span>sin pesaje en 15 días</span>`) : "";
   const tags = [x.driedOff ? `<span>ya seca${x.driedOn && (!c.last_calving || x.driedOn > c.last_calving) ? " " + fmt(x.driedOn) : ""}</span>` : "", x.driedOff ? "" : x.plan ? `<b style="color:var(--s4)">🌙 programada ${fmt(x.plan.due)}</b>` : x.due ? `<b style="color:var(--s4)">🌙 toca secar ${fmt(x.dry)}${x.dry < today() ? " (vencido)" : ""}</b>` : "", plan && x.low ? `<b style="color:var(--s4)">bajita</b>` : "",
     plan ? (x.preg ? `<span>PR ${x.gest ?? "?"} d${x.dry ? ` · secado ${days(today(), x.dry) >= 0 ? "en " + days(today(), x.dry) + " d" : "vencido"}` : ""}</span>` : `<span>vacía</span>`) : ""].filter(Boolean).join(" · ");
   const open = rq.dryOpen===c.id;
@@ -4780,7 +4781,7 @@ function rqDryDetail(c, x){
     <div>${x.preg ? `<b>Preñada</b>${x.sv ? ` · servicio ${fmt(x.sv.d)}${x.sv.b ? " (toro " + esc(x.sv.b) + ")" : ""} · <b>${x.gest} d</b> de preñez` : ""}` : `<b style="color:var(--s4)">Vacía</b>${x.sv ? ` · último servicio ${fmt(x.sv.d)}` : ""}`}</div>
     ${x.dry ? `<div>Secado esperado <b>${fmt(x.dry)}</b> (${days(today(), x.dry) >= 0 ? "faltan " + days(today(), x.dry) + " d" : "vencido hace " + -days(today(), x.dry) + " d"}) · parto probable ${fmt(addDays(x.sv.d, LS_GEST))}</div>` : ""}
     ${x.plan ? `<div style="color:var(--s4)"><b>🌙 Secado programado ${fmt(x.plan.due)}</b>${x.plan.note ? " · " + esc(x.plan.note) : ""}</div>` : ""}
-    ${x.ms.length ? `<div>Pesajes: ${x.ms.map(m=>`${fmt(m[0])} mañana ${n(m[1])} · tarde ${n(m[2])} · <b>${n(x.tot(m))} kg</b>`).join("<br>")}</div>` : ""}
+    ${x.ms.length ? `<div>Pesajes: ${x.ms.map(m=>`${fmt(m[0])} mañana ${n(m[1])} · tarde ${n(m[2])} · <b>${n(x.tot(m))} kg</b>${m[4]!=null && +m[4]!==+m[3] ? ` (ajustada al tanque; pesó ${n(m[4])})` : ""}`).join("<br>")}</div>` : ""}
     <div style="margin-top:4px"><button type="button" class="lnk" data-cow="${esc(c.id)}">Ver hoja de vida →</button></div></div>`;
 }
 function rqPerBullHtml(){
@@ -5572,14 +5573,19 @@ function rcTankInfo(pen, date){
   return t && s ? { tank:+t.total_l, sum:s, f:+t.total_l/s } : null;
 }
 // inventario del concentrado del hato frente a la ración y la Leche diaria
+let rcFeedHtml = "";   // la última tarjeta de inventario: se dibuja de una vez para que la tabla no se corra al llegar
 async function rcFeedCard(){
   const box = $("rcFeed"); if (!box || !navigator.onLine) return;
   const { data, error } = await sb.from("feed_status").select("*").in("farm_id", rcState.farm ? [rcState.farm] : (rcData?.farms || [])).eq("feed_source", "concentrate_bags");
   if (error || !data?.length || !$("rcFeed")) return;
-  $("rcFeed").innerHTML = data.map(f=>`<div class="card"><b>📦 ${esc(f.name)}: ${f.stock!=null ? ivN(f.stock) + " bultos en bodega" : "sin inventario cargado"}</b>
+  const html = data.map(f=>`<div class="card"><b>📦 ${esc(f.name)}: ${f.stock!=null ? ivN(f.stock) + " bultos en bodega" : "sin inventario cargado"}</b>
     <div class="sub">${feedLine(f)}${f.stock==null ? " · carga un conteo en Inventario para empezar a descontar" : ""}</div></div>`).join("");
+  if (html!==rcFeedHtml){ rcFeedHtml = html; $("rcFeed").innerHTML = html; }
 }
 function renderRacion(){
+  // al marcar una vaca o cambiar kg se redibuja: la pantalla y la tabla se quedan donde estaban (no salta arriba)
+  const y0 = window.scrollY, tw = $("rcTblWrap"), x0 = tw ? tw.scrollLeft : 0;
+  requestAnimationFrame(()=>{ window.scrollTo({ top:y0 }); if ($("rcTblWrap")) $("rcTblWrap").scrollLeft = x0; });
   setTimeout(rcFeedCard, 0);
   const s = rcState, d = rcData;
   if (!d){ $("rcBody").innerHTML = `<div class="card"><div class="empty">Abre Suplementación una vez con señal.</div></div>`; return; }
@@ -5623,14 +5629,14 @@ function renderRacion(){
       ${(()=>{ const pp = rcPens(), out = d.cows.filter(c=>pp.includes(c.pen) && /(^|\/)Lac/.test(c.status || "") && (d.dryPlans || []).some(x=>x[0]===c.id));
         return out.length ? `<div class="sub" style="margin-top:6px">🌙 Fuera por secado programado: ${out.sort((a, b)=>byNum(a.id, b.id)).map(c=>`<b>${esc(c.id)}</b> (${fmt((d.dryPlans.find(x=>x[0]===c.id) || [])[1] || "")})`).join(", ")}</div>` : ""; })()}
       <div class="sub" style="margin-top:6px">Datos de hace ${Math.round((Date.now() - d.at)/6e4)} min · <button class="lnk" id="rcReload">actualizar</button></div></div>
-    <div id="rcFeed"></div>
+    <div id="rcFeed">${rcFeedHtml}</div>
     <div class="rpk" style="margin-bottom:14px">${penCards}</div>
     <div class="card"><div class="row" style="gap:8px;flex-wrap:wrap">
         <button class="btn" id="rcPdf">📄 PDF suplementación</button><button class="btn ghost" id="rcPdfCh">📄 PDF cambios de collar</button>
         ${canDo("racion_registrar") && (!vig || (nEd && !s.asOf)) ? `<button class="btn ${vig ? "" : "ghost"}" id="rcSave">💾 ${vig ? `Guardar correcciones (${nEd})` : "Guardar ración nueva"}</button>` : ""}</div>
       <div class="sub" style="margin-top:6px">Litros = leche <b>ajustada</b> al total del tanque (si ese día hay Leche diaria). Para cambiar los kg marca las vacas ☑ (una o varias) y elige los kg en la barra de abajo. Los PDF salen con lo que ves en la columna ${vig ? "Ración" : "Nueva"}.
         ${nEd ? `<b>${nEd} cambiadas a mano</b> (quedan en el celular hasta guardar) · <button class="lnk" id="rcUndo">deshacer cambios a mano</button>` : ""}</div></div>
-    <div class="card" style="overflow-x:auto">${bar}<table style="font-size:13px">
+    <div class="card" id="rcTblWrap" style="overflow-x:auto">${bar}<table style="font-size:13px">
       <tr><th><input type="checkbox" id="rcSelAll" ${allSel ? "checked" : ""} style="width:20px;height:20px"></th>${[["id","Vaca"],["fin", vig ? "Ración" : "Nueva"],["prev", vig ? "Anterior" : "Previa"],["litros","Litros"],["prom","Prom 3"],["caida","Caída"],["dim","DIM"],["dps","Secado"]].map(([k,t])=>
         `<th data-rcs="${k}" style="cursor:pointer;white-space:nowrap">${t}${s.sort.k===k ? (s.sort.dir > 0 ? " ▲" : " ▼") : ""}</th>`).join("")}<th>Motivo</th></tr>
       ${rows.map(x=>`<tr data-rcid="${esc(x.c.id)}" data-fin="${x.fin}" style="${s.sel.has(x.c.id) ? "background:rgba(124,198,242,.25)" : x.tipo==="FUERTE" ? "background:rgba(248,203,173,.35)" : x.tipo==="MODERADA" ? "background:rgba(255,242,204,.35)" : ""}">
@@ -8370,8 +8376,8 @@ function showMilkList(d, l){
     <div style="color:var(--ink);margin-top:4px"><b>${l.num>0 ? "Lactancia "+l.num : "Lactancia anterior"}</b>${l.start?` · parto ${fmt(l.start)}`:""}</div>
     <div>${pts.length} controles · pico ${(+peak.total_kg).toFixed(1)} kg (día ${del(peak.test_date)}) · promedio ${avg.toFixed(1)} kg</div>
     <table style="margin-top:6px;color:var(--ink)">
-      <tr><th>Fecha</th><th>Días en leche</th><th>Leche kg</th>${hasConc?"<th>Conc. kg/día</th>":""}</tr>
-      ${pts.map(m=>`<tr><td>${fmt(m.test_date)}</td><td>${del(m.test_date)}</td><td><b>${(+m.total_kg).toFixed(1)}</b></td>
+      <tr><th>Fecha</th><th>Días en leche</th><th>Leche kg<div class="sub" style="font-weight:400">ajustada</div></th>${hasConc?"<th>Conc. kg/día</th>":""}</tr>
+      ${pts.map(m=>`<tr><td>${fmt(m.test_date)}</td><td>${del(m.test_date)}</td><td><b>${(+m.total_kg).toFixed(1)}</b>${m.raw_kg!=null && +m.raw_kg!==+m.total_kg ? `<div class="sub">pesó ${(+m.raw_kg).toFixed(1)}</div>` : ""}</td>
         ${hasConc?`<td>${concAt(d.conc, m.test_date) ?? "—"}</td>`:""}</tr>`).join("")}
     </table>`;
 }
@@ -11092,10 +11098,10 @@ async function ckDownload(){
     const mSince = addDays(today(), -420);
     for (let i=0; ; i+=1000){
       $("ckInfo").textContent = `Descargando leche… ${i}`;
-      const { data, error:e3 } = await sb.from("cow_milk").select("cow_id,test_date,total_kg,cows!inner(farm_id)")
+      const { data, error:e3 } = await sb.from("cow_milk").select("cow_id,test_date,total_kg,adjusted_kg,cows!inner(farm_id)")
         .eq("cows.farm_id", farm).gte("test_date", mSince).not("total_kg","is",null).order("id").range(i, i+999);
       if (e3) throw e3;
-      data.forEach(m=>{ if (ids.has(m.cow_id) && (!lc[m.cow_id] || m.test_date >= lc[m.cow_id])) (milk[m.cow_id] ||= []).push([m.test_date, +m.total_kg]); });
+      data.forEach(m=>{ if (ids.has(m.cow_id) && (!lc[m.cow_id] || m.test_date >= lc[m.cow_id])) (milk[m.cow_id] ||= []).push([m.test_date, +(m.adjusted_kg ?? m.total_kg)]); });
       if (data.length < 1000) break;
     }
     // EXREP programados en la hoja de vida (si ya corrieron SQL/eventos_programados.sql)
