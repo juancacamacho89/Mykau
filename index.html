@@ -11032,7 +11032,10 @@ function ckClassify(c, ev, D){
   const calv = ev.filter(e=>e.t==="calving" && e.d <= D);   // un parto con aborto también reinicia el ciclo
   const C = calv.length ? calv[calv.length-1].d : (c.lc && c.lc <= D ? c.lc : null);
   const after = ev.filter(e=>e.d > (C || "0000") && e.d <= D);
-  if (after.some(e=>e.t==="repro_exam" && /(^|\+\s*)(DESCARTE|Lactoinducir)\s*(\+|$)/i.test(e.r||""))) return null;   // también "OVSYN + DESCARTE"
+  // DESCARTE / Lactoinducir en el examen: sale del chequeo, salvo que la hayan vuelto a servir después (la finca se arrepintió;
+  // Juan 27/11/2026, caso 899 de La Bendición: DESCARTE 02/09 y servida 06/09 y 27/09)
+  if (after.some(e=>e.t==="repro_exam" && /(^|\+\s*)(DESCARTE|Lactoinducir)\s*(\+|$)/i.test(e.r||"")
+      && !after.some(x=>x.t==="service" && x.d > e.d))) return null;   // también "OVSYN + DESCARTE"
   const svs = after.filter(e=>e.t==="service"), sv = svs[svs.length-1];
   const lastEx = after.filter(e=>e.t==="repro_exam").pop();
   const exrep = (why) => {
