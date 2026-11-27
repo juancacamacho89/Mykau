@@ -735,7 +735,7 @@ let perms = jget0("perms", {}), myProfile = store.get("profile") || "";
 function jget0(k, d){ try{ return JSON.parse(store.get(k)) ?? d; }catch(e){ return d; } }
 const PERM_FALLBACK = { vacas_repro:"vacas_ver", calidad_ver:"reporte_editar",
   salud_ver:"vacas_ver", salud_tratar:"vacas_parto", salud_diagnostico:"reporte_editar", inventario_ver:"reporte_editar",
-  pastos_ver:"reporte_editar", pastos_registrar:"reporte_editar", produccion_ver:"reporte_editar", registros_todos:"reporte_editar", pesot_registrar:"vacas_parto",
+  pastos_ver:"reporte_editar", pastos_registrar:"reporte_editar", produccion_ver:"reporte_editar", registros_todos:"reporte_editar", pesot_registrar:"vacas_parto", vacas_destete:"pesot_registrar",
   vacas_secado:"vacas_parto", vacas_salida:"vacas_parto", terneras_registrar:"reporte_editar", listas_ver:"vacas_repro", generador_ver:"listas_ver",
   toros_ver:"reporte_editar", toros_registrar:"reporte_editar", racion_ver:"reporte_editar", racion_registrar:"reporte_editar",
   ronda_registrar:"diaria_registrar", ronda_ver:"diaria_registrar", consumo_concentrado:"ronda_registrar", chequeo_tratamientos:"chequeo", chequeo_resultados:"chequeo_tratamientos", mastitis_registrar:"salud_tratar",
@@ -1053,7 +1053,7 @@ const UP_FUNCS = [
   ["Salud", [["salud_ver","Ver vacas en tratamiento y en retiro"],["salud_reportar","Reportar animal enfermo"],["salud_tratar","Formular tratamiento"],["salud_aplicar","Aplicar tratamientos programados (descuenta del inventario)"]]],
   ["Pastos", [["pastos_ver","Ver potreros y pastoreos"],["pastos_registrar","Registrar labores, pastoreo, aforo y lluvia"]]],
   ["Registros", [["registros_ver","Ver mis registros"],["registros_todos","Ver registros de todos los usuarios"]]],
-  ["Otros", [["traslados","Registrar traslados"],["pesot_registrar","Registrar pesaje de terneras y novillas"],["listas_ver","Ver listas de trabajo"],["generador_ver","Usar generador de listas"]]],
+  ["Otros", [["traslados","Registrar traslados"],["pesot_registrar","Registrar pesaje de terneras y novillas"],["vacas_destete","Registrar destete de terneras"],["listas_ver","Ver listas de trabajo"],["generador_ver","Usar generador de listas"]]],
   ["Insumos", [["inventario_ver","Ver inventario de insumos"],["insumos_mov_alimento","Registrar movimientos de alimento"],["insumos_mov_medicamento","Registrar movimientos de medicamentos"]]],
   ["Toros y semen", [["toros_ver","Ver toros y semen"],["toros_registrar","Registrar semen, traslados y toros"]]],
   ["Suplementación", [["racion_ver","Ver suplementación (ración de concentrado)"],["racion_registrar","Guardar ración de concentrado"]]],
@@ -1584,7 +1584,7 @@ async function loadCow(id){
 
 const EV = { weight:"Peso", service:"Servicio", calving:"Parto", preg_check:"Diag. preñez", ultrasound:"Ecografía",
              repro_exam:"Examen rep.", heat:"Celo", vaccine:"Vacuna rep.", dry_off:"Secado", note:"Nota", transfer:"Traslado", exit:"Salida",
-             embryo_loss:"Muerte embrionaria", abortion:"Aborto" };
+             embryo_loss:"Muerte embrionaria", abortion:"Aborto", weaning:"Destete" };
 const isPositive = e => (e.event_type==="preg_check" && /^(cargada|confirmada|positivo)/i.test(e.result||"")) ||
                         (e.event_type==="ultrasound" && /^positivo/i.test(e.result||"")) ||
                         (e.event_type==="repro_exam" && /^preñad/i.test(e.result||""));
@@ -1735,6 +1735,7 @@ function renderCow(d){
 
   ${weights.length && canSee("vacas_peso") ? `<div class="card"><b>Peso</b><div id="weightChart"></div>
     <div class="sub">Último: ${weights[weights.length-1].weight_kg} kg el ${fmt(weights[weights.length-1].event_date)}${weights[weights.length-1].body_condition?` · CC ${weights[weights.length-1].body_condition}`:""}</div>
+    <div id="weightList" class="sub" style="margin-top:6px">Toca la gráfica para ver los pesos registrados</div>
     </div>` : ""}
 
   ${c.active && canDo("vacas_salida") ? `<div style="text-align:center;margin:4px 0 24px"><button class="btn ghost" data-add="exit" style="color:var(--s4);width:auto;padding:10px 16px">🚪 Registrar venta, descarte o muerte</button></div>` : ""}
@@ -4593,7 +4594,7 @@ async function flushWeigh(){
 // 1) evento  2) animales (lote + casillas, o pegar números)  3) datos una sola vez → Ejecutar.
 // Cada animal queda registrado igual que en su hoja de vida (actualiza la ficha, Salud/inventario, Registros).
 const RQ_TYPES = [
-  ["service","💉 Inseminación","vacas_servicio"], ["heat","🔥 Celo","vacas_celo"], ["dry_off","🌙 Secado","vacas_secado"],
+  ["service","💉 Inseminación","vacas_servicio"], ["heat","🔥 Celo","vacas_celo"], ["dry_off","🌙 Secado","vacas_secado"], ["weaning","🍼 Destete","vacas_destete"],
   ["treat","💊 Purga / vacuna / vitamina","salud_tratar"], ["transfer","⇄ Traslado","traslados"], ["exit","🚪 Venta / descarte / muerte","vacas_salida"]];
 let rq = null, rqFarms = null, rqCows = [];
 // toro asignado (Generador de listas) de cada vaca de la finca: Ingreso rápido lo pone al inseminar y avisa si se cambia
@@ -4625,6 +4626,57 @@ async function initRapido(){
   if (rq.type==="service") await rqToroLoad();
   if (["treat","dry_off"].includes(rq.type)) await hsCatalog();
   await rqLoadCows(); renderRapido();
+}
+// ── Destete de terneras (Ingreso rápido → 🍼 Destete) ──
+// Leche que tomó cada ternera (estimado): cada día, los litros que van a terneras en Leche diaria (mañana + tarde, todos los hatos)
+// se reparten entre las terneras que ese día seguían con leche: nacidas, de 0 a 120 días, sin destete y que no habían salido.
+let rqWean = { farm:null, done:new Set() };
+async function rqLoadWean(){
+  if (!rq?.farm) return;
+  const r = await psAll(()=>sb.from("cow_events").select("cow_id,cows!inner(farm_id)").eq("cows.farm_id", rq.farm).eq("event_type", "weaning"));
+  rqWean = { farm:rq.farm, done:new Set((r.data || []).map(x=>x.cow_id)) };
+}
+const rqWeanOk = c => !(c.lactation_num > 0) && !!c.birth_date && days(c.birth_date, today()) <= 365 && !rqWean.done.has(c.id);
+const WN_MAX = 120;   // después de 120 días de nacida ya no se cuenta como ternera en leche (por si falta registrar su destete)
+async function wnLiters(farm, from, to){
+  const [dm, cv, wn] = await Promise.all([
+    psAll(()=>sb.from("daily_milk").select("rec_date,am_calves_l,pm_calves_l").eq("farm_id", farm).gte("rec_date", from).lte("rec_date", to)),
+    psAll(()=>sb.from("cows").select("id,birth_date,exit_date,lactation_num").eq("farm_id", farm).gte("birth_date", addDays(from, -WN_MAX)).lte("birth_date", to)),
+    psAll(()=>sb.from("cow_events").select("cow_id,event_date,cows!inner(farm_id)").eq("cows.farm_id", farm).eq("event_type", "weaning").gte("event_date", addDays(from, -WN_MAX)))]);
+  const L = {}; (dm.data || []).forEach(r=>{ L[r.rec_date] = (L[r.rec_date] || 0) + (+r.am_calves_l || 0) + (+r.pm_calves_l || 0); });
+  const W = {}; (wn.data || []).forEach(x=>{ if (!W[x.cow_id] || x.event_date < W[x.cow_id]) W[x.cow_id] = x.event_date; });
+  const calves = (cv.data || []).filter(c=>!(c.lactation_num > 0) && c.birth_date);
+  const per = {};   // fecha → litros por ternera
+  Object.entries(L).forEach(([d, l])=>{ if (!(l > 0)) return;
+    const n = calves.filter(c=>c.birth_date <= d && days(c.birth_date, d) <= WN_MAX && (!W[c.id] || W[c.id] > d) && (!c.exit_date || c.exit_date > d)).length;
+    if (n) per[d] = l / n; });
+  return { per, W, has: Object.keys(L).length > 0 };
+}
+// tabla de los destetes de los últimos 120 días de la finca: edad, leche estimada, peso al destete y ganancia desde que nació
+async function wnSummaryHtml(farm){
+  if (!navigator.onLine) return "";
+  const from = addDays(today(), -120);
+  const [ev, wt] = await Promise.all([
+    psAll(()=>sb.from("cow_events").select("cow_id,event_date,cows!inner(farm_id,birth_date)").eq("cows.farm_id", farm).eq("event_type", "weaning").gte("event_date", from).order("event_date")),
+    psAll(()=>sb.from("cow_events").select("cow_id,event_date,weight_kg,cows!inner(farm_id)").eq("cows.farm_id", farm).eq("event_type", "weight").gt("weight_kg", 0).gte("event_date", addDays(from, -WN_MAX)).order("event_date"))]);
+  const rows = ev.data || [];
+  if (!rows.length) return `<div class="sub">Todavía no hay destetes registrados en los últimos 120 días.</div>`;
+  const born = rows.map(r=>r.cows?.birth_date).filter(Boolean).sort()[0] || from;
+  const lt = await wnLiters(farm, born, today());
+  const wBy = {}; (wt.data || []).forEach(w=>(wBy[w.cow_id] ||= []).push(w));
+  const list = rows.map(r=>{ const b = r.cows?.birth_date, age = b ? days(b, r.event_date) : null;
+    let l = 0; if (b) for (let d = b; d < r.event_date; d = addDays(d, 1)) l += lt.per[d] || 0;
+    const ws = (wBy[r.cow_id] || []).filter(w=>w.event_date <= addDays(r.event_date, 3)), w = ws[ws.length - 1];
+    const ok = w && days(w.event_date, r.event_date) <= 10;
+    return { id:r.cow_id, d:r.event_date, age, l: lt.has ? Math.round(l) : null, kg: ok ? +w.weight_kg : null,
+      gdp: ok && b && age ? Math.round((+w.weight_kg - (sgData?.birthKg || 35)) / Math.max(1, days(b, w.event_date)) * 1000) : null }; }).reverse();
+  const avg = k => { const v = list.map(x=>x[k]).filter(x=>x!=null); return v.length ? Math.round(v.reduce((a, x)=>a + x, 0) / v.length) : null; };
+  return `<details open><summary class="lnk">🍼 Destetes de los últimos 120 días (${list.length})</summary>
+    <div class="sub" style="margin:4px 0">Promedio: <b>${avg("age") ?? "—"} días</b> de edad · <b>${avg("l") ?? "—"} L</b> de leche · <b>${avg("kg") ?? "—"} kg</b> al destete</div>
+    <table style="width:100%;font-size:13px;color:var(--ink)"><tr><th>Ternera</th><th>Destete</th><th style="text-align:right">Días</th><th style="text-align:right">Leche L</th><th style="text-align:right">Peso kg</th><th style="text-align:right">g/día</th></tr>
+    ${list.map(x=>`<tr><td><button class="lnk" data-cow="${esc(x.id)}"><b>${esc(x.id)}</b></button></td><td>${fmt(x.d).slice(0, 5)}</td><td style="text-align:right">${x.age ?? "—"}</td>
+      <td style="text-align:right">${x.l ?? "—"}</td><td style="text-align:right">${x.kg ?? "—"}</td><td style="text-align:right">${x.gdp ?? "—"}</td></tr>`).join("")}</table>
+    <div class="sub" style="margin-top:4px">Leche = estimado con los litros a terneras de Leche diaria repartidos entre las terneras en leche cada día (0–${WN_MAX} días, sin destete). Peso = pesaje del día del destete (± 10 días); g/día desde el nacimiento (${sgData?.birthKg || 35} kg al nacer).</div></details>`;
 }
 async function rqLoadCows(){
   if (!rq.farm) return;
@@ -4690,7 +4742,9 @@ function rqInfo(c){
   return [st, c.lactation_num > 0 && del!=null ? `${del} d` : "", c.lactation_num > 0 ? `L${c.lactation_num}` : (c.birth_date ? Math.floor(days(c.birth_date, today())/30.4) + " m" : "")].filter(Boolean).join(" · ");
 }
 function renderRapido(){
+  if (rq.type==="weaning" && rqWean.farm!==rq.farm){ rqLoadWean().then(()=>renderRapido()); return; }
   renderRapido0();
+  if (rq.type==="weaning") wnSummaryHtml(rq.farm).then(h=>{ if ($("rqWnSum")) $("rqWnSum").innerHTML = h; });
   if (rq.type==="dry_off") rqLoadLost().then(ok=>{ if (ok && $("rqDry")) $("rqDry").innerHTML = rqDryHtml(); });
   if (rq.type==="dry_off" && rqDryD?.farm!==rq.farm) rqLoadDry().then(ok=>{ if (ok) renderRapido0(); });
 }
@@ -4829,6 +4883,7 @@ const rqDryProg = c => { const x = rqDryInfo(c); return !x.driedOff && (!!x.plan
 const rqShown0 = (tk, dry) => { 
   return rqCows.filter(c=>(!rq.pen || (c.pen||"—")===rq.pen) && (!tk.length || (tk.length > 1 ? tk.includes(c.id) : c.id.includes(tk[0])))
     && (!(rqOvsOn() && rq.ovsF) || !!rqOvs?.plans[c.id])
+    && (rq.type!=="weaning" || rqWeanOk(c))
     && (!dry || !rq.dryF || (rq.dryF==="prog" ? rqDryProg(c) : rq.dryF==="low" ? rqDryInfo(c).low : rq.dryF==="lac" ? /(^|\/)Lac/.test(c.status || "") : true))); };
 function rqListHtml(shown){
   const tk = rqTokens(), miss = tk.length > 1 ? tk.filter(t=>!shown.some(c=>c.id===t)) : [];
@@ -4839,7 +4894,7 @@ function rqListHtml(shown){
   return head + shown.map(c=>`<label style="display:flex;gap:10px;align-items:center;padding:7px 2px;margin:0;border-bottom:1px solid var(--line);color:var(--ink);font-size:15px;font-weight:400">
           <input type="checkbox" data-rqc="${esc(c.id)}" ${rq.sel.has(c.id) ? "checked" : ""} style="width:22px;height:22px;flex:none">
           <b style="min-width:62px">${esc(c.id)}</b><span class="sub" style="flex:1">${esc(c.pen||"")} · ${esc(rqInfo(c))}${rqOvsOn() && rqOvs?.plans[c.id] ? ` · <b style="color:var(--accent)">💉 ${esc(rqOvs.plans[c.id].note || "Ovsynch")} → inseminar ${fmt(rqOvs.plans[c.id].due_date)}</b>` : ""}</span>
-          ${rq.type==="exit" ? `<input data-rqwt="${esc(c.id)}" inputmode="decimal" placeholder="kg" value="${esc(rq.d.w?.[c.id] || "")}" style="width:78px;flex:none;padding:8px;font-size:15px">` : ""}</label>`).join("") || `<div class="empty">Sin animales</div>`;
+          ${rq.type==="exit" || rq.type==="weaning" ? `<input data-rqwt="${esc(c.id)}" inputmode="decimal" placeholder="kg" value="${esc(rq.d.w?.[c.id] || "")}" style="width:78px;flex:none;padding:8px;font-size:15px">` : ""}</label>`).join("") || `<div class="empty">Sin animales</div>`;
 }
 function rqDryRow(c){
   const x = rqDryInfo(c), plan = rqCanPlan(), red = !x.driedOff && (!!x.plan || x.due || (plan && x.low));
@@ -4935,6 +4990,8 @@ function rqForm(f){
       <label>Valor por animal $ (opcional)</label><input id="rqVal" inputmode="numeric" value="${esc(d.val||"")}">
       <div class="sub" style="margin-top:6px">⚖️ Si se pesaron, escribe el peso (kg) al lado de cada animal en la lista de arriba.</div>`;
   }
+  if (rq.type==="weaning") h += `<div class="sub" style="margin-top:6px">Escoge las terneras que se destetan (salen solo las menores de 1 año que no tienen destete). Si las pesaste, escribe el peso al lado de cada una: queda como pesaje con la marca "destete".</div>
+    <div id="rqWnSum" style="margin-top:8px"></div>`;
   return h + `<label>Nota (opcional)</label><input id="rqNote" value="${esc(d.note||"")}">`;
 }
 function rqRead(){
@@ -4959,6 +5016,7 @@ $("rqBody").addEventListener("click", async e=>{
   if (q("data-rqt")){ rqRead(); rq.type = q("data-rqt"); rq.d = {}; rq.ovsF = false;
     if (rq.type==="service"){ rq.opts = await loadRegOpts(rq.farm); await rqToroLoad(); }
     if (["treat","dry_off"].includes(rq.type)) await hsCatalog();
+    if (rq.type==="weaning") await rqLoadWean();
     return renderRapido(); }
   if (q("data-rqp")!=null){ rqRead(); rq.pen = q("data-rqp"); return renderRapido(); }
   if (q("data-rqmark")){ rqRead(); rqShown().forEach(c=>rq.sel.add(c.id)); rq.q = ""; return renderRapido(); }
@@ -5113,6 +5171,18 @@ async function rqExec(){
     rows = move.map(c=>({ ...base, cow_id:c.id, event_type:"transfer", category:`${c.herd||""}/${c.pen||"—"} → ${to.herd}/${d.pen}`,
       details:{ from_herd:c.herd, from_pen:c.pen, to_herd:to.herd, to_pen:d.pen, to_farm:to.id } }));
     label = `Traslado a ${farmLabel(to)} · ${d.pen}`;
+  }
+  if (rq.type==="weaning"){
+    const kg = id => { const n = +String(d.w?.[id] || "").replace(",", "."); return n > 0 ? n : null; };
+    const young = cows.filter(c=>c.birth_date && date < c.birth_date);
+    if (young.length) return err(`La fecha es antes de que nacieran: ${young.map(c=>c.id).join(", ")}.`);
+    rows = cows.map(c=>({ ...base, cow_id:c.id, event_type:"weaning", days_value: c.birth_date ? days(c.birth_date, date) : null,
+      details:{ age_days: c.birth_date ? days(c.birth_date, date) : null, weight: kg(c.id) } }));
+    rows.push(...cows.filter(c=>kg(c.id)).map(c=>({ ...base, cow_id:c.id, event_type:"weight", weight_kg:kg(c.id), details:{ weaning:true } })));
+    const ages = cows.filter(c=>c.birth_date).map(c=>days(c.birth_date, date));
+    label = `Destete` + (ages.length ? ` · ${Math.round(ages.reduce((a, x)=>a + x, 0) / ages.length)} días de edad en promedio` : "")
+      + (cows.some(c=>kg(c.id)) ? ` · ${cows.filter(c=>kg(c.id)).length} con peso` : "");
+    rqWean.farm = null;
   }
   if (rq.type==="exit"){
     if (d.cat!=="venta" && !(d.why||[]).length) return err("Escoge el motivo.");
@@ -8492,6 +8562,21 @@ function showMilkList(d, l){
     </table>`;
 }
 
+// lista de los pesos registrados (hoja de vida → Peso): fecha, edad, peso, ganancia desde el pesaje anterior, CC y comentario
+function showWeightList(d, w){
+  const box = $("weightList"); if (!box) return;
+  if (!wPick){ box.innerHTML = "Toca la gráfica para ver los pesos registrados"; return; }
+  const bd = d.cow?.birth_date, rows = w.map((e, i)=>{ const p = w[i - 1], dd = p ? Math.max(1, days(p.event_date, e.event_date)) : null;
+    return { e, age: bd ? (days(bd, e.event_date)/30.44).toFixed(1).replace(".", ",") : "", gdp: p ? Math.round((+e.weight_kg - +p.weight_kg)/dd*1000) : null }; }).reverse();
+  const hasCC = w.some(e=>e.body_condition), hasCom = w.some(e=>e.comments || e.details?.weaning);
+  box.innerHTML = `<div style="color:var(--ink);margin-top:4px"><b>${w.length} pesaje${w.length===1 ? "" : "s"}</b>${bd ? ` · nació ${fmt(bd)}` : ""}</div>
+    <table style="margin-top:6px;color:var(--ink);width:100%">
+      <tr><th>Fecha</th><th>Edad (m)</th><th style="text-align:right">Peso kg</th><th style="text-align:right">g/día</th>${hasCC ? "<th>CC</th>" : ""}${hasCom ? "<th>Comentario</th>" : ""}</tr>
+      ${rows.map(r=>`<tr><td>${fmt(r.e.event_date)}</td><td>${r.age}</td><td style="text-align:right"><b>${n0(+r.e.weight_kg)}</b></td>
+        <td style="text-align:right">${r.gdp ?? "—"}</td>${hasCC ? `<td>${r.e.body_condition ?? ""}</td>` : ""}
+        ${hasCom ? `<td class="sub" style="white-space:normal">${esc([r.e.details?.weaning ? "🍼 destete" : "", r.e.comments || ""].filter(Boolean).join(" · "))}</td>` : ""}</tr>`).join("")}
+    </table>`;
+}
 function drawCowCharts(){
   const d = lastCowData; if (!d) return;
   const calvings = d.events.filter(e=>e.event_type==="calving").map(e=>e.event_date);
@@ -8545,6 +8630,9 @@ function drawCowCharts(){
       svg.addEventListener("contextmenu", ev=>ev.preventDefault());
       // al soltar, el globo se queda; se quita al tocar fuera de la gráfica
       svg.addEventListener("pointerleave", stop);
+      // tocar la gráfica abre / cierra la lista de pesos (como la de la leche)
+      svg.addEventListener("click", ()=>{ wPick = !wPick; showWeightList(d, w); });
+      if (wPick) showWeightList(d, w);
     }
   }
 }
