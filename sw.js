@@ -1,6 +1,6 @@
 // Guarda la "cÃƒÆ’Ã‚Â¡scara" de la app para que abra rÃƒÆ’Ã‚Â¡pido.
 // Los datos de Supabase nunca se guardan aquÃƒÆ’Ã‚Â­: siempre se piden en vivo.
-const CACHE = "mykau-v189";
+const CACHE = "mykau-v190";
 const SHELL = ["./", "index.html", "config.js", "manifest.webmanifest", "icon-180.png", "icon-192.png", "logo.png",
   "https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/dist/umd/supabase.js"];
 
